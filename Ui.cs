@@ -1667,11 +1667,40 @@ namespace Installer
                     {
                         UpdateTweakTip();
                         RefreshConflicts(true);
-                        if (MessageBox.Show("装好了。现在启动游戏吗？", "完成", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                        bool doTest = MessageBox.Show(
+                            "装好了。\r\n\r\n要不要先跑一次自检？（最多 2 分钟）\r\n自检＝装机台自己开一次游戏，看会不会崩。崩了就说明这次装的 MOD 里有坏包（安全，不改任何文件）。",
+                            "完成 · 自检", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+                        if (!doTest)
                         {
-                            try { System.Diagnostics.Process.Start("steam://rungameid/550"); }
-                            catch (Exception ex2) { Core.Log("WARN", "启动游戏失败（请在 Steam 里手动开）: " + ex2.Message); }
+                            if (MessageBox.Show("那现在启动游戏吗？", "完成", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                            {
+                                try { System.Diagnostics.Process.Start("steam://rungameid/550"); }
+                                catch (Exception ex2) { Core.Log("WARN", "启动游戏失败（请在 Steam 里手动开）: " + ex2.Message); }
+                            }
+                            return;
                         }
+                        Core.Log("STEP", "自检：起游戏看会不会崩（最多 120 秒）");
+                        SetBusy(true);
+                        SetStatus("自检中：正在起游戏…");
+                        Thread thTest = new Thread(delegate()
+                        {
+                            SelfTest.Result sr = null;
+                            try { sr = SelfTest.Run(root, 120, sel.Count, delegate(string s) { SetStatus(s); }); }
+                            catch (Exception ex3) { Core.Log("FAIL", "自检出错: " + ex3.Message); }
+                            SetBusy(false);
+                            SetBar(0);
+                            SetStatus("就绪");
+                            if (sr == null) return;
+                            Core.Log(sr.Kind == "crash" ? "FAIL" : "OK", "自检: " + sr.Message.Replace("\r\n", " "));
+                            SafeBeginInvoke(delegate
+                            {
+                                MessageBox.Show(sr.Message, "自检结果 - " + sr.Kind,
+                                    MessageBoxButtons.OK,
+                                    sr.Kind == "crash" ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                            });
+                        });
+                        thTest.IsBackground = true;
+                        thTest.Start();
                     });
                 }
                 catch (Exception ex)
