@@ -18,6 +18,8 @@ namespace Installer
         private FlatButton btnLaunchEdit;
         private TextBox txtLaunch;
         private ComboBox cboCat, cboProfile;
+        // 最近套用/保存过的方案名（空=没套方案）：自检结果写回它
+        private string appliedProfile = "";
         private Section gMod, gLog, gPlat, gOpt;
         private Dictionary<string, string> modTags;
         private Button btnManage;
@@ -1134,12 +1136,70 @@ namespace Installer
             if (sel.Count == 0) { MessageBox.Show("先勾一些 MOD 再存方案。"); return; }
             string name = PromptForm.Ask("方案名字（比如：日常 / 打僵尸 / 拍视频）", "存为方案");
             if (string.IsNullOrEmpty(name)) return;
-            List<string> rels = new List<string>();
-            foreach (ModItem it in sel) rels.Add(it.Key);
-            ProfileStore.Save(name.Trim(), rels, chkDxvk.Checked, PlatFlags());
+            name = name.Trim();
+            Profile old = ProfileStore.Load(name);
+            if (old != null)
+            {
+                string when = old.Saved == DateTime.MinValue ? "未知" : old.Saved.ToString("yyyy-MM-dd HH:mm");
+                string q = "已经有「" + name + "」这个方案了（" + old.Mods.Count + " 个 MOD，存于 " + when + "）。\r\n\r\n覆盖它？（旧版会自动留一份 .bak，不会丢）";
+                if (MessageBox.Show(q, "覆盖方案", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            }
+            Profile p = new Profile();
+            p.Name = name;
+            p.Dxvk = chkDxvk.Checked;
+            p.Plat = PlatFlags();
+            p.HasOpt = true;
+            p.Swap = chkSwap.Checked;
+            p.Overwrite = rdOver != null && rdOver.Checked;
+            p.Tweak = TweakName();
+            p.Launch = txtLaunch == null ? "" : LaunchArgs.ForWrite(txtLaunch.Text);
+            foreach (ModItem it in sel) p.Mods.Add(it.Key);
+            string bak = ProfileStore.Save(p, true);
+            appliedProfile = p.Name;
             FillProfiles();
-            Core.Log("OK", "方案已存：" + name + "（" + rels.Count + " 个 MOD）");
+            Core.Log("OK", "方案已存：" + p.Name + "（" + p.Mods.Count + " 个 MOD" + (bak == null ? "" : "；旧版备份 " + Path.GetFileName(bak)) + "）");
         }
+
+        // 把方案灌进界面。withOptions=false 时只勾 MOD 和平台（下拉预览用），不动安装选项
+        private void LoadProfileIntoUi(Profile p, bool withOptions, bool quiet)
+        {
+            if (p == null) { MessageBox.Show("找不到这个方案（文件可能被删了）。"); return; }
+            if (p.Mods.Count == 0) { MessageBox.Show("这个方案是空的。"); return; }
+            List<string> ok = new List<string>();
+            List<string> miss = new List<string>();
+            foreach (string r in p.Mods)
+            {
+                if (Core.ByRel.ContainsKey(r)) ok.Add(r);
+                else miss.Add(r);
+            }
+            checkedKeys.Clear();
+            foreach (string r in ok) checkedKeys.Add(r);
+            chkDxvk.Checked = p.Dxvk;
+            ApplyPlatFlags(p.Plat);
+            if (withOptions && p.HasOpt)
+            {
+                chkSwap.Checked = p.Swap;
+                if (rdOver != null) rdOver.Checked = p.Overwrite;
+                if (rdSkip != null) rdSkip.Checked = !p.Overwrite;
+                if (cboTweak != null) SelectTweak(p.Tweak);
+                if (txtLaunch != null && !string.IsNullOrEmpty(p.Launch)) txtLaunch.Text = p.Launch;
+            }
+            CheckRowsByKeys();
+            UpdateSel();
+            if (withOptions) appliedProfile = p.Name;
+            Core.Log("OK", "已套用方案：" + p.Name + "（" + ok.Count + " 个 MOD）");
+            if (miss.Count > 0)
+            {
+                Core.Log("WARN", "方案「" + p.Name + "」有 " + miss.Count + " 个引用在库里找不到，已跳过");
+                string ex = "";
+                for (int i = 0; i < miss.Count && i < 5; i++) ex += "\r\n  · " + miss[i];
+                if (miss.Count > 5) ex += "\r\n  · …（还有 " + (miss.Count - 5) + " 个）";
+                string q = "方案「" + p.Name + "」里有 " + miss.Count + " 个文件在库里已经找不到了，这次会跳过它们（能用的 " + ok.Count + " 个照常勾上）：" + ex
+                    + "\r\n\r\n要修：把文件放回 U 盘原来的位置，或者重新存一版方案。";
+                if (!quiet) MessageBox.Show(q, "方案有失效引用", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
 
         private void PreviewProfile()
         {
@@ -1147,35 +1207,23 @@ namespace Installer
             if (cboProfile.SelectedItem == null) return;
             string name = cboProfile.SelectedItem.ToString();
             if (name.StartsWith("（")) return;
-            bool dxvk; string plat;
-            List<string> rels = ProfileStore.Load(name, out dxvk, out plat);
-            if (rels.Count == 0) return;
-            checkedKeys.Clear();
-            foreach (string r in rels) checkedKeys.Add(r);
-            chkDxvk.Checked = dxvk;
-            ApplyPlatFlags(plat);
-            CheckRowsByKeys();
-            UpdateSel();
+            Profile p = ProfileStore.Load(name);
+            if (p == null || p.Mods.Count == 0) return;
+            LoadProfileIntoUi(p, false, true);
             int shown = 0;
             foreach (ModItem m in Core.ModList) if (checkedKeys.Contains(m.Key)) shown++;
             Log("方案「" + name + "」：已按它勾好 " + shown + " 个 MOD（含不在当前筛选里的），点「开始装」即装这些");
         }
 
+
         private void ApplyProfile()
         {
             if (cboProfile.SelectedItem == null) return;
             string name = cboProfile.SelectedItem.ToString();
-            bool dxvk; string plat;
-            List<string> rels = ProfileStore.Load(name, out dxvk, out plat);
-            if (rels.Count == 0) { MessageBox.Show("这个方案是空的。"); return; }
-            checkedKeys.Clear();
-            foreach (string r in rels) checkedKeys.Add(r);
-            chkDxvk.Checked = dxvk;
-            ApplyPlatFlags(plat);
-            CheckRowsByKeys();
-            UpdateSel();
-            Core.Log("OK", "已套用方案：" + name + "（" + rels.Count + " 个 MOD）");
+            if (name.StartsWith("（")) return;
+            LoadProfileIntoUi(ProfileStore.Load(name), true, false);
         }
+
 
         // 方案套用后把行的勾选状态跟 checkedKeys 对齐（不逐个触发部件默认逻辑）
         private void CheckRowsByKeys()
@@ -1361,17 +1409,11 @@ namespace Installer
 
         public void ApplyProfileByName(string name)
         {
-            bool dxvk; string plat;
-            List<string> rels = ProfileStore.Load(name, out dxvk, out plat);
-            if (rels.Count == 0) { MessageBox.Show("这个方案是空的。"); return; }
-            checkedKeys.Clear();
-            foreach (string r in rels) checkedKeys.Add(r);
-            chkDxvk.Checked = dxvk;
-            ApplyPlatFlags(plat);
-            CheckRowsByKeys();
-            UpdateSel();
-            Core.Log("OK", "已套用方案：" + name + "（" + rels.Count + " 个 MOD）");
+            Profile p = ProfileStore.Load(name);
+            if (p == null) { MessageBox.Show("找不到方案「" + name + "」。" ); return; }
+            LoadProfileIntoUi(p, true, false);
         }
+
 
         private void AppendLog(string line)
         {
@@ -1690,6 +1732,8 @@ namespace Installer
                             SetBusy(false);
                             SetBar(0);
                             SetStatus("就绪");
+                            if (sr != null && appliedProfile.Length > 0 && (sr.Kind == "crash" || sr.Kind == "clean"))
+                                ProfileStore.SetSelfTest(appliedProfile, sr.Kind == "crash" ? "FAIL" : "PASS", sr.Seconds);
                             if (sr == null) return;
                             Core.Log(sr.Kind == "crash" ? "FAIL" : "OK", "自检: " + sr.Message.Replace("\r\n", " "));
                             SafeBeginInvoke(delegate
@@ -1746,71 +1790,93 @@ namespace Installer
         {
             owner = o;
             Text = "方案管理 —— 左边选方案，右边看它装什么";
-            ClientSize = new Size(652, 360);
+            ClientSize = new Size(672, 396);
             BackColor = Theme.Bg;
             Font = Theme.UI;
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = false; MaximizeBox = false;
 
             Label l1 = new Label(); l1.Text = "方案"; l1.SetBounds(12, 12, 60, 20); Theme.Dress(l1); Controls.Add(l1);
-            lb = new ListBox(); lb.SetBounds(12, 34, 240, 250);
+            lb = new ListBox(); lb.SetBounds(12, 34, 250, 266);
             lb.BorderStyle = BorderStyle.FixedSingle; lb.BackColor = Theme.Surface; lb.ForeColor = Theme.Ink;
             lb.SelectedIndexChanged += delegate { ShowItems(); }; lb.DoubleClick += delegate { ApplySel(); }; Controls.Add(lb);
-            Label l2 = new Label(); l2.Text = "这套会装什么"; l2.SetBounds(264, 12, 200, 20); Theme.Dress(l2); Controls.Add(l2);
-            lbItems = new ListBox(); lbItems.SetBounds(264, 34, 376, 250);
+            Label l2 = new Label(); l2.Text = "这套会装什么"; l2.SetBounds(274, 12, 200, 20); Theme.Dress(l2); Controls.Add(l2);
+            lbItems = new ListBox(); lbItems.SetBounds(274, 34, 386, 266);
             lbItems.BorderStyle = BorderStyle.FixedSingle; lbItems.BackColor = Theme.Surface; lbItems.ForeColor = Theme.Ink;
             Controls.Add(lbItems);
-            lblInfo = new Label(); lblInfo.SetBounds(264, 290, 376, 20); lblInfo.Text = ""; lblInfo.ForeColor = Theme.Ink3; lblInfo.Font = Theme.UISmall; Controls.Add(lblInfo);
+            lblInfo = new Label(); lblInfo.SetBounds(274, 304, 386, 20); lblInfo.Text = ""; lblInfo.ForeColor = Theme.Ink3; lblInfo.Font = Theme.UISmall; Controls.Add(lblInfo);
 
-            FlatButton ap = new FlatButton(); ap.Text = "套用"; ap.Primary = true; ap.SetBounds(12, 316, 76, Theme.H); ap.Click += delegate { ApplySel(); }; Controls.Add(ap);
-            FlatButton rn = new FlatButton(); rn.Text = "改名"; rn.SetBounds(96, 316, 76, Theme.H); rn.Click += delegate { RenameSel(); }; Controls.Add(rn);
-            FlatButton de = new FlatButton(); de.Text = "删除"; de.SetBounds(180, 316, 76, Theme.H); de.Click += delegate { DeleteSel(); }; Controls.Add(de);
-            FlatButton ex = new FlatButton(); ex.Text = "导出…"; ex.SetBounds(272, 316, 90, Theme.H); ex.Click += delegate { ExportSel(); }; Controls.Add(ex);
-            FlatButton im = new FlatButton(); im.Text = "导入…"; im.SetBounds(370, 316, 90, Theme.H); im.Click += delegate { ImportFile(); }; Controls.Add(im);
-            FlatButton cl = new FlatButton(); cl.Text = "关闭"; cl.SetBounds(552, 316, 88, Theme.H); cl.DialogResult = DialogResult.Cancel; Controls.Add(cl);
+            FlatButton ap = new FlatButton(); ap.Text = "套用"; ap.Primary = true; ap.SetBounds(12, 312, 72, Theme.H); ap.Click += delegate { ApplySel(); }; Controls.Add(ap);
+            FlatButton rn = new FlatButton(); rn.Text = "改名"; rn.SetBounds(92, 312, 72, Theme.H); rn.Click += delegate { RenameSel(); }; Controls.Add(rn);
+            FlatButton de = new FlatButton(); de.Text = "删除"; de.SetBounds(172, 312, 72, Theme.H); de.Click += delegate { DeleteSel(); }; Controls.Add(de);
+            FlatButton cp = new FlatButton(); cp.Text = "另存为…"; cp.SetBounds(252, 312, 96, Theme.H); cp.Click += delegate { CopySel(); }; Controls.Add(cp);
+            FlatButton cl = new FlatButton(); cl.Text = "关闭"; cl.SetBounds(572, 312, 88, Theme.H); cl.DialogResult = DialogResult.Cancel; Controls.Add(cl);
             CancelButton = cl;
+
+            FlatButton ex = new FlatButton(); ex.Text = "导出…"; ex.SetBounds(12, 352, 84, Theme.H); ex.Click += delegate { ExportSel(); }; Controls.Add(ex);
+            FlatButton im = new FlatButton(); im.Text = "导入…"; im.SetBounds(104, 352, 84, Theme.H); im.Click += delegate { ImportFile(); }; Controls.Add(im);
+            FlatButton ea = new FlatButton(); ea.Text = "全部导出…"; ea.SetBounds(196, 352, 104, Theme.H); ea.Click += delegate { ExportAll(); }; Controls.Add(ea);
 
             LoadList();
         }
 
         private void LoadList()
         {
-            string keep = lb.SelectedItem == null ? null : lb.SelectedItem.ToString();
+            Profile keep = Sel();
+            string keepName = keep == null ? null : keep.Name;
             lb.Items.Clear();
-            foreach (string p in ProfileStore.ListProfiles()) lb.Items.Add(p);
+            List<Profile> items = ProfileStore.LoadAll();
+            foreach (Profile p in items) lb.Items.Add(p);
             if (lb.Items.Count == 0) { lb.Items.Add("（还没有方案）"); lbItems.Items.Clear(); lblInfo.Text = ""; return; }
-            if (keep != null && lb.Items.Contains(keep)) lb.SelectedItem = keep;
-            else lb.SelectedIndex = 0;
+            int idx = 0;
+            if (keepName != null)
+                for (int i = 0; i < items.Count; i++) if (items[i].Name == keepName) { idx = i; break; }
+            lb.SelectedIndex = idx;
         }
 
         private void ShowItems()
         {
             lbItems.Items.Clear();
-            string s = Sel();
-            if (s == null) { lblInfo.Text = ""; return; }
-            bool dxvk; string plat;
-            List<string> rels = ProfileStore.Load(s, out dxvk, out plat);
-            // 方案里存的是部件 Key；显示成「分类 · mod 名」，一个套装只列一行
-            List<string> seen = new List<string>();
-            foreach (string r in rels)
+            Profile p = Sel();
+            if (p == null) { lblInfo.Text = ""; return; }
+            List<string> lines = new List<string>();
+            int missCount = 0;
+            List<string> missShown = new List<string>();
+            int modLines = 0;
+            foreach (string r in p.Mods)
             {
                 ModItem it;
                 if (!Core.ByRel.TryGetValue(r, out it))
                 {
-                    string miss = r.StartsWith("#arc#") ? "（压缩包里的文件已不在）" : ("（找不到 " + r + "）");
-                    if (!seen.Contains(miss)) { seen.Add(miss); lbItems.Items.Add(miss); }
+                    missCount++;
+                    string mm = r.StartsWith("#arc#") ? "（压缩包里的文件已不在）" : ("（找不到 " + r + "）");
+                    if (!missShown.Contains(mm)) { missShown.Add(mm); lbItems.Items.Add(mm); }
                     continue;
                 }
                 ModGroup g;
                 string line = Catalog.GroupByKey.TryGetValue(it.GroupKey, out g)
                     ? (g.Where + "    " + g.Name)
                     : (it.Cat + " · " + it.Sub + "    " + it.Name);
-                if (seen.Contains(line)) continue;
-                seen.Add(line);
+                if (lines.Contains(line)) continue;
+                lines.Add(line);
                 lbItems.Items.Add(line);
+                modLines++;
             }
-            if (rels.Count == 0) lbItems.Items.Add("（空方案）");
-            lblInfo.Text = "共 " + rels.Count + " 个文件、" + seen.Count + " 个 MOD  ｜  平台: " + PrettyPlat(plat);
+            if (p.Mods.Count == 0) lbItems.Items.Add("（空方案）");
+            string info = "共 " + p.Mods.Count + " 个文件、" + modLines + " 个 MOD  ｜  平台: " + PrettyPlat(p.Plat);
+            if (p.Saved != DateTime.MinValue) info += "  ｜  存于 " + p.Saved.ToString("yyyy-MM-dd HH:mm");
+            if (missCount > 0) info += "  ｜  ⚠ " + missCount + " 个找不到";
+            if (!string.IsNullOrEmpty(p.SelfTest)) info += "  ｜  " + SelfTestText(p.SelfTest);
+            lblInfo.Text = info;
+        }
+
+        private static string SelfTestText(string raw)
+        {
+            string[] a = raw.Split('|');
+            if (a.Length < 2) return "上次自检：未知";
+            string when = a.Length >= 3 ? ("（" + a[2].Substring(Math.Max(0, a[2].Length - 5)) + "）") : "";
+            if (a[0] == "FAIL") return "上次自检：⚠ " + a[1] + " 秒崩" + when;
+            return "上次自检：通过（" + a[1] + " 秒）" + when;
         }
 
         private static string PrettyPlat(string plat)
@@ -1834,50 +1900,78 @@ namespace Installer
             return r.Length == 0 ? "（只装 MOD）" : r.Trim();
         }
 
-        private string Sel()
+        private Profile Sel()
         {
-            if (lb.SelectedItem == null) return null;
-            string s = lb.SelectedItem.ToString();
-            if (s.StartsWith("（")) return null;
-            return s;
+            return lb.SelectedItem as Profile;
         }
 
         private void ApplySel()
         {
-            string s = Sel();
-            if (s == null) return;
-            owner.ApplyProfileByName(s);
+            Profile p = Sel();
+            if (p == null) return;
+            owner.ApplyProfileByName(p.Name);
             Close();
         }
 
         private void RenameSel()
         {
-            string s = Sel();
-            if (s == null) return;
-            string nn = PromptForm.Ask("新名字", "给方案改名");
+            Profile p = Sel();
+            if (p == null) return;
+            string nn = PromptForm.Ask("新名字（当前：" + p.Name + "）", "给方案改名");
             if (string.IsNullOrEmpty(nn)) return;
-            string err = ProfileStore.Rename(s, nn.Trim());
+            string err = ProfileStore.Rename(p.Name, nn.Trim());
+            if (err != null) { MessageBox.Show(err); return; }
+            LoadList();
+        }
+
+        private void CopySel()
+        {
+            Profile p = Sel();
+            if (p == null) return;
+            string nn = PromptForm.Ask("复制成什么名字？（当前：" + p.Name + "）", "另存为");
+            if (string.IsNullOrEmpty(nn)) return;
+            string err = ProfileStore.CopyAs(p.Name, nn.Trim());
             if (err != null) { MessageBox.Show(err); return; }
             LoadList();
         }
 
         private void DeleteSel()
         {
-            string s = Sel();
-            if (s == null) return;
-            if (MessageBox.Show("删除方案「" + s + "」？", "确认", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-            ProfileStore.Delete(s);
+            Profile p = Sel();
+            if (p == null) return;
+            if (MessageBox.Show("删除方案「" + p.Name + "」？", "确认", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            ProfileStore.Delete(p.Name);
             LoadList();
         }
 
         private void ExportSel()
         {
-            string s = Sel();
-            if (s == null) { MessageBox.Show("先选一个方案。"); return; }
-            SaveFileDialog d = new SaveFileDialog(); d.Filter = "方案文件|*.txt"; d.FileName = s + ".txt";
+            Profile p = Sel();
+            if (p == null) { MessageBox.Show("先选一个方案。"); return; }
+            SaveFileDialog d = new SaveFileDialog(); d.Filter = "方案文件|*.txt"; d.FileName = p.Name + ".txt";
             if (d.ShowDialog() != DialogResult.OK) return;
-            File.Copy(Path.Combine(ProfileStore.DirOf(), s + ".txt"), d.FileName, true);
+            File.Copy(Path.Combine(ProfileStore.DirOf(), p.Name + ".txt"), d.FileName, true);
             MessageBox.Show("已导出: " + d.FileName);
+        }
+
+        private void ExportAll()
+        {
+            List<Profile> all = ProfileStore.LoadAll();
+            if (all.Count == 0) { MessageBox.Show("还没有方案可导出。"); return; }
+            FolderBrowserDialog d = new FolderBrowserDialog();
+            d.Description = "选一个文件夹，把所有方案（" + all.Count + " 个）导出进去";
+            if (d.ShowDialog() != DialogResult.OK) return;
+            int n = 0;
+            foreach (Profile p in all)
+            {
+                try
+                {
+                    File.Copy(Path.Combine(ProfileStore.DirOf(), p.Name + ".txt"), Path.Combine(d.SelectedPath, p.Name + ".txt"), true);
+                    n++;
+                }
+                catch { }
+            }
+            MessageBox.Show("已导出 " + n + " 个方案到：\r\n" + d.SelectedPath);
         }
 
         private void ImportFile()
@@ -1889,10 +1983,15 @@ namespace Installer
             string dst = Path.Combine(ProfileStore.DirOf(), name + ".txt");
             if (File.Exists(dst) && MessageBox.Show("已有同名方案，覆盖？", "确认", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
             File.Copy(d.FileName, dst, true);
+            Profile p = ProfileStore.Load(name);
             LoadList();
-            MessageBox.Show("已导入方案: " + name);
+            if (p != null && p.Mods.Count == 0)
+                                MessageBox.Show("已导入方案: " + name + "\r\n\r\n⚠ 但这个文件里一个 MOD 都没读到，可能是别的版本导出的。", "导入完成", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else
+                MessageBox.Show("已导入方案: " + name + (p == null ? "" : "（" + p.Mods.Count + " 个 MOD）"));
         }
     }
+
     /// <summary>分类下拉的一项：两级（大类 + 细分），屏幕上看人话，筛选用字段。</summary>
     public sealed class CatChoice
     {
