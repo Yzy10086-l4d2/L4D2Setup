@@ -298,6 +298,7 @@ namespace Installer
             cms.Items.Add("删除所选 → U 盘 _回收的MOD", null, delegate { DeleteSelectedMods(); });
             cms.Items.Add("重命名所选", null, delegate { RenameSelectedMod(); });
             cms.Items.Add("设置标签…", null, delegate { SetTags(); });
+            cms.Items.Add("只装勾中的 MOD（不动平台/启动项）", null, delegate { InstallSelectedOnly(); });
             cms.Items.Add("批量导入 vpk…", null, delegate { BulkImport(); });
             cms.Items.Add("清理同名重复（每个名字留第一个）", null, delegate { CleanDupMods(); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealMod(); });
@@ -1128,6 +1129,51 @@ namespace Installer
             MessageBox.Show(sb.ToString(), "MOD 信息");
         }
 
+        // 只装勾中的这几个 MOD：不碰平台、不写启动项、不改参数（给"我就想加一个"用）
+        private void InstallSelectedOnly()
+        {
+            string root = txtGame == null ? "" : txtGame.Text.Trim();
+            if (root.Length == 0 || !Core.TestGame(root))
+            {
+                MessageBox.Show("先选对游戏目录（有 left4dead2.exe 的那个）。");
+                return;
+            }
+            List<ModItem> sel = Selected();
+            if (sel.Count == 0)
+            {
+                MessageBox.Show("先在右边列表里勾上要装的 MOD（行首的方块）。");
+                return;
+            }
+            Work.Overwrite = !rdSkip.Checked;
+            int copied = 0, skipped = 0;
+            List<string> added = null, failed = null;
+            try
+            {
+                RunBusy<int>("正在装这几个 MOD…", delegate
+                {
+                    Work.CopyMods(root, sel, null, out copied, out skipped, out added, out failed);
+                    return 0;
+                });
+            }
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "只装 MOD 出错: " + ex.Message);
+                MessageBox.Show("装失败了：" + ex.Message + "\r\n详细信息看下面的日志。", "只装 MOD");
+                return;
+            }
+            if (failed != null && failed.Count > 0)
+            {
+                Core.Log("FAIL", "只装 MOD：失败 " + failed.Count + " 个（" + string.Join("、", failed.ToArray()) + "）");
+                MessageBox.Show("有 " + failed.Count + " 个没装进去，多半是游戏正开着（文件被占用）或盘满了。\r\n看下面日志的 FAIL 行。", "没装全", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            foreach (ModItem it in sel) st[it.Name] = true;
+            AddonList.Write(root, st);
+            Core.Log("OK", "只装 MOD：写入 " + copied + " 个、跳过 " + skipped + " 个（平台/启动项/参数都没动）");
+            MessageBox.Show("装好了：" + copied + " 个文件" + (skipped > 0 ? "，已是同样大小跳过 " + skipped + " 个" : "") + "。\r\n\r\n已经写进 addonlist，进游戏就生效。\r\n平台、启动项、参数都没动。", "只装 MOD");
+        }
+
         private void BulkImport()
         {
             FolderBrowserDialog d = new FolderBrowserDialog();
@@ -1423,6 +1469,19 @@ namespace Installer
             sb.AppendLine("MOD 库    : " + Core.ModList.Count + " 个 vpk");
             MessageBox.Show(sb.ToString(), "环境自检");
             Core.Log("INFO", "环境自检：" + Environment.OSVersion.VersionString + " / .NET " + Environment.Version + " / 管理员=" + admin);
+        }
+
+        // 方案管理窗口复用主界面的分类清单（同一个 cboCat，显示与主界面完全一致）
+        public List<CatChoice> CatChoices()
+        {
+            List<CatChoice> r = new List<CatChoice>();
+            if (cboCat == null) return r;
+            foreach (object o in cboCat.Items)
+            {
+                CatChoice c = o as CatChoice;
+                if (c != null) r.Add(c);
+            }
+            return r;
         }
 
         public void ApplyProfileByName(string name)
@@ -1804,6 +1863,7 @@ namespace Installer
         private CheckedListBox clb;
         private TextBox txtSearch;
         private CheckBox chkOnlyPicked;
+        private ComboBox cboCat;
         private Label lblTitle2, lblInfo;
         private MainForm owner;
 
@@ -1849,7 +1909,16 @@ namespace Installer
             lblTitle2 = new Label(); lblTitle2.Text = "这套会装什么（勾/取消 = 加减 MOD）"; lblTitle2.SetBounds(248, 12, 320, 20);
             lblTitle2.Anchor = AnchorStyles.Top | AnchorStyles.Left; Theme.Dress(lblTitle2); Controls.Add(lblTitle2);
 
-            txtSearch = new TextBox(); txtSearch.SetBounds(248, 34, 400, 24);
+            cboCat = new ComboBox(); cboCat.SetBounds(248, 34, 160, 24);
+            cboCat.DropDownStyle = ComboBoxStyle.DropDownList;
+            cboCat.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            Theme.Dress(cboCat);
+            foreach (CatChoice cc in owner.CatChoices()) cboCat.Items.Add(cc);
+            if (cboCat.Items.Count > 0) cboCat.SelectedIndex = 0;
+            cboCat.SelectedIndexChanged += delegate { RebuildRows(); };
+            Controls.Add(cboCat);
+
+            txtSearch = new TextBox(); txtSearch.SetBounds(416, 34, 190, 24);
             txtSearch.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             Theme.Dress(txtSearch);
             txtSearch.Text = HintText; txtSearch.ForeColor = Theme.Ink3;
@@ -1864,13 +1933,25 @@ namespace Installer
             txtSearch.TextChanged += delegate { if (!hintOn) RebuildRows(); };
             Controls.Add(txtSearch);
 
-            chkOnlyPicked = new CheckBox(); chkOnlyPicked.Text = "只看已选"; chkOnlyPicked.SetBounds(660, 36, 100, 22);
+            FlatButton selAll = new FlatButton(); selAll.Text = "全选"; selAll.SetBounds(248, 62, 64, Theme.H);
+            selAll.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            selAll.Click += delegate { SetFiltered(true); }; Controls.Add(selAll);
+            FlatButton selNone = new FlatButton(); selNone.Text = "全不选"; selNone.SetBounds(318, 62, 72, Theme.H);
+            selNone.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            selNone.Click += delegate { SetFiltered(false); }; Controls.Add(selNone);
+
+            chkOnlyPicked = new CheckBox(); chkOnlyPicked.Text = "只看已选"; chkOnlyPicked.SetBounds(714, 36, 94, 22);
             chkOnlyPicked.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             Theme.Dress(chkOnlyPicked);
             chkOnlyPicked.CheckedChanged += delegate { RebuildRows(); };
             Controls.Add(chkOnlyPicked);
 
-            clb = new CheckedListBox(); clb.SetBounds(248, 64, 560, 356);
+            ToolTip tips = new ToolTip();
+            tips.SetToolTip(selAll, "把当前筛选出来的行全部勾上（算未保存改动，点「保存」才写回方案）");
+            tips.SetToolTip(selNone, "把当前筛选出来的行全部取消（同样要点「保存」）");
+            tips.SetToolTip(txtSearch, "按 MOD 文件名或分类筛选；配合「只看已选」可以只看这个方案里的");
+
+            clb = new CheckedListBox(); clb.SetBounds(248, 94, 560, 326);
             clb.BorderStyle = BorderStyle.FixedSingle; clb.BackColor = Theme.Surface; clb.ForeColor = Theme.Ink;
             clb.CheckOnClick = true;
             clb.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
@@ -1958,6 +2039,9 @@ namespace Installer
                 clb.Items.Clear();
                 rowKeys.Clear();
                 string q = hintOn || txtSearch.Text == null ? "" : txtSearch.Text.Trim();
+                CatChoice cc = cboCat.SelectedItem as CatChoice;
+                string fcat = cc == null ? "" : cc.Cat;
+                string fsub = cc == null ? null : cc.Sub;
                 bool only = chkOnlyPicked.Checked;
                 List<ModItem> sorted = new List<ModItem>(Core.ModList);
                 sorted.Sort(delegate(ModItem a, ModItem b)
@@ -1971,6 +2055,8 @@ namespace Installer
                 foreach (ModItem it in sorted)
                 {
                     if (only && !picked.Contains(it.Key)) continue;
+                    if (fcat.Length > 0 && !string.Equals(it.Cat, fcat, StringComparison.Ordinal)) continue;
+                    if (fsub != null && !string.Equals(it.Sub, fsub, StringComparison.Ordinal)) continue;
                     string text = TextOf(it);
                     if (q.Length > 0 && text.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
                     int i = clb.Items.Add(text);
@@ -2002,6 +2088,28 @@ namespace Installer
             if (miss > 0) t += " ｜ ⚠ " + miss + " 个库里找不到（保存后仍保留）";
             if (dirty) t += " ｜ 有改动未保存";
             lblInfo.Text = t;
+        }
+
+        // 批量：对"当前列表里显示的行"全选 / 全不选
+        private void SetFiltered(bool on)
+        {
+            if (rowKeys.Count == 0) return;
+            bool changed = false;
+            foreach (string k in rowKeys)
+            {
+                if (on && !picked.Contains(k)) { picked.Add(k); changed = true; }
+                else if (!on && picked.Contains(k)) { picked.Remove(k); changed = true; }
+            }
+            if (!changed) return;
+            filling = true;
+            try
+            {
+                for (int i = 0; i < rowKeys.Count; i++) clb.SetItemChecked(i, on);
+            }
+            finally { filling = false; }
+            dirty = true;
+            MarkTitle();
+            UpdateInfo();
         }
 
         private void SaveScheme()
