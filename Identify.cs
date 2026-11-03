@@ -269,6 +269,130 @@ namespace Installer
             catch { return "0|0"; }
         }
 
+        // ============ 内容分类：只读目录表，判"大类型" ============
+        // 原则：有把握才返回 true；没把握交回目录规则（不猜）
+        private static readonly string[,] GunKeys = new string[,]
+        {
+            {"rifle_ak47","AK47"},{"ak47","AK47"},
+            {"smg_mp5","MP5"},{"mp5","MP5"},
+            {"rifle_m16","M16"},{"m16","M16"},
+            {"rifle_desert","三连发"},{"desert_rifle","三连发"},
+            {"scar","scar"},{"sg552","sg552"},{"uzi","uzi"},{"mac10","MAC-10"},{"mac-10","MAC-10"},
+            {"m60","M60"},{"machinegun","机枪"},
+            {"sniper_awp","AWP"},{"awp","AWP"},
+            {"sniper_scout","鸟狙"},{"sniper_military","鸟狙"},{"huntingrifle","鸟狙"},
+            {"pumpshotgun","木喷"},{"shotgun_pump","木喷"},
+            {"shotgun_chrome","铁喷"},{"chrome","铁喷"},
+            {"autoshotgun","一代连喷"},{"shotgun_spas","二代连喷"},
+            {"grenade_launcher","榴弹发射器"},{"pistol_magnum","马格南"},
+            {"katana","近战"},{"machete","近战"},{"crowbar","近战"},{"fireaxe","近战"}
+        };
+
+        private static readonly string[,] CharKeys = new string[,]
+        {
+            {"survivor_namvet","比尔"},{"survivor_teenangst","佐伊"},{"survivor_manager","路易斯"},
+            {"survivor_biker","弗朗西斯"},{"survivor_producer","教练"},{"survivor_gambler","尼克"},
+            {"survivor_mechanic","埃利斯"},{"survivor_coach","教练"}
+        };
+
+        private static bool ClassifyByPaths(List<string> ps, out string cat, out string sub)
+        {
+            cat = ""; sub = "";
+            if (ps.Count == 0) return false;
+
+            // 1) 地图：有 maps/*.bsp
+            foreach (string p in ps)
+                if (p.EndsWith(".bsp", StringComparison.OrdinalIgnoreCase) && (p.StartsWith("maps/") || p.IndexOf("/maps/") >= 0))
+                { cat = "地图"; sub = "单张地图"; return true; }
+
+            // 2) 人物：幸存者模型
+            foreach (string p in ps)
+            {
+                if (p.IndexOf("survivor_", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                for (int i = 0; i < CharKeys.GetLength(0); i++)
+                    if (p.IndexOf(CharKeys[i, 0], StringComparison.OrdinalIgnoreCase) >= 0)
+                    { cat = "人物"; sub = CharKeys[i, 1]; return true; }
+                cat = "人物"; sub = "其他"; return true;
+            }
+
+            // 3) 药品：医疗包/止痛药/肾上腺素 的模型或图标
+            foreach (string p in ps)
+            {
+                if (p.IndexOf("medkit", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "医疗包"; return true; }
+                if (p.IndexOf("painpills", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "止痛药"; return true; }
+                if (p.IndexOf("adrenaline", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "肾上腺素"; return true; }
+                if (p.IndexOf("defibrillator", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "医疗包"; return true; }
+            }
+
+            // 4) 枪械：模型名命中已知枪种
+            foreach (string p in ps)
+            {
+                if (!p.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase)) continue;
+                int s2 = p.LastIndexOf('/');
+                string bn = s2 >= 0 ? p.Substring(s2 + 1) : p;
+                for (int i = 0; i < GunKeys.GetLength(0); i++)
+                    if (bn.IndexOf(GunKeys[i, 0], StringComparison.OrdinalIgnoreCase) >= 0)
+                    { cat = "枪械"; sub = GunKeys[i, 1]; return true; }
+            }
+            return false;
+        }
+
+        /// <summary>散装 vpk：读目录表判类型</summary>
+        public static bool ClassifyByContent(string vpkPath, out string cat, out string sub)
+        {
+            cat = ""; sub = "";
+            List<string> ps = new List<string>();
+            try
+            {
+                Vpk.Walk(vpkPath, 30000, delegate(string p) { if (ps.Count < 30000) ps.Add(p.ToLowerInvariant()); });
+            }
+            catch { return false; }
+            return ClassifyByPaths(ps, out cat, out sub);
+        }
+
+        /// <summary>zip 里的 vpk：只解压前几 MB 的目录表，不解整包</summary>
+        public static bool ClassifyByContentZip(string zipPath, string innerPath, out string cat, out string sub)
+        {
+            cat = ""; sub = "";
+            try
+            {
+                using (System.IO.Compression.ZipArchive za = System.IO.Compression.ZipFile.OpenRead(zipPath))
+                {
+                    System.IO.Compression.ZipArchiveEntry hit = null;
+                    string want = innerPath.Replace('\\', '/');
+                    foreach (System.IO.Compression.ZipArchiveEntry e in za.Entries)
+                        if (string.Equals(e.FullName.Replace('\\', '/'), want, StringComparison.OrdinalIgnoreCase)) { hit = e; break; }
+                    if (hit == null) return false;
+                    using (Stream s = hit.Open())
+                    {
+                        byte[] hdr = new byte[12];
+                        if (!ReadFull(s, hdr, 12)) return false;
+                        uint sig = BitConverter.ToUInt32(hdr, 0);
+                        uint tree = BitConverter.ToUInt32(hdr, 8);
+                        if (sig != 0x55AA1234 || tree < 8 || tree > 16u * 1024 * 1024) return false;
+                        byte[] buf = new byte[tree];
+                        if (!ReadFull(s, buf, (int)tree)) return false;
+                        List<string> ps = new List<string>();
+                        Vpk.WalkBuffer(buf, 30000, delegate(string p) { if (ps.Count < 30000) ps.Add(p.ToLowerInvariant()); });
+                        return ClassifyByPaths(ps, out cat, out sub);
+                    }
+                }
+            }
+            catch { return false; }
+        }
+
+        private static bool ReadFull(Stream s, byte[] buf, int n)
+        {
+            int got = 0;
+            while (got < n)
+            {
+                int r = s.Read(buf, got, n - got);
+                if (r <= 0) return false;
+                got += r;
+            }
+            return true;
+        }
+
         public static Result AnalyzeCached(string relPath, string fullPath)
         {
             LoadCache();

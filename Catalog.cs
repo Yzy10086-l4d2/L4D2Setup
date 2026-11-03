@@ -350,6 +350,30 @@ namespace Installer
         /// <summary>一个 mod 归到哪：先看它放在哪（确定性强），再看 vpk 里改了什么（兜底）。</summary>
         public static void Classify(ModItem it)
         {
+            // 0) 内容优先：有把握才用（散装 vpk 直接读；zip 里的读目录表前缀）
+            string ccat = "", csub = "";
+            bool hitContent = false;
+            try
+            {
+                if (string.IsNullOrEmpty(it.Inner))
+                {
+                    if (it.FullPath != null && it.FullPath.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
+                        hitContent = ModIdentify.ClassifyByContent(it.FullPath, out ccat, out csub);
+                }
+                else if (it.FullPath != null && it.FullPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    hitContent = ModIdentify.ClassifyByContentZip(it.FullPath, it.Inner, out ccat, out csub);
+                }
+            }
+            catch { hitContent = false; }
+            if (hitContent)
+            {
+                it.Cat = ccat;
+                it.Sub = csub;
+                it.Category = it.Cat;
+                return;
+            }
+
             string[] segs = DirSegs(it);
 
             // 地图只看「包放在哪个系列目录下」，不看包里面套的目录名，
