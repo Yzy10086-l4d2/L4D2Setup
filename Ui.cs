@@ -1782,44 +1782,67 @@ namespace Installer
 
     public class ProfileManageForm : Form
     {
-        private ListBox lb, lbItems;
+        private ListBox lb;
+        private CheckedListBox clb;
+        private TextBox txtSearch;
         private Label lblInfo;
         private MainForm owner;
+
+        private Profile current;                                   // 正在编辑的方案（null=没选）
+        private readonly Dictionary<string, ModItem> allItems = new Dictionary<string, ModItem>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<string> rowKeys = new List<string>(); // clb 第 i 行对应的 ModItem.Key
+        private HashSet<string> picked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private bool filling = false;
 
         public ProfileManageForm(MainForm o)
         {
             owner = o;
-            Text = "方案管理 —— 左边选方案，右边看它装什么";
-            ClientSize = new Size(672, 396);
+            Text = "方案管理 —— 左边选方案，右边勾选增减 MOD";
+            ClientSize = new Size(760, 470);
             BackColor = Theme.Bg;
             Font = Theme.UI;
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = false; MaximizeBox = false;
 
+            foreach (ModItem it in Core.ModList) allItems[it.Key] = it;
+
             Label l1 = new Label(); l1.Text = "方案"; l1.SetBounds(12, 12, 60, 20); Theme.Dress(l1); Controls.Add(l1);
-            lb = new ListBox(); lb.SetBounds(12, 34, 250, 266);
+            lb = new ListBox(); lb.SetBounds(12, 34, 220, 356);
             lb.BorderStyle = BorderStyle.FixedSingle; lb.BackColor = Theme.Surface; lb.ForeColor = Theme.Ink;
-            lb.SelectedIndexChanged += delegate { ShowItems(); }; lb.DoubleClick += delegate { ApplySel(); }; Controls.Add(lb);
-            Label l2 = new Label(); l2.Text = "这套会装什么"; l2.SetBounds(274, 12, 200, 20); Theme.Dress(l2); Controls.Add(l2);
-            lbItems = new ListBox(); lbItems.SetBounds(274, 34, 386, 266);
-            lbItems.BorderStyle = BorderStyle.FixedSingle; lbItems.BackColor = Theme.Surface; lbItems.ForeColor = Theme.Ink;
-            Controls.Add(lbItems);
-            lblInfo = new Label(); lblInfo.SetBounds(274, 304, 386, 20); lblInfo.Text = ""; lblInfo.ForeColor = Theme.Ink3; lblInfo.Font = Theme.UISmall; Controls.Add(lblInfo);
+            lb.SelectedIndexChanged += delegate { LoadSel(); }; lb.DoubleClick += delegate { ApplySel(); }; Controls.Add(lb);
 
-            FlatButton ap = new FlatButton(); ap.Text = "套用"; ap.Primary = true; ap.SetBounds(12, 312, 72, Theme.H); ap.Click += delegate { ApplySel(); }; Controls.Add(ap);
-            FlatButton rn = new FlatButton(); rn.Text = "改名"; rn.SetBounds(92, 312, 72, Theme.H); rn.Click += delegate { RenameSel(); }; Controls.Add(rn);
-            FlatButton de = new FlatButton(); de.Text = "删除"; de.SetBounds(172, 312, 72, Theme.H); de.Click += delegate { DeleteSel(); }; Controls.Add(de);
-            FlatButton cp = new FlatButton(); cp.Text = "另存为…"; cp.SetBounds(252, 312, 96, Theme.H); cp.Click += delegate { CopySel(); }; Controls.Add(cp);
-            FlatButton cl = new FlatButton(); cl.Text = "关闭"; cl.SetBounds(572, 312, 88, Theme.H); cl.DialogResult = DialogResult.Cancel; Controls.Add(cl);
+            FlatButton ap = new FlatButton(); ap.Text = "套用"; ap.Primary = true; ap.SetBounds(12, 398, 68, Theme.H); ap.Click += delegate { ApplySel(); }; Controls.Add(ap);
+            FlatButton rn = new FlatButton(); rn.Text = "改名"; rn.SetBounds(86, 398, 68, Theme.H); rn.Click += delegate { RenameSel(); }; Controls.Add(rn);
+            FlatButton de = new FlatButton(); de.Text = "删除"; de.SetBounds(160, 398, 68, Theme.H); de.Click += delegate { DeleteSel(); }; Controls.Add(de);
+            FlatButton cp = new FlatButton(); cp.Text = "另存为…"; cp.SetBounds(12, 432, 104, Theme.H); cp.Click += delegate { CopySel(); }; Controls.Add(cp);
+            FlatButton im = new FlatButton(); im.Text = "导入…"; im.SetBounds(124, 432, 96, Theme.H); im.Click += delegate { ImportFile(); }; Controls.Add(im);
+
+            Label l2 = new Label(); l2.Text = "这套会装什么（勾/取消 = 加减 MOD）"; l2.SetBounds(248, 12, 300, 20); Theme.Dress(l2); Controls.Add(l2);
+            txtSearch = new TextBox(); txtSearch.SetBounds(248, 34, 484, 24);
+            Theme.Dress(txtSearch);
+            txtSearch.TextChanged += delegate { RebuildRows(); }; Controls.Add(txtSearch);
+            Label l3 = new Label(); l3.Text = "搜 MOD"; l3.SetBounds(746, 36, 10, 20); l3.Visible = false; Controls.Add(l3);
+
+            clb = new CheckedListBox(); clb.SetBounds(248, 64, 484, 326);
+            clb.BorderStyle = BorderStyle.FixedSingle; clb.BackColor = Theme.Surface; clb.ForeColor = Theme.Ink;
+            clb.CheckOnClick = true;
+            clb.ItemCheck += OnItemCheck;
+            clb.SelectedIndexChanged += delegate { };
+            Controls.Add(clb);
+
+            lblInfo = new Label(); lblInfo.SetBounds(248, 394, 484, 20); lblInfo.Text = ""; lblInfo.ForeColor = Theme.Ink3; lblInfo.Font = Theme.UISmall; Controls.Add(lblInfo);
+
+            FlatButton sv = new FlatButton(); sv.Text = "保存"; sv.Primary = true; sv.SetBounds(248, 418, 88, Theme.H); sv.Click += delegate { SaveScheme(); }; Controls.Add(sv);
+            FlatButton rl = new FlatButton(); rl.Text = "还原"; rl.SetBounds(344, 418, 72, Theme.H); rl.Click += delegate { LoadSel(); }; Controls.Add(rl);
+            FlatButton ex = new FlatButton(); ex.Text = "导出…"; ex.SetBounds(424, 418, 84, Theme.H); ex.Click += delegate { ExportSel(); }; Controls.Add(ex);
+            FlatButton ea = new FlatButton(); ea.Text = "全部导出…"; ea.SetBounds(516, 418, 104, Theme.H); ea.Click += delegate { ExportAll(); }; Controls.Add(ea);
+            FlatButton cl = new FlatButton(); cl.Text = "关闭"; cl.SetBounds(644, 418, 88, Theme.H); cl.DialogResult = DialogResult.Cancel; Controls.Add(cl);
             CancelButton = cl;
-
-            FlatButton ex = new FlatButton(); ex.Text = "导出…"; ex.SetBounds(12, 352, 84, Theme.H); ex.Click += delegate { ExportSel(); }; Controls.Add(ex);
-            FlatButton im = new FlatButton(); im.Text = "导入…"; im.SetBounds(104, 352, 84, Theme.H); im.Click += delegate { ImportFile(); }; Controls.Add(im);
-            FlatButton ea = new FlatButton(); ea.Text = "全部导出…"; ea.SetBounds(196, 352, 104, Theme.H); ea.Click += delegate { ExportAll(); }; Controls.Add(ea);
 
             LoadList();
         }
 
+        // ---------- 左栏 ----------
         private void LoadList()
         {
             Profile keep = Sel();
@@ -1827,82 +1850,97 @@ namespace Installer
             lb.Items.Clear();
             List<Profile> items = ProfileStore.LoadAll();
             foreach (Profile p in items) lb.Items.Add(p);
-            if (lb.Items.Count == 0) { lb.Items.Add("（还没有方案）"); lbItems.Items.Clear(); lblInfo.Text = ""; return; }
-            int idx = 0;
+            if (lb.Items.Count == 0) { lb.Items.Add("（还没有方案）"); clb.Items.Clear(); lblInfo.Text = ""; current = null; return; }
+            int idx = -1;
             if (keepName != null)
                 for (int i = 0; i < items.Count; i++) if (items[i].Name == keepName) { idx = i; break; }
-            lb.SelectedIndex = idx;
-        }
-
-        private void ShowItems()
-        {
-            lbItems.Items.Clear();
-            Profile p = Sel();
-            if (p == null) { lblInfo.Text = ""; return; }
-            List<string> lines = new List<string>();
-            int missCount = 0;
-            List<string> missShown = new List<string>();
-            int modLines = 0;
-            foreach (string r in p.Mods)
-            {
-                ModItem it;
-                if (!Core.ByRel.TryGetValue(r, out it))
-                {
-                    missCount++;
-                    string mm = r.StartsWith("#arc#") ? "（压缩包里的文件已不在）" : ("（找不到 " + r + "）");
-                    if (!missShown.Contains(mm)) { missShown.Add(mm); lbItems.Items.Add(mm); }
-                    continue;
-                }
-                ModGroup g;
-                string line = Catalog.GroupByKey.TryGetValue(it.GroupKey, out g)
-                    ? (g.Where + "    " + g.Name)
-                    : (it.Cat + " · " + it.Sub + "    " + it.Name);
-                if (lines.Contains(line)) continue;
-                lines.Add(line);
-                lbItems.Items.Add(line);
-                modLines++;
-            }
-            if (p.Mods.Count == 0) lbItems.Items.Add("（空方案）");
-            string info = "共 " + p.Mods.Count + " 个文件、" + modLines + " 个 MOD  ｜  平台: " + PrettyPlat(p.Plat);
-            if (p.Saved != DateTime.MinValue) info += "  ｜  存于 " + p.Saved.ToString("yyyy-MM-dd HH:mm");
-            if (missCount > 0) info += "  ｜  ⚠ " + missCount + " 个找不到";
-            if (!string.IsNullOrEmpty(p.SelfTest)) info += "  ｜  " + SelfTestText(p.SelfTest);
-            lblInfo.Text = info;
-        }
-
-        private static string SelfTestText(string raw)
-        {
-            string[] a = raw.Split('|');
-            if (a.Length < 2) return "上次自检：未知";
-            string when = a.Length >= 3 ? ("（" + a[2].Substring(Math.Max(0, a[2].Length - 5)) + "）") : "";
-            if (a[0] == "FAIL") return "上次自检：⚠ " + a[1] + " 秒崩" + when;
-            return "上次自检：通过（" + a[1] + " 秒）" + when;
-        }
-
-        private static string PrettyPlat(string plat)
-        {
-            if (string.IsNullOrEmpty(plat)) return "（未记录）";
-            string r = "";
-            foreach (string part in plat.Split(';'))
-            {
-                string[] kv = part.Split('=');
-                if (kv.Length != 2 || kv[1] != "1") continue;
-                switch (kv[0])
-                {
-                    case "Skeeto": r += "Skeeto "; break;
-                    case "Asset": r += "素材包 "; break;
-                    case "Mqcam": r += "MQCam "; break;
-                    case "Dxvk": r += "dxvk "; break;
-                    case "Launch": r += "启动项 "; break;
-                    case "Cfg": r += "autoexec "; break;
-                }
-            }
-            return r.Length == 0 ? "（只装 MOD）" : r.Trim();
+            lb.SelectedIndex = idx < 0 ? 0 : idx;
         }
 
         private Profile Sel()
         {
             return lb.SelectedItem as Profile;
+        }
+
+        private void LoadSel()
+        {
+            Profile p = Sel();
+            if (p == null) { current = null; clb.Items.Clear(); rowKeys.Clear(); lblInfo.Text = ""; return; }
+            Profile fresh = ProfileStore.Load(p.Name);
+            current = fresh == null ? p : fresh;
+            picked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string k in current.Mods) picked.Add(k);
+            RebuildRows();
+        }
+
+        // ---------- 右栏 ----------
+        private string TextOf(ModItem it)
+        {
+            ModGroup g;
+            if (Catalog.GroupByKey.TryGetValue(it.GroupKey, out g))
+                return g.Where + " · " + g.Name + "    [" + it.Name + "]";
+            return it.Cat + " · " + it.Sub + "    " + it.Name;
+        }
+
+        private void RebuildRows()
+        {
+            filling = true;
+            try
+            {
+                clb.BeginUpdate();
+                clb.Items.Clear();
+                rowKeys.Clear();
+                string q = txtSearch.Text == null ? "" : txtSearch.Text.Trim();
+                foreach (ModItem it in Core.ModList)
+                {
+                    string text = TextOf(it);
+                    if (q.Length > 0 && text.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    int i = clb.Items.Add(text);
+                    rowKeys.Add(it.Key);
+                    if (picked.Contains(it.Key)) clb.SetItemChecked(i, true);
+                }
+                clb.EndUpdate();
+            }
+            finally { filling = false; }
+            UpdateInfo();
+        }
+
+        private void OnItemCheck(object sender, ItemCheckEventArgs e)
+        {
+            if (filling) return;
+            int i = e.Index;
+            if (i < 0 || i >= rowKeys.Count) return;
+            string key = rowKeys[i];
+            if (e.NewValue == CheckState.Checked) picked.Add(key);
+            else picked.Remove(key);
+            UpdateInfo();
+        }
+
+        private void UpdateInfo()
+        {
+            int miss = 0;
+            foreach (string k in picked) if (!Core.ByRel.ContainsKey(k)) miss++;
+            string t = "已选 " + picked.Count + " 个文件（当前筛选显示 " + rowKeys.Count + " 行）";
+            if (miss > 0) t += "  ｜  ⚠ 其中 " + miss + " 个在库里找不到（保存后仍保留）";
+            if (current != null) t += "  ｜  " + current.Name;
+            lblInfo.Text = t;
+        }
+
+        // ---------- 动作 ----------
+        private void SaveScheme()
+        {
+            Profile p = Sel();
+            if (p == null || current == null) { MessageBox.Show("先选一个方案。"); return; }
+            Profile fresh = ProfileStore.Load(current.Name);
+            if (fresh == null) { MessageBox.Show("这个方案的文件不见了。"); return; }
+            List<string> mods = new List<string>();
+            foreach (ModItem it in Core.ModList) if (picked.Contains(it.Key)) mods.Add(it.Key);
+            foreach (string k in picked) if (!mods.Contains(k)) mods.Add(k);   // 库里找不到的老引用原样保留
+            fresh.Mods = mods;
+            string bak = ProfileStore.Save(fresh, true);
+            current = fresh;
+            LoadList();
+            MessageBox.Show("已保存「" + fresh.Name + "」：" + mods.Count + " 个文件。" + (bak == null ? "" : "\r\n旧版备份：" + Path.GetFileName(bak)), "保存方案");
         }
 
         private void ApplySel()
@@ -1986,11 +2024,12 @@ namespace Installer
             Profile p = ProfileStore.Load(name);
             LoadList();
             if (p != null && p.Mods.Count == 0)
-                                MessageBox.Show("已导入方案: " + name + "\r\n\r\n⚠ 但这个文件里一个 MOD 都没读到，可能是别的版本导出的。", "导入完成", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("已导入方案: " + name + "\r\n\r\n⚠ 但这个文件里一个 MOD 都没读到，可能是别的版本导出的。", "导入完成", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             else
                 MessageBox.Show("已导入方案: " + name + (p == null ? "" : "（" + p.Mods.Count + " 个 MOD）"));
         }
     }
+
 
     /// <summary>分类下拉的一项：两级（大类 + 细分），屏幕上看人话，筛选用字段。</summary>
     public sealed class CatChoice
