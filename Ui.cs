@@ -37,8 +37,21 @@ namespace Installer
         private int logLines;                    // 日志行数，超了就截断，避免文本框越用越慢
         private readonly System.Windows.Forms.Timer searchTimer = new System.Windows.Forms.Timer();
         private volatile bool bgDone;            // RunBusy 的完成标志
+        private int lastRespW = -1;   // 上一次重排用的窗口宽度（拖动时去重，少重排一半以上）
         private object bgResult;
         private Exception bgError;
+
+        // 缩放窗口时闪/错位：整窗走系统合成（WS_EX_COMPOSITED）+ 双缓冲，
+        // 子控件不再各自重绘；配合 ApplyResponsive 里的 SuspendLayout，拖动时只排一次
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= 0x02000000;   // WS_EX_COMPOSITED
+                return cp;
+            }
+        }
 
         public MainForm(string gameRootHint)
         {
@@ -47,6 +60,7 @@ namespace Installer
             Text = "网吧装机台  v" + ver.Major + "." + ver.Minor;
             ClientSize = new Size(940, 700);
             Font = Theme.UI;
+            DoubleBuffered = true;
             StartPosition = FormStartPosition.CenterScreen;
             BuildUi();
             Core.Sink = AppendLog;
@@ -1306,6 +1320,9 @@ namespace Installer
         private void ApplyResponsive()
         {
             int W = ClientSize.Width;
+            if (W == lastRespW) return;
+            lastRespW = W;
+            SuspendLayout();
             int leftW = 396;                                   // 左栏定宽：够放最长的复选框文案
             int rightX = Theme.M + leftW + Theme.G;
             int rightW = W - Theme.M - rightX;
@@ -1359,6 +1376,7 @@ namespace Installer
             lvMods.Columns[1].Width = subjW;
             lvMods.Columns[2].Width = sizeW;
             lvMods.Columns[3].Width = Math.Max(104, w - nameW - subjW - sizeW);
+            ResumeLayout(true);
         }
 
         private bool TestWritable(string dir)
