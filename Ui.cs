@@ -118,17 +118,18 @@ namespace Installer
                     List<string> packs = Core.CheckPackages(out packOk);
                     Core.Log("INFO", "启动计时: 包检查 " + __sw.ElapsedMilliseconds + " ms");
                     __sw.Restart();
-                    Core.ScanMods();
-                    Core.Log("INFO", "启动计时: 扫库 " + __sw.ElapsedMilliseconds + " ms（" + Core.ModList.Count + " 个）");
-
+                    // 先找游戏再扫库：游戏 addons 里的已装 MOD 是扫描范围的一部分，
+                    // 第一次在别的电脑上打开也得第一时间认出来，不能等下次启动
                     string found = null;
                     if (needFind)
                     {
-                        __sw.Restart();
                         List<string> g = Core.FindGames();
                         if (g.Count > 0) found = g[0];
                         Core.Log("INFO", "启动计时: 找游戏 " + __sw.ElapsedMilliseconds + " ms（找到 " + g.Count + " 个）");
+                        __sw.Restart();
                     }
+                    Core.ScanMods();
+                    Core.Log("INFO", "启动计时: 扫库 " + __sw.ElapsedMilliseconds + " ms（" + Core.ModList.Count + " 个）");
 
                     SafeInvoke(delegate
                     {
@@ -941,6 +942,7 @@ namespace Installer
             cms.Items.Add(new ToolStripSeparator());
 
             cms.Items.Add("从文件夹导入…（vpk / rar / zip）", null, delegate { BulkImport(); });
+            cms.Items.Add("库文件夹管理…（把电脑上任意目录加进扫描范围）", null, delegate { ManageModDirs(); });
             cms.Items.Add("识别压缩包内容（第一次慢，之后走缓存）", null, delegate { ProbeArchivesUi(); });
             cms.Items.Add("清理同名重复（每个名字留第一个）", null, delegate { CleanDupMods(); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
@@ -1472,7 +1474,10 @@ namespace Installer
             List<ModItem> list = CheckedOrSelected(lv);
             if (list.Count == 0) { MessageBox.Show("先在列表里勾选，或选中一行。"); return; }
             foreach (ModItem it in list)
+            {
                 if (it.IsArchive) { MessageBox.Show("「" + it.Name + "」在压缩包里（" + it.Container + "），\r\n装机台不会去改 U 盘上的压缩包。想删请自己在资源管理器里处理。", "不能删除"); return; }
+                if (it.FromGame) { MessageBox.Show("「" + it.Name + "」在游戏目录 addons 里，是已装的 MOD，不是库里的。\r\n要移除请用「已装 MOD 开关」或自己删。", "不能删除"); return; }
+            }
             if (MessageBox.Show("把这 " + list.Count + " 个 vpk 移到 U 盘 _回收的MOD？\r\n（不真删，想用可以再拖回来）", "确认", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             int n = 0;
             foreach (ModItem it in list)
@@ -1505,6 +1510,7 @@ namespace Installer
             }
             if (it == null) { MessageBox.Show("这一行没有对应的 vpk。"); return; }
             if (it.IsArchive) { MessageBox.Show("压缩包里的 vpk 不能改名。\r\n要用改名后的版本，请先解压出来。", "不能重命名"); return; }
+            if (it.FromGame) { MessageBox.Show("这个 MOD 在游戏目录 addons 里，改名会破坏游戏识别。\r\n想改请先把它挪进 MOD 库。", "不能重命名"); return; }
 
             string nn = PromptForm.Ask("新名字（不用写 .vpk）", "重命名 " + it.Name);
             if (string.IsNullOrEmpty(nn)) return;
@@ -1698,6 +1704,122 @@ namespace Installer
                 + "这些 MOD 现在只是躺在库里，**没装进游戏**——要用的时候勾上，右键「只装勾中的 MOD」。", "导入");
         }
 
+        /// <summary>库文件夹管理：把电脑上任意目录加进/移出扫描范围。工具不再只服务 U 盘布局。</summary>
+        private void ManageModDirs()
+        {
+            using (LibraryDirsForm f = new LibraryDirsForm())
+            {
+                f.ShowDialog(this);
+            }
+            if (LibraryDirsForm.Dirty)
+            {
+                Core.SaveConfig();
+                Core.Log("OK", "库目录已改，重新扫描…");
+                Core.ScanMods();
+                RefreshMods();
+                RefreshConflicts();
+                if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
+            }
+        }
+
+        /// <summary>小窗口：列出现有扫描目录（主库 + 自设目录），可添加 / 移除。</summary>
+        private class LibraryDirsForm : Form
+        {
+            public static bool Dirty = false;      // 关掉时让外面知道要不要重扫
+            private readonly ListBox lb = new ListBox();
+            private readonly Label lblMain = new Label();
+
+            public LibraryDirsForm()
+            {
+                Dirty = false;
+                Text = "库文件夹管理";
+                ClientSize = new Size(560, 380);
+                Font = Theme.UI;
+                BackColor = Theme.Bg;
+                StartPosition = FormStartPosition.CenterParent;
+                MaximizeBox = false;
+                MinimizeBox = false;
+                ShowInTaskbar = false;
+
+                Label top = new Label();
+                top.SetBounds(12, 10, 536, 52);
+                top.Font = Theme.UISmall;
+                top.ForeColor = Theme.Ink2;
+                top.Text = "下面的文件夹都会被扫描（vpk / rar / zip 全认）。游戏目录 addons 里的已装 MOD 自动识别，不用加。\r\n"
+                         + "在这里加目录只是「原地扫描」，不复制不移动任何文件。";
+                Controls.Add(top);
+
+                lblMain.SetBounds(12, 66, 536, 20);
+                lblMain.Font = Theme.UIBold;
+                lblMain.ForeColor = Theme.Ink2;
+                lblMain.Text = "主库（跟着程序走的默认库）：" + Core.ModRoot;
+                Controls.Add(lblMain);
+
+                lb.SetBounds(12, 92, 536, 220);
+                lb.BorderStyle = BorderStyle.FixedSingle;
+                lb.IntegralHeight = false;
+                lb.BackColor = Theme.Surface;
+                lb.ForeColor = Theme.Ink;
+                Controls.Add(lb);
+
+                FlatButton add = new FlatButton();
+                add.Text = "添加文件夹…";
+                add.SetBounds(12, 326, 120, Theme.H);
+                add.Primary = true;
+                add.Click += delegate { AddDir(); };
+                Controls.Add(add);
+
+                FlatButton del = new FlatButton();
+                del.Text = "移除所选";
+                del.SetBounds(142, 326, 96, Theme.H);
+                del.Click += delegate { RemoveDir(); };
+                Controls.Add(del);
+
+                FlatButton close = new FlatButton();
+                close.Text = "关闭";
+                close.SetBounds(464, 326, 84, Theme.H);
+                close.DialogResult = DialogResult.Cancel;
+                Controls.Add(close);
+                CancelButton = close;
+
+                Fill();
+            }
+
+            private void Fill()
+            {
+                lb.BeginUpdate();
+                lb.Items.Clear();
+                foreach (string d in Core.Cfg.ModDirs) lb.Items.Add(d);
+                lb.EndUpdate();
+            }
+
+            private void AddDir()
+            {
+                FolderBrowserDialog d = new FolderBrowserDialog();
+                d.Description = "选要扫描的 MOD 文件夹（里面放 vpk / rar / zip，子文件夹也会翻）";
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                string p = d.SelectedPath.TrimEnd('\\');
+                if (p.Equals(Core.ModRoot.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                { MessageBox.Show("这就是主库本身，不用再加。"); return; }
+                foreach (object o in lb.Items)
+                    if (string.Equals((string)o, p, StringComparison.OrdinalIgnoreCase))
+                    { MessageBox.Show("已经在列表里了。"); return; }
+                // 和游戏 addons 重叠的不管：游戏目录已装 MOD 是单独认的，重复扫只会多出同名项
+                Core.Cfg.ModDirs.Add(p);
+                Dirty = true;
+                Fill();
+            }
+
+            private void RemoveDir()
+            {
+                if (lb.SelectedItem == null) { MessageBox.Show("先选中一行。"); return; }
+                string p = (string)lb.SelectedItem;
+                Core.Cfg.ModDirs.Remove(p);
+                Dirty = true;
+                Fill();
+            }
+        }
+
         private void SaveProfile()
         {
             List<ModItem> sel = Selected();
@@ -1709,7 +1831,7 @@ namespace Installer
             if (old != null)
             {
                 string when = old.Saved == DateTime.MinValue ? "未知" : old.Saved.ToString("yyyy-MM-dd HH:mm");
-                string q = "已经有「" + name + "」这个方案了（" + old.Mods.Count + " 个 MOD，存于 " + when + "）。\r\n\r\n覆盖它？（旧版会自动留一份 .bak，不会丢）";
+                string q = "已经有「" + name + "」这个方案了（" + old.Mods.Count + " 个 MOD，存于 " + when + "）。\r\n\r\n直接覆盖它？";
                 if (MessageBox.Show(q, "覆盖方案", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             }
             Profile p = new Profile();
@@ -1722,10 +1844,10 @@ namespace Installer
             p.Tweak = TweakName();
             p.Launch = txtLaunch == null ? "" : LaunchArgs.ForWrite(txtLaunch.Text);
             foreach (ModItem it in sel) p.Mods.Add(it.Key);
-            string bak = ProfileStore.Save(p, true);
+            ProfileStore.Save(p, false);              // 同名就是覆盖，不留 .bak（用户明确要求）
             appliedProfile = p.Name;
             FillProfiles();
-            Core.Log("OK", "方案已存：" + p.Name + "（" + p.Mods.Count + " 个 MOD" + (bak == null ? "" : "；旧版备份 " + Path.GetFileName(bak)) + "）");
+            Core.Log("OK", "方案已存（覆盖式）：" + p.Name + "（" + p.Mods.Count + " 个 MOD）");
         }
 
         // 把方案灌进界面。withOptions=false 时只勾 MOD 和平台（下拉预览用），不动安装选项

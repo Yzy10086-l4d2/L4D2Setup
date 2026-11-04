@@ -380,8 +380,10 @@ namespace Installer
 
         /// <summary>
         /// 这件东西是「叠加的扩展」还是「换本体的」。
-        /// 依据是识别出来的「改了什么」，外加一条事实：包里有没有动世界模型。
-        ///   只换第一人称模型、音效、HUD、特效、脚本 = 不和模型本体抢位置，可以作为扩展；
+        /// 依据是识别出来的「改了什么」，外加两条事实：
+        ///   Only1P = 包里的模型全是第一人称（v_），没动世界模型；
+        ///   AnimOnly = 包里的模型全是 anim_/gestures_ 表情骨架（KSEP 表情平台这类陪套）。
+        ///   只换第一人称模型、表情动画、音效、HUD、特效、脚本 = 不和模型本体抢位置，可以作为扩展；
         ///   完整模型、材质、地图 = 换本体，一个位置只能有一套，两套会互相覆盖。
         /// </summary>
         public static bool IsExtra(ModGroup g)
@@ -390,6 +392,7 @@ namespace Installer
             ModItem m = g.Main;
             if (m == null) return false;
             if (m.Only1P) return true;                                         // 只动了第一人称，和整套模型不抢
+            if (m.AnimOnly) return true;                                       // 表情平台：不换人，谁都能叠
             string k = (m.Kinds ?? "").Trim();
             if (k.Length == 0) return false;                                   // 什么都读不出来：当本体，别乱叠
             if (k.IndexOf("模型", StringComparison.Ordinal) >= 0) return false;
@@ -547,10 +550,11 @@ namespace Installer
         private readonly Label lblTitle, lblCur, lblFoot;
         private readonly Label lblExtraTitle;
         private readonly FlatButton btnPick;
+        private readonly FlatButton btnCat;                // 未归类页的手动入口：指定「算哪类 + 替换什么」
 
         private List<Slot> slots = new List<Slot>();
         private int unmatched;                       // 一个位置都归不上的 MOD 数
-        private Label lblHint;
+        private readonly List<ModGroup> unmatchedGroups = new List<ModGroup>();   // 具体是哪几组（未归类页列出来）
         private readonly HashSet<string> folded = new HashSet<string>(StringComparer.Ordinal);
         private string selKey = "";
 
@@ -592,6 +596,7 @@ namespace Installer
             lv.DoubleClick += delegate
             {
                 if (lv.SelectedItems.Count == 0) return;
+                if (selKey == "#unmatched") { mf.SetModCatIn(lv); return; }   // 未归类页：双击 = 手动指定
                 ModGroup g = lv.SelectedItems[0].Tag as ModGroup;
                 if (g == null || !g.IsSet) return;
                 mf.PickPartsIn(lv);
@@ -642,19 +647,21 @@ namespace Installer
             lblExtraTitle.Visible = false;
             Controls.Add(lblExtraTitle);
 
-            lblHint = new Label();
-            lblHint.Font = Theme.UI;
-            lblHint.ForeColor = Theme.Ink3;
-            lblHint.BackColor = Color.Transparent;
-            lblHint.Visible = false;
-            Controls.Add(lblHint);
-
             btnPick = new FlatButton();
             btnPick.Text = "留原版";
             btnPick.SetBounds(0, 0, 66, Theme.H);
             btnPick.Click += delegate { Choose(null); };
             btnPick.Visible = false;          // 列表里已经有「留原版」那一行，按钮就多余了
             Controls.Add(btnPick);
+
+            // 未归类页的手动入口：选中一行点它（或双击那行），告诉程序这个 MOD 算哪一类、替换什么。
+            // 用的是和「设置 MOD 分类…」同一个窗口，保存后立刻重新归组，认出位置就排进树里。
+            btnCat = new FlatButton();
+            btnCat.Text = "指定位置…";
+            btnCat.SetBounds(0, 0, 96, Theme.H);
+            btnCat.Click += delegate { mf.SetModCatIn(lv); };
+            btnCat.Visible = false;
+            Controls.Add(btnCat);
 
             Resize += delegate { LayoutSelf(); };
             LayoutSelf();
@@ -728,13 +735,24 @@ namespace Installer
         {
             slots = SlotIndex.Build();
             SortSlots();
-            int inTree = 0;
-            foreach (Slot s0 in slots) inTree += s0.Items.Count + s0.Extras.Count;
-            // 地图和喷漆本来就不该占位置，别把它们算成「认不出」
-            int eligible = 0;
+            // 未归类 = 库里剩下的、没进任何位置的 MOD，一个不漏全收进列表。
+            // 地图 / 喷漆有自己的页签、本来就不进树（能叠好几张，没有「一个位置」的说法），不算认不出。
+            HashSet<ModGroup> placed = new HashSet<ModGroup>();
+            foreach (Slot s0 in slots)
+            {
+                foreach (ModGroup g0 in s0.Items) placed.Add(g0);
+                foreach (ModGroup g0 in s0.Extras) placed.Add(g0);
+            }
+            unmatchedGroups.Clear();
             foreach (ModGroup g in Catalog.Groups)
-                if (g.Cat != "地图" && g.Cat != "喷漆") eligible++;
-            unmatched = Math.Max(0, eligible - inTree);
+            {
+                if (g.Cat == "地图" || g.Cat == "喷漆") continue;
+                if (placed.Contains(g)) continue;
+                unmatchedGroups.Add(g);
+            }
+            unmatchedGroups.Sort(delegate(ModGroup a, ModGroup b)
+            { return string.Compare(a.Name, b.Name, StringComparison.CurrentCulture); });
+            unmatched = unmatchedGroups.Count;
             BuildRows();
             if (selKey.Length > 0 && selKey != "#unmatched")
             {
@@ -851,6 +869,7 @@ namespace Installer
         internal static string ExtraCat(ModGroup g)
         {
             if (g == null || g.Main == null) return "其他";
+            if (g.Main.AnimOnly) return "表情";                                 // KSEP 这类表情平台
             string k = (g.Main.Kinds ?? "").Trim();
             if (g.Main.Only1P && k.IndexOf("模型", StringComparison.Ordinal) >= 0) return "模型";
             if (k.IndexOf("音效", StringComparison.Ordinal) >= 0) return "音效";
@@ -861,7 +880,7 @@ namespace Installer
         }
 
         /// <summary>扩展小类的固定排序（就是属性顺序），界面上从上到下按这个出。</summary>
-        private static readonly string[] ExtraCatOrder = { "模型", "音效", "HUD", "特效", "脚本" };
+        private static readonly string[] ExtraCatOrder = { "模型", "表情", "音效", "HUD", "特效", "脚本" };
         private static int ExtraCatRank(string cat)
         {
             for (int i = 0; i < ExtraCatOrder.Length; i++)
@@ -887,6 +906,10 @@ namespace Installer
         }
 
         internal int Unmatched { get { return unmatched; } }
+        /// <summary>自测用：未归类页列表当前列了几行（先 SelectUnmatched 再读）。</summary>
+        internal int UnmatchedRows { get { return lv.Items.Count; } }
+        /// <summary>自测用：「指定位置…」手动入口是否可见。</summary>
+        internal bool UnmatchedButtonVisible { get { return btnCat != null && btnCat.Visible; } }
         internal int RowCount { get { return body == null ? 0 : body.RowCount; } }
         internal int SlotCount { get { return slots.Count; } }
         internal int SlotCheckedCount
@@ -960,7 +983,8 @@ namespace Installer
         private void FillDetail()
         {
             if (selKey == "#unmatched") { ShowUnmatched(); return; }
-            lv.Visible = true; lblHint.Visible = false;
+            lv.Visible = true;
+            if (btnCat != null) btnCat.Visible = false;
             Slot s = Current;
             lv.BeginUpdate();
             lvExtra.BeginUpdate();
@@ -1085,19 +1109,46 @@ namespace Installer
             LayoutCols();
         }
 
-        /// <summary>未归类：说明白为什么不在这里动它，而不是假装没有。</summary>
+        /// <summary>
+        /// 未归类页：把没进任何位置的 MOD 全部列出来（一个不漏），
+        /// 选中一行点「指定位置…」或直接双击，就打开「设置 MOD 分类」窗口手动归位。
+        /// </summary>
         private void ShowUnmatched()
         {
-            lv.Visible = false;
-            lblHint.Visible = true;
-            lblFoot.Text = "";
+            lblExtraTitle.Visible = false;
+            lvExtra.Visible = false;
             lblTitle.Text = "未归类";
-            lblCur.Text = unmatched + " 个 MOD 认不出改的是哪件东西";
-            lblHint.Text = "它们的 vpk 里没有能和枪械/人物对上的模型名，程序没法判断该占哪个位置，\n"
-                         + "所以在这里不参与「一个位置一个」。\n\n"
-                         + "不影响装机：在「分类」页里照常勾选，装的时候一模一样。\n"
-                         + "要让它们进树：到「分类」页对那一行右键 →「设置 MOD 分类…」，\n"
-                         + "指定一次「算哪一类 + 替换什么」就记住了，下次自动排进来。";
+            lblCur.Text = unmatched + " 个 MOD 没认出改的是哪件东西";
+            lv.BeginUpdate();
+            try
+            {
+                lv.Items.Clear();
+                foreach (ModGroup g in unmatchedGroups)
+                {
+                    bool on = mf.CountChecked(g) > 0;
+                    ListViewItem li = new ListViewItem(g.Name);
+                    li.SubItems.Add(KindsOf(g));
+                    li.SubItems.Add(Core.Human(g.Size));
+                    li.StateImageIndex = on ? 1 : 0;
+                    if (on) li.Font = Theme.UIBold;
+                    li.Tag = g;
+                    if (g.IsSet)
+                    {
+                        li.UseItemStyleForSubItems = false;
+                        li.SubItems[1].Text = KindsOf(g) + "·组合装" + g.Parts.Count + "件";
+                        li.SubItems[1].ForeColor = Theme.Info;
+                        li.SubItems[1].Font = Theme.UIBold;
+                        li.ToolTipText = PartsTip(g);
+                    }
+                    else li.ToolTipText = "双击这行（或点右下角「指定位置…」），告诉程序它算哪一类、替换什么";
+                    lv.Items.Add(li);
+                }
+            }
+            finally { lv.EndUpdate(); }
+            lblFoot.Text = "不影响装机，照常能勾。选中一行 →「指定位置…」，一次就记住。";
+            if (btnCat != null) btnCat.Visible = true;
+            LayoutSelf();
+            LayoutCols();
         }
 
         private static string KindsOf(ModGroup g)
@@ -1192,7 +1243,6 @@ namespace Installer
             int rightW = Math.Max(120, W - x);
             if (lblTitle != null) lblTitle.SetBounds(x + 16, 12, Math.Max(60, rightW - 32 - 100), 22);
             if (lblCur != null) lblCur.SetBounds(x + 16, 34, Math.Max(60, rightW - 32), 18);
-            if (lblHint != null) lblHint.SetBounds(x + 16, 66, Math.Max(80, rightW - 32), Math.Max(60, H - 120));
 
             // 右半分上下：上半换本体（单选），下半可叠加的扩展（多选）。
             // 没有扩展时下半只留一行说明，上半占满 —— 空列表摆在那儿只是浪费地方。
@@ -1213,7 +1263,10 @@ namespace Installer
             }
 
             if (btnPick != null) btnPick.SetBounds(x + 16, H - 34, 76, Theme.H);
-            if (lblFoot != null) lblFoot.SetBounds(x + 16, H - 30, Math.Max(60, rightW - 32), 18);
+            // 「指定位置…」只在未归类页出现，固定在右下角；脚注给它让出一条路
+            bool catBtn = btnCat != null && btnCat.Visible;
+            if (btnCat != null) btnCat.SetBounds(x + rightW - 116, H - 34, 100, Theme.H);
+            if (lblFoot != null) lblFoot.SetBounds(x + 16, H - 30, Math.Max(60, rightW - 32 - (catBtn ? 112 : 0)), 18);
             LayoutCols();
         }
 
@@ -1324,7 +1377,7 @@ namespace Installer
                     {
                         if (i == hover) g.FillRectangle(hovBg, 0, y, W, RowH);
                         g.DrawLine(branch, 17, y + RowH / 2, 26, y + RowH / 2);
-                        TextRenderer.DrawText(g, "认不出改的是什么", Theme.UI,
+                        TextRenderer.DrawText(g, "认不出改的是什么（点开看全部 · 可手动指定）", Theme.UI,
                             new Rectangle(33, y, W - 46, RowH), Theme.Ink3,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                             | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
@@ -1531,12 +1584,18 @@ namespace Installer
 {
     public partial class MainForm
     {
-        /// <summary>自测：切到方案树并选某个槽位（按显示名），用来截指定位置的效果图。</summary>
+        /// <summary>自测：切到方案树并选某个槽位（按显示名）；传「未归类」就打开未归类页。</summary>
         internal void UiTestSelect(string slotName)
         {
             if (viewHost == null) { Core.Log("FAIL", "TREE 没有 viewHost"); return; }
             ShowTree();
             Application.DoEvents();
+            if (slotName == "未归类")
+            {
+                treeView.SelectUnmatched();
+                Core.Log("INFO", "SELECT 已打开未归类页（" + treeView.Unmatched + " 个）");
+                return;
+            }
             Slot s = treeView.SlotByName(slotName);
             if (s == null) { Core.Log("WARN", "SELECT 没找到槽位: " + slotName); return; }
             treeView.SelectSlot(s.Key);
@@ -1672,10 +1731,15 @@ namespace Installer
                 if (treeView.RowCount != r0) Core.Log("FAIL", "TREE 小分类展开后行数对不上");
             }
 
-            // 未归类入口
+            // 未归类入口：剩下的 MOD 全部列出来，且提供「指定位置…」手动入口
             treeView.SelectUnmatched();
             Application.DoEvents();
-            Core.Log("INFO", "TREE 未归类 " + treeView.Unmatched + " 个（这些不进树，但照常能勾）");
+            Core.Log("INFO", "TREE 未归类 " + treeView.Unmatched + " 个，列表 " + treeView.UnmatchedRows
+                            + " 行，「指定位置…」可见=" + treeView.UnmatchedButtonVisible);
+            if (treeView.UnmatchedRows != treeView.Unmatched)
+                Core.Log("FAIL", "TREE 未归类列表行数 " + treeView.UnmatchedRows + " 和计数 " + treeView.Unmatched + " 对不上");
+            if (!treeView.UnmatchedButtonVisible)
+                Core.Log("FAIL", "TREE 未归类页没有「指定位置…」手动入口");
 
             // 扩展（音效 / 只改第一人称模型 / HUD）是叠上去的：自己能开关，换模型时不该被一起关掉
             int exIdx = -1;
@@ -1859,7 +1923,8 @@ namespace Installer
             {
                 if (g.Cat == "地图" || g.Cat == "喷漆" || g.Main == null) continue;
                 bool inTree = false;
-                foreach (Slot s in now) if (s.Items.Contains(g)) { inTree = true; break; }
+                // 扩展也算进树：Extras 里的（音效 / 只改第一人称）不缺位置
+                foreach (Slot s in now) if (s.Items.Contains(g) || s.Extras.Contains(g)) { inTree = true; break; }
                 if (!inTree) { if (miss == null) miss = g; }
                 else if (known == null && (g.Main.Subject ?? "").Trim().Length > 0) known = g;
             }
@@ -1873,7 +1938,8 @@ namespace Installer
             treeView.Rebuild();
             bool inSlot = false, catOk = false;
             foreach (Slot s in SlotIndex.Build())
-                if (s.Name == "测试位置" && s.Items.Contains(t1)) { inSlot = true; catOk = s.Cat == "测试分类"; }
+                if (s.Name == "测试位置" && (s.Items.Contains(t1) || s.Extras.Contains(t1)))
+                { inSlot = true; catOk = s.Cat == "测试分类"; }
             Core.Log(inSlot && catOk ? "OK" : "FAIL", "SETCAT 全人工：" + t1.Name + " → 测试分类 / 测试位置，进树=" + inSlot + " 归类=" + catOk);
             Core.Log(t1.Cat == "测试分类" ? "OK" : "FAIL",
                 "SETCAT 分类落到数据上：ModGroup.Cat=" + t1.Cat + "（页签跟着走）");
@@ -1892,7 +1958,8 @@ namespace Installer
             treeView.Rebuild();
             bool moved = false;
             foreach (Slot s in SlotIndex.Build())
-                if (s.Items.Contains(known)) moved = s.Cat == "测试分类";   // 位置名可能带后缀，只认「这个 MOD 在哪一类的槽里」
+                if (s.Items.Contains(known) || s.Extras.Contains(known))
+                    moved = s.Cat == "测试分类";   // 位置名可能带后缀，只认「这个 MOD 在哪一类的槽里」
             Core.Log(moved ? "OK" : "FAIL", "SETCAT 只改归类：" + known.Name + " → 测试分类（位置仍是 " + autoName + "）");
 
             CatPrefs.Reset(t1);

@@ -382,19 +382,24 @@ namespace Installer
             GroupByKey.Clear();
             try
             {
-                if (!Directory.Exists(Core.ModRoot)) { Core.Log("WARN", "MOD 根目录不存在: " + Core.ModRoot); return; }
-
                 Stopwatch sw = Stopwatch.StartNew();
                 List<string> vpkFiles = new List<string>();
                 List<string> arcs = new List<string>();
-                foreach (string dir in Directory.GetDirectories(Core.ModRoot))
+
+                // 1) 主库：老结构 <库根>\游戏内容\求生之路2各项MOD\addons*（U 盘布局）
+                if (Directory.Exists(Core.ModRoot))
                 {
-                    string cat = Path.GetFileName(dir);
-                    if (!cat.StartsWith("addons", StringComparison.OrdinalIgnoreCase)) continue;
-                    foreach (string f in Directory.GetFiles(dir, "*.vpk", SearchOption.AllDirectories)) vpkFiles.Add(f);
-                    foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
-                        if (IsArchive(f)) arcs.Add(f);
+                    foreach (string dir in Directory.GetDirectories(Core.ModRoot))
+                    {
+                        string cat = Path.GetFileName(dir);
+                        if (!cat.StartsWith("addons", StringComparison.OrdinalIgnoreCase)) continue;
+                        CollectDir(dir, vpkFiles, arcs);
+                    }
                 }
+                else Core.Log("WARN", "MOD 根目录不存在: " + Core.ModRoot + "（可用「库文件夹管理…」添加电脑上的任意目录）");
+
+                // 2) 自设的库文件夹：整棵树都扫，工具不再只服务 U 盘布局
+                foreach (string d in Core.Cfg.ModDirs) CollectDir(d, vpkFiles, arcs);
 
                 foreach (string f in vpkFiles) AddVpk(f);
 
@@ -424,21 +429,121 @@ namespace Installer
                         it.SubjectKey = ir.Key;
                         it.Kinds = ir.Kinds;
                         it.Only1P = ir.Only1P;
+                        it.AnimOnly = ir.AnimOnly;
                         it.AssetPaths = ir.Assets;
                         RefineBySubject(it);
                         Add(it);
                     }
                 }
-                Core.Log("OK", "扫库: 独立 vpk " + vpkFiles.Count + " 个, 压缩包 " + arcs.Count + " 个（缓存命中 " + arcHit + "/" + (arcHit + arcMiss) + "），共 " + Core.ModList.Count + " 个 vpk，" + sw.ElapsedMilliseconds + " ms");
+
+                // 3) 游戏目录里已装的 vpk：也认出来进列表（FromGame 标记，安装时不再复制）
+                int gameN = ScanGameAddons(sw);
+
+                Core.Log("OK", "扫库: 独立 vpk " + vpkFiles.Count + " 个, 压缩包 " + arcs.Count + " 个（缓存命中 " + arcHit + "/" + (arcHit + arcMiss) + "），游戏目录 " + gameN + " 个，共 " + Core.ModList.Count + " 个 vpk，" + sw.ElapsedMilliseconds + " ms");
             }
             catch (Exception ex) { Core.Log("FAIL", "扫 MOD 出错: " + ex.Message); }
             ModIdentify.SaveCache();
             SaveArcCache();
         }
 
+        /// <summary>把一个目录树里的 vpk / 压缩包都收进候选（主库和自设库目录共用）。</summary>
+        static void CollectDir(string root, List<string> vpkFiles, List<string> arcs)
+        {
+            try
+            {
+                if (root == null || root.Trim().Length == 0 || !Directory.Exists(root))
+                {
+                    if (root != null && root.Trim().Length > 0) Core.Log("WARN", "库目录不存在，跳过: " + root);
+                    return;
+                }
+                foreach (string f in Directory.GetFiles(root, "*.vpk", SearchOption.AllDirectories)) vpkFiles.Add(f);
+                foreach (string f in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+                    if (IsArchive(f)) arcs.Add(f);
+            }
+            catch (Exception ex) { Core.Log("WARN", "扫不了目录 " + root + ": " + ex.Message); }
+        }
+
+        /// <summary>
+        /// 游戏目录里已装的 vpk：addonlist.txt 里登记的 + 手动丢进 addons 根目录的。
+        /// 官方文件（pak01_dir.vpk / dlc1_*.vpk 这些）按名字排除，绝不能当成 MOD 列出来。
+        /// 标 FromGame：装的时候不用复制（文件本来就在），删除的时候也不许动。
+        /// </summary>
+        static int ScanGameAddons(Stopwatch sw)
+        {
+            string addons = Core.GameAddonsDir();
+            if (addons == null) return 0;
+
+            // addonlist 登记的（游戏认识、能开关的）
+            HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (KeyValuePair<string, bool> kv in AddonList.Read(Core.Cfg.GameRoot))
+                    if (kv.Key.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase) && File.Exists(Path.Combine(addons, kv.Key)))
+                        names.Add(kv.Key);
+            }
+            catch { }
+
+            // 手动丢进去、还没登记的：addons 根目录下的 vpk，排除官方文件名
+            try
+            {
+                foreach (string f in Directory.GetFiles(addons, "*.vpk", SearchOption.TopDirectoryOnly))
+                {
+                    string n = Path.GetFileName(f);
+                    if (IsOfficialAddonName(n)) continue;
+                    names.Add(n);
+                }
+            }
+            catch { }
+
+            int n2 = 0;
+            foreach (string key in names)
+            {
+                string f = Path.Combine(addons, key);
+                if (!File.Exists(f)) continue;
+                ModItem it = new ModItem();
+                it.Name = key;
+                it.FullPath = f;
+                it.RelPath = "@游戏\\addons\\" + key;
+                it.Key = "#game#" + key;
+                it.Category = "已装";
+                it.FromGame = true;
+                try { it.Size = new FileInfo(f).Length; } catch { it.Size = 0; }
+                Classify(it);
+                ModIdentify.Result ir = ModIdentify.AnalyzeCached(it.RelPath, f);
+                it.Subject = ir.Subject;
+                it.SubjectLevel = ir.Level;
+                it.SubjectKey = ir.Key;
+                it.Kinds = ir.Kinds;
+                it.Only1P = ir.Only1P;
+                it.AnimOnly = ir.AnimOnly;
+                it.AssetPaths = ir.Assets;
+                RefineBySubject(it);
+                Add(it);
+                n2++;
+            }
+            if (n2 > 0) Core.Log("INFO", "游戏目录: addons 里认出 " + n2 + " 个已装 MOD（库外·已装，装机时不再复制）");
+            return n2;
+        }
+
+        /// <summary>官方自带文件：pak01_dir.vpk / pak000_000.vpk / dlc1_xxx.vpk 这类，永远不当 MOD。</summary>
+        static bool IsOfficialAddonName(string name)
+        {
+            string n = name.ToLowerInvariant();
+            if (n.StartsWith("pak", StringComparison.Ordinal)) return true;      // pak01_dir.vpk / pak000_000.vpk
+            if (n.StartsWith("dlc", StringComparison.Ordinal)) return true;      // dlc1_xxx.vpk
+            if (n.StartsWith("update_", StringComparison.Ordinal)) return true;
+            return false;
+        }
+
         static string RelOf(string full)
         {
-            try { return full.Substring(Core.ModRoot.Length).TrimStart('\\'); } catch { return full; }
+            try
+            {
+                if (full.StartsWith(Core.ModRoot, StringComparison.OrdinalIgnoreCase))
+                    return full.Substring(Core.ModRoot.Length).TrimStart('\\');
+            }
+            catch { }
+            return full;    // 库外的（自设目录/游戏目录）：用完整路径当相对路径
         }
 
         static void AddVpk(string f)
@@ -457,6 +562,7 @@ namespace Installer
             it.SubjectKey = ir.Key;
             it.Kinds = ir.Kinds;
             it.Only1P = ir.Only1P;
+            it.AnimOnly = ir.AnimOnly;
             it.AssetPaths = ir.Assets;
             RefineBySubject(it);
             Add(it);

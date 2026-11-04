@@ -458,6 +458,8 @@ namespace Installer
             HashSet<string> used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (ModItem it in sel)
             {
+                // 游戏目录里的本来就装着：不用复制，翻开关就行
+                if (it.FromGame) { s++; done += it.Size; continue; }
                 // 不同分类下可能有同名 vpk：只铺第一个，否则并行时两个线程会同时写同一个目标文件
                 if (!used.Add(it.Name))
                 {
@@ -587,6 +589,7 @@ namespace Installer
         // ---------- MOD 库维护 ----------
         public static string MoveModToRecycle(ModItem m)
         {
+            if (m.FromGame) return null;   // 游戏 addons 里的文件不回收（那是已装的，不是库里的）
             string dir = Path.Combine(Core.ModRoot, "_回收的MOD");
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
             string dst = Path.Combine(dir, m.Name);
@@ -602,6 +605,7 @@ namespace Installer
 
         public static string RenameMod(ModItem m, string newName)
         {
+            if (m.FromGame) return "这个 MOD 在游戏目录里，不能在这里改名";
             newName = Core.SafeName(newName);
             if (string.IsNullOrEmpty(newName)) return "名字不能为空";
             if (!newName.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase)) newName = newName + ".vpk";
@@ -618,6 +622,7 @@ namespace Installer
             Dictionary<string, List<ModItem>> byName = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
             foreach (ModItem m in Core.ModList)
             {
+                if (m.FromGame) continue;   // 游戏目录里的不参与清重：它和库里同名的那份是「已装的一份」，不能回收
                 if (!byName.ContainsKey(m.Name)) byName[m.Name] = new List<ModItem>();
                 byName[m.Name].Add(m);
             }

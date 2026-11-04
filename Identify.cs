@@ -18,6 +18,7 @@ namespace Installer
             public string Key = "";           // 被替换的模型名，如 "v_rifle"（用于同枪冲突检测）
             public string Kinds = "";         // 影响面：模型,音效,HUD图标,地图...
             public bool Only1P = false;       // 模型全是第一人称 v_，世界模型没动
+            public bool AnimOnly = false;     // 模型全是 anim_/gestures_（表情/动作骨架），没有一个可见本体
             public int Entries = 0;
             public string Assets = "";        // 归组证据：包内模型/材质完整路径，分号分隔
             public bool Ok = false;
@@ -257,6 +258,26 @@ namespace Installer
                         if (!m.StartsWith("v_", StringComparison.OrdinalIgnoreCase)) { viewOnly = false; break; }
                 r.Only1P = viewOnly;
 
+                // 模型全在 models/survivors/ 下、里面至少有 anim_ / gestures_（表情/动作骨架）、
+                // 又没认出任何可替换的本体模型 —— 这是 KSEP 表情平台这类「陪套」：
+                // 不换人，谁都能叠。照实记在 AnimOnly 上，树那边据此把它当扩展，不当本体。
+                // （这类包常夹一个 ksep.mdl 之类的辅助模型，所以不能只看文件名前缀；看路径和「有没有本体」。）
+                bool animOnly = false;
+                if (found.Count == 0 && !assetOverflow && Assets.Count > 0)
+                {
+                    bool hasAnim = false, allSurvivor = true;
+                    foreach (string a in Assets)
+                    {
+                        if (!a.EndsWith(".mdl", StringComparison.Ordinal)) continue;
+                        if (!a.StartsWith("models/survivors/", StringComparison.Ordinal)) { allSurvivor = false; break; }
+                        string fn = a.Substring(a.LastIndexOf('/') + 1);
+                        if (fn.StartsWith("anim_", StringComparison.OrdinalIgnoreCase)
+                            || fn.StartsWith("gestures_", StringComparison.OrdinalIgnoreCase)) hasAnim = true;
+                    }
+                    animOnly = allSurvivor && hasAnim;
+                }
+                r.AnimOnly = animOnly;
+
                 List<string> kinds = new List<string>();
                 if (Map) kinds.Add("地图");
                 if (Mdls.Count > 0) kinds.Add("模型");
@@ -421,7 +442,7 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
-            get { return Path.Combine(Core.LogDir, "identify-cache-v12.tsv"); }
+            get { return Path.Combine(Core.LogDir, "identify-cache-v14.tsv"); }
         }
 
         private static string PackAssets(string assets)
@@ -449,6 +470,7 @@ namespace Installer
             int.TryParse(c[7], out entries);
             r.Entries = entries;
             r.Assets = UnpackAssets(c[8]);
+            if (c.Length >= 10) r.AnimOnly = c[9] == "1";
             r.Ok = entries > 0;
             return r;
         }
@@ -456,7 +478,8 @@ namespace Installer
         private static string CacheLine(string relPath, string stamp, Result r)
         {
             return relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds
-                 + "\t" + (r.Only1P ? "1" : "0") + "\t" + r.Entries + "\t" + PackAssets(r.Assets);
+                 + "\t" + (r.Only1P ? "1" : "0") + "\t" + r.Entries + "\t" + PackAssets(r.Assets)
+                 + "\t" + (r.AnimOnly ? "1" : "0");
         }
 
         private static void LoadCache()
