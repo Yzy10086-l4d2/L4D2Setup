@@ -96,6 +96,23 @@ namespace Installer
             {"pills",            "药丸"},
         };
 
+        /// <summary>命中哪条特征串。同一把枪的 v_/w_/light 变体靠它归到一起。</summary>
+        private static string Feature(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return null;
+            for (int i = 0; i < Dict.GetLength(0); i++)
+                if (s.IndexOf(Dict[i, 0], StringComparison.Ordinal) >= 0) return Dict[i, 0];
+            return null;
+        }
+
+        /// <summary>判断「抢的是哪个位置」用的名字：用特征串而不是原始模型名，</summary>
+        /// <summary>否则 survivor_biker 和 survivor_biker_light 会被当成两个位置。</summary>
+        private static string KeyOf(string raw)
+        {
+            string f = Feature(raw);
+            return f != null ? f : raw;
+        }
+
         private static string Lookup(string s)
         {
             if (string.IsNullOrEmpty(s)) return null;
@@ -116,122 +133,218 @@ namespace Installer
                   || p.StartsWith("materials/detail/", StringComparison.Ordinal));
         }
 
+        /// <summary>扫一个 vpk 的目录表，攒出「改了什么」。散装 vpk 和压缩包里的 vpk 走同一套。</summary>
+        private sealed class Scan
+        {
+            public readonly List<string> Mdls = new List<string>();
+            public readonly List<string> Huds = new List<string>();
+            public readonly List<string> Snds = new List<string>();
+            public readonly List<string> Mats = new List<string>();
+            public bool Map, Script, Particle, HasMat;
+            public int Entries;
+
+            public void Feed(string p)
+            {
+                Entries++;
+                if (p.EndsWith(".mdl", StringComparison.Ordinal))
+                {
+                    int s = p.LastIndexOf('/');
+                    if (s >= 0) Mdls.Add(p.Substring(s + 1, p.Length - s - 5));
+                }
+                else if (p.StartsWith("materials/vgui/hud/icon_", StringComparison.Ordinal) && p.EndsWith(".vtf", StringComparison.Ordinal))
+                {
+                    Huds.Add(p.Substring("materials/vgui/hud/icon_".Length, p.Length - 4 - "materials/vgui/hud/icon_".Length));
+                }
+                else if (p.StartsWith("sound/weapons/", StringComparison.Ordinal))
+                {
+                    int a = "sound/weapons/".Length;
+                    int b = p.IndexOf('/', a);
+                    if (b > a) Snds.Add(p.Substring(a, b - a));
+                }
+                else if (p.StartsWith("materials/", StringComparison.Ordinal))
+                {
+                    HasMat = true;
+                    // 通用效果贴图（血液、贴花、HUD、精灵图）对所有对象生效，不能拿来判断改了什么。
+                    // 「彩色血液」的路径里有 smoker_tongue 就被判成 Smoker —— 那是血，不是 smoker。
+                    if (MatUsable(p) && Mats.Count < 40) Mats.Add(p);
+                }
+                else if (p.StartsWith("maps/", StringComparison.Ordinal) && p.EndsWith(".bsp", StringComparison.Ordinal)) Map = true;
+                else if (p.StartsWith("scripts/", StringComparison.Ordinal)) Script = true;
+                else if (p.StartsWith("particles/", StringComparison.Ordinal)) Particle = true;
+            }
+
+            public Result Finish()
+            {
+                Result r = new Result();
+                r.Entries = Entries;
+
+                List<string> kinds = new List<string>();
+                if (Map) kinds.Add("地图");
+                if (Mdls.Count > 0) kinds.Add("模型");
+                if (Huds.Count > 0) kinds.Add("HUD");
+                if (Snds.Count > 0) kinds.Add("音效");
+                if (Particle) kinds.Add("特效");
+                if (Script) kinds.Add("脚本");
+                if (kinds.Count == 0 && HasMat) kinds.Add("材质");
+                r.Kinds = string.Join(",", kinds.ToArray());
+                r.Ok = Entries > 0;
+
+                // 1) 模型文件名 —— 最硬的证据，换的就是它
+                List<string> found = new List<string>();
+                foreach (string m in Mdls)
+                {
+                    string n = Lookup(m);
+                    if (n != null)
+                    {
+                        if (!found.Contains(n)) found.Add(n);
+                        if (r.Key.Length == 0) r.Key = KeyOf(m);
+                        if (r.Level.Length == 0) r.Level = "模型";
+                    }
+                }
+                // 2) HUD 图标名 —— 必须指名道姓才换得掉
+                if (found.Count == 0)
+                {
+                    foreach (string h in Huds)
+                    {
+                        string n = Lookup(h);
+                        if (n != null)
+                        {
+                            if (!found.Contains(n)) found.Add(n);
+                            if (r.Key.Length == 0) r.Key = KeyOf(h);
+                            if (r.Level.Length == 0) r.Level = "HUD图标";
+                        }
+                    }
+                }
+                // 3) 音效目录
+                if (found.Count == 0)
+                {
+                    foreach (string s2 in Snds)
+                    {
+                        string n = Lookup(s2);
+                        if (n != null)
+                        {
+                            if (!found.Contains(n)) found.Add(n);
+                            if (r.Key.Length == 0) r.Key = KeyOf(s2);
+                            if (r.Level.Length == 0) r.Level = "音效";
+                        }
+                    }
+                }
+                // 4) 材质路径（弱信号，只在前三级都没中时才用）
+                if (found.Count == 0)
+                {
+                    foreach (string mp in Mats)
+                    {
+                        string n = Lookup(mp);
+                        if (n != null)
+                        {
+                            if (!found.Contains(n)) found.Add(n);
+                            if (r.Level.Length == 0) r.Level = "材质";
+                        }
+                    }
+                }
+
+                // 一个包里塞了好几样东西时，别只报第一个 —— 「彩色血液」被报成 Smoker 会误导
+                if (found.Count == 0) r.Subject = "";
+                else if (found.Count <= 2) r.Subject = string.Join("/", found.ToArray());
+                else if (r.Level == "材质") r.Subject = "";          // 材质推断本来就不准，多对象干脆不说
+                else r.Subject = found.Count + " 件";
+                return r;
+            }
+        }
+
         public static Result Analyze(string vpkFile)
         {
-            Result r = new Result();
-            if (string.IsNullOrEmpty(vpkFile) || !File.Exists(vpkFile)) return r;
+            if (string.IsNullOrEmpty(vpkFile) || !File.Exists(vpkFile)) return new Result();
+            Scan sc = new Scan();
+            try { Vpk.Walk(vpkFile, 200000, sc.Feed); } catch { return new Result(); }
+            return sc.Finish();
+        }
 
-            List<string> mdls = new List<string>();
-            List<string> huds = new List<string>();
-            List<string> snds = new List<string>();
-            List<string> mats = new List<string>();
-            bool map = false, script = false, particle = false, hasMat = false;
+        /// <summary>已经拿到的 vpk 目录表（压缩包里的包，只能这样读）。</summary>
+        public static Result AnalyzeBuffer(byte[] tree)
+        {
+            if (tree == null) return new Result();
+            Scan sc = new Scan();
+            try { Vpk.WalkBuffer(tree, 200000, sc.Feed); } catch { return new Result(); }
+            return sc.Finish();
+        }
 
+        /// <summary>只把 vpk 的目录表读出来：前 12 字节头 + tree 段，不解压正片。</summary>
+        private static byte[] ReadTree(Stream s)
+        {
+            byte[] hdr = new byte[12];
+            if (!ReadFull(s, hdr, 12)) return null;
+            uint sig = BitConverter.ToUInt32(hdr, 0);
+            uint ver = BitConverter.ToUInt32(hdr, 4);
+            uint tree = BitConverter.ToUInt32(hdr, 8);
+            if (sig != 0x55AA1234 || tree < 8 || tree > 16u * 1024 * 1024) return null;
+            if (ver == 2 && !ReadFull(s, new byte[16], 16)) return null;
+            byte[] buf = new byte[tree];
+            if (!ReadFull(s, buf, (int)tree)) return null;
+            return buf;
+        }
+
+        /// <summary>压缩包里的 vpk：把目录表读出来，剩下的跟散装 vpk 一样判。</summary>
+        public static byte[] TreeOfArchive(string container, string inner)
+        {
             try
             {
-                Vpk.Walk(vpkFile, 200000, delegate(string p)
+                if (container == null || inner == null) return null;
+                if (container.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
-                    r.Entries++;
-                    if (p.EndsWith(".mdl", StringComparison.Ordinal))
+                    using (System.IO.Compression.ZipArchive za = System.IO.Compression.ZipFile.OpenRead(container))
                     {
-                        int s = p.LastIndexOf('/');
-                        if (s >= 0) mdls.Add(p.Substring(s + 1, p.Length - s - 5));
+                        System.IO.Compression.ZipArchiveEntry hit = null;
+                        string want = inner.Replace('\\', '/');
+                        foreach (System.IO.Compression.ZipArchiveEntry e in za.Entries)
+                            if (string.Equals(e.FullName.Replace('\\', '/'), want, StringComparison.OrdinalIgnoreCase)) { hit = e; break; }
+                        if (hit == null) return null;
+                        using (Stream s = hit.Open()) return ReadTree(s);
                     }
-                    else if (p.StartsWith("materials/vgui/hud/icon_", StringComparison.Ordinal) && p.EndsWith(".vtf", StringComparison.Ordinal))
-                    {
-                        huds.Add(p.Substring("materials/vgui/hud/icon_".Length, p.Length - 4 - "materials/vgui/hud/icon_".Length));
-                    }
-                    else if (p.StartsWith("sound/weapons/", StringComparison.Ordinal))
-                    {
-                        int a = "sound/weapons/".Length;
-                        int b = p.IndexOf('/', a);
-                        if (b > a) snds.Add(p.Substring(a, b - a));
-                    }
-                    else if (p.StartsWith("materials/", StringComparison.Ordinal))
-                    {
-                        hasMat = true;
-                        // 通用效果贴图（血液、贴花、HUD、精灵图）对所有对象生效，不能拿来判断改了什么。
-                        // 「彩色血液」的路径里有 smoker_tongue 就被判成 Smoker —— 那是血，不是 smoker。
-                        if (MatUsable(p) && mats.Count < 40) mats.Add(p);
-                    }
-                    else if (p.StartsWith("maps/", StringComparison.Ordinal) && p.EndsWith(".bsp", StringComparison.Ordinal)) map = true;
-                    else if (p.StartsWith("scripts/", StringComparison.Ordinal)) script = true;
-                    else if (p.StartsWith("particles/", StringComparison.Ordinal)) particle = true;
-                });
+                }
+                string rar = Catalog.RarExe();
+                if (string.IsNullOrEmpty(rar)) return null;
+                ProcessStartInfo psi = new ProcessStartInfo(rar, "p -inul -y \"" + container + "\" \"" + inner + "\"");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                using (Process p = Process.Start(psi))
+                {
+                    byte[] b = ReadTree(p.StandardOutput.BaseStream);
+                    Kill(p);
+                    return b;
+                }
             }
-            catch { return r; }
+            catch { return null; }
+        }
 
-            // 影响面
-            List<string> kinds = new List<string>();
-            if (map) kinds.Add("地图");
-            if (mdls.Count > 0) kinds.Add("模型");
-            if (huds.Count > 0) kinds.Add("HUD");
-            if (snds.Count > 0) kinds.Add("音效");
-            if (particle) kinds.Add("特效");
-            if (script) kinds.Add("脚本");
-            if (kinds.Count == 0 && hasMat) kinds.Add("材质");
-            r.Kinds = string.Join(",", kinds.ToArray());
-            r.Ok = r.Entries > 0;
-
-            // 1) 模型文件名 —— 最硬的证据，换的就是它
-            List<string> found = new List<string>();
-            foreach (string m in mdls)
+        /// <summary>压缩包里的 vpk 也走缓存：同一个包没变就不用再解一遍。</summary>
+        public static Result AnalyzeArchiveCached(string relPath, string container, string inner)
+        {
+            LoadCache();
+            string stamp = Stamp(container);
+            string old;
+            if (cache.TryGetValue(relPath, out old))
             {
-                string n = Lookup(m);
-                if (n != null)
+                string[] c = old.Split('\t');
+                if (c.Length >= 6 && c[1] == stamp)
                 {
-                    if (!found.Contains(n)) found.Add(n);
-                    if (r.Key.Length == 0) r.Key = m;
-                    if (r.Level.Length == 0) r.Level = "模型";
+                    Result r2 = new Result();
+                    r2.Ok = true;
+                    r2.Subject = c[2];
+                    r2.Level = c[3];
+                    r2.Key = c[4];
+                    r2.Kinds = c[5];
+                    return r2;
                 }
             }
-            // 2) HUD 图标名 —— 必须指名道姓才换得掉
-            if (found.Count == 0)
+            Result r = AnalyzeBuffer(TreeOfArchive(container, inner));
+            try
             {
-                foreach (string h in huds)
-                {
-                    string n = Lookup(h);
-                    if (n != null)
-                    {
-                        if (!found.Contains(n)) found.Add(n);
-                        if (r.Key.Length == 0) r.Key = h;
-                        if (r.Level.Length == 0) r.Level = "HUD图标";
-                    }
-                }
+                cache[relPath] = relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds;
             }
-            // 3) 音效目录
-            if (found.Count == 0)
-            {
-                foreach (string s2 in snds)
-                {
-                    string n = Lookup(s2);
-                    if (n != null)
-                    {
-                        if (!found.Contains(n)) found.Add(n);
-                        if (r.Key.Length == 0) r.Key = s2;
-                        if (r.Level.Length == 0) r.Level = "音效";
-                    }
-                }
-            }
-            // 4) 材质路径（弱信号，只在前三级都没中时才用）
-            if (found.Count == 0)
-            {
-                foreach (string mp in mats)
-                {
-                    string n = Lookup(mp);
-                    if (n != null)
-                    {
-                        if (!found.Contains(n)) found.Add(n);
-                        if (r.Level.Length == 0) r.Level = "材质";
-                    }
-                }
-            }
-
-            // 一个包里塞了好几样东西时，别只报第一个 —— 「彩色血液」被报成 Smoker 会误导
-            if (found.Count == 0) r.Subject = "";
-            else if (found.Count <= 2) r.Subject = string.Join("/", found.ToArray());
-            else if (r.Level == "材质") r.Subject = "";          // 材质推断本来就不准，多对象干脆不说
-            else r.Subject = found.Count + " 件";
+            catch { }
             return r;
         }
 
@@ -241,7 +354,7 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
-            get { return Path.Combine(Core.LogDir, "identify-cache-v5.tsv"); }
+            get { return Path.Combine(Core.LogDir, "identify-cache-v6.tsv"); }
         }
 
         private static void LoadCache()

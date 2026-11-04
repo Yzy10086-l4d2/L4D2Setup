@@ -19,6 +19,7 @@ namespace Installer
         /// <summary>切到某个大类：复用已建好的视图，没建过才新建。</summary>
         internal void ShowCatView(string cat)
         {
+            if (cat == "#tree") { ShowTree(); return; }
             if (cat == null || cat.Length == 0) { ShowOverview(); return; }
             CatView v = GetCatView(cat);
             tabCur = cat;
@@ -56,10 +57,34 @@ namespace Installer
 
         internal bool IsCatOpen(string cat) { return tabCur == cat; }
 
+        /// <summary>方案树：按「能替换的东西」看这套方案，右边是候选 MOD。</summary>
+        internal void ShowTree()
+        {
+            EnsureTree();
+            tabCur = "#tree";
+            foreach (CatView o in catViews.Values) if (o.Visible) o.Visible = false;
+            viewHost.Visible = true;
+            tileHost.Visible = false;
+            treeView.Visible = true;
+            treeView.BringToFront();
+            treeView.Rebuild();
+            UpdateModCaption();
+            SyncTabs();
+        }
+
+        private void EnsureTree()
+        {
+            if (treeView != null) return;
+            treeView = new CatTree(this);
+            treeView.SetBounds(0, 0, Math.Max(200, viewHost.ClientSize.Width), Math.Max(120, viewHost.ClientSize.Height));
+            viewHost.Controls.Add(treeView);
+        }
+
         /// <summary>勾选变了：把已建好的视图里的勾、套装计数、方案列同步一遍（不重建，滚动位置不动）。</summary>
         internal void SyncCatViews()
         {
             foreach (CatView v in catViews.Values) v.RefreshChecks();
+            if (treeView != null && treeView.Visible) treeView.Sync();
             UpdateSel();
             UpdateSchemeLabel();
             SyncTabs();
@@ -88,6 +113,14 @@ namespace Installer
         internal void UpdateModCaption()
         {
             if (gMod == null) return;
+            if (tabCur == "#tree")
+            {
+                int sc = treeView == null ? 0 : treeView.SlotCount;
+                int sk = treeView == null ? 0 : treeView.SlotCheckedCount;
+                gMod.Caption = "方案树　" + sc + " 个可替换的位置 · 已选 " + sk
+                             + "　点一个位置，右边列它的候选";
+                return;
+            }
             if (tabCur.Length == 0)
             {
                 int tot = 0;
@@ -254,13 +287,14 @@ namespace Installer
             }
 
             private int NavW { get { return 58; } }
+            private int TreeW { get { return 74; } }
 
             private int CellW
             {
                 get
                 {
                     int n = Catalog.Cats.Length;
-                    int avail = Width - 2 - NavW;
+                    int avail = Width - 2 - NavW - TreeW;
                     if (n <= 0) return avail;
                     return Math.Max(74, avail / n);
                 }
@@ -274,6 +308,7 @@ namespace Installer
                 using (Pen p = new Pen(Theme.Line)) g.DrawLine(p, 0, Height - 1, Width - 1, Height - 1);
 
                 int x = 2;
+                DrawTab(g, ref x, "#tree", "方案树", 0, 0, 0);
                 DrawTab(g, ref x, "", "总览", allTotal, allInn, allOn);
                 foreach (string c in Catalog.Cats)
                 {
@@ -285,7 +320,7 @@ namespace Installer
 
             private void DrawTab(Graphics g, ref int x, string key, string label, int total, int inn, int on)
             {
-                int w = key.Length == 0 ? NavW : CellW;
+                int w = key.Length == 0 ? NavW : (key == "#tree" ? TreeW : CellW);
                 if (x + w > Width - 1) w = Math.Max(40, Width - 1 - x);
                 Rectangle r = new Rectangle(x, 0, w, Height - 1);
                 int idx = rects.Count;
@@ -295,8 +330,8 @@ namespace Installer
                 bool hv = hover == idx;
                 int numW = 0;
                 string num = "";
-                if (key.Length > 0 && w >= 96) { num = inn + "/" + total; numW = 46; }
-                else if (key.Length > 0 && w >= 82) { num = inn.ToString(); numW = 18; }
+                if (key.Length > 0 && key != "#tree" && w >= 96) { num = inn + "/" + total; numW = 46; }
+                else if (key.Length > 0 && key != "#tree" && w >= 82) { num = inn.ToString(); numW = 18; }
 
                 Color ink = sel ? Theme.Ink : (hv ? Theme.Ink2 : Theme.Ink3);
                 Font f = sel ? Theme.UIBold : Theme.UI;
@@ -313,7 +348,7 @@ namespace Installer
                 }
                 if (sel)
                 {
-                    Color line = key.Length == 0 ? Theme.Ink2 : CatInk(key);
+                    Color line = (key.Length == 0 || key == "#tree") ? Theme.Ink2 : CatInk(key);
                     using (SolidBrush b = new SolidBrush(line))
                         g.FillRectangle(b, r.X + 6, Height - 3, w - 12, 2);
                 }

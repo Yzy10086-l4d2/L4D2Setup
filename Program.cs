@@ -63,6 +63,8 @@ namespace Installer
             bool uiSync = false;
             bool uiExpand = false;
             bool uiDeps = false;
+            bool uiTree = false;
+            string uiFix = null;
             string uiParts = null;
             string uiTweaks = null;
             bool uiLaunch = false;
@@ -88,6 +90,8 @@ namespace Installer
                 else if (string.Equals(a, "--uisync", StringComparison.OrdinalIgnoreCase)) uiSync = true;
                 else if (string.Equals(a, "--uiexpand", StringComparison.OrdinalIgnoreCase)) uiExpand = true;
                 else if (string.Equals(a, "--uideps", StringComparison.OrdinalIgnoreCase)) uiDeps = true;
+                else if (string.Equals(a, "--uitree", StringComparison.OrdinalIgnoreCase)) uiTree = true;
+                else if (a.StartsWith("--uifix=", StringComparison.OrdinalIgnoreCase)) uiFix = a.Substring(8).Trim('"');
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
                 else if (string.Equals(a, "--launch", StringComparison.OrdinalIgnoreCase)) uiLaunch = true;
@@ -215,6 +219,8 @@ namespace Installer
                     if (uiSync) { f.UiTestSync(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiExpand) { f.UiTestExpand(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiTree) { f.UiTestTree(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiFix != null) { f.UiFixProfile(uiFix); System.Windows.Forms.Application.DoEvents(); }
                     if (uiProfile) { f.UiTestProfileForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeep != null) { f.UiTestFilter(uiDeep); System.Windows.Forms.Application.DoEvents(); f.UiTestDeep(); System.Windows.Forms.Application.DoEvents(); }

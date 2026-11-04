@@ -27,6 +27,7 @@ namespace Installer
         private Button btnSaveProfile, btnApplyProfile;
         private Panel tileHost;                  // 总览：六个大类磁贴
         private Panel viewHost;                  // 某个大类的列表就嵌在这里，和磁贴同一块矩形二选一
+        private CatTree treeView;                // 方案树：按「能替换的东西」看，一个位置只留一个 MOD
         private CatTabs tabs;                    // 顶部页签条
         private Label lblSel, lblStatus, lblConflict;
         // 方案标记：当前下拉里那套方案包含哪些文件，用来在列表里一眼看出「这条属不属于方案」
@@ -1010,7 +1011,7 @@ namespace Installer
         }
 
         /// <summary>这条在不在当前方案里（套装里任意一个 vpk 在就算在）。</summary>
-        private bool InScheme(ModGroup g)
+        internal bool InScheme(ModGroup g)
         {
             if (schemeKeys.Count == 0) return false;
             foreach (ModItem p in g.Parts) if (schemeKeys.Contains(p.Key)) return true;
@@ -1082,11 +1083,37 @@ namespace Installer
             return sb.ToString();
         }
 
-        private int CountChecked(ModGroup g)
+        internal int CountChecked(ModGroup g)
         {
             int n = 0;
             foreach (ModItem p in g.Parts) if (checkedKeys.Contains(p.Key)) n++;
             return n;
+        }
+
+        /// <summary>整个套装下架：把它的每个 vpk 都从勾选里去掉。</summary>
+        internal void UncheckGroup(ModGroup g)
+        {
+            if (g == null) return;
+            foreach (ModItem p in g.Parts) checkedKeys.Remove(p.Key);
+        }
+
+        /// <summary>整个套装上架：按默认部件勾（主体 + 必装 + 第一个选配）。</summary>
+        internal void CheckGroupDefault(ModGroup g)
+        {
+            if (g == null) return;
+            foreach (ModItem p in Catalog.DefaultParts(g)) checkedKeys.Add(p.Key);
+        }
+
+        /// <summary>在方案树里点了一个候选：分类列表、磁贴、方案行、页签一起对齐。</summary>
+        internal void AfterTreePick()
+        {
+            List<CatView> vs = new List<CatView>(catViews.Values);
+            foreach (CatView v in vs) v.Fill();
+            SyncTileStates();
+            UpdateSchemeLabel();
+            UpdateSel();
+            SyncTabs();
+            UpdateModCaption();
         }
 
         // 展开出来的单件行要照这个判断自己该不该打勾

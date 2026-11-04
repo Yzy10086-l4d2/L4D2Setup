@@ -410,6 +410,12 @@ namespace Installer
                         it.Category = Path.GetFileName(Path.GetDirectoryName(a));   // 兼容旧字段
                         it.Key = "#arc#" + rel + "#" + e.Inner;
                         Classify(it);
+                        // 压缩包里的 vpk 也要认一遍：以前只认散装的，人物/喷漆全被漏掉
+                        ModIdentify.Result ir = ModIdentify.AnalyzeArchiveCached(it.RelPath, a, e.Inner);
+                        it.Subject = ir.Subject;
+                        it.SubjectLevel = ir.Level;
+                        it.SubjectKey = ir.Key;
+                        it.Kinds = ir.Kinds;
                         Add(it);
                     }
                 }
