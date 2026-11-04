@@ -2202,38 +2202,75 @@ namespace Installer
                     {
                         UpdateTweakTip();
                         RefreshConflicts(true);
-                        bool doTest = MessageBox.Show(
-                            "装好了。\r\n\r\n要不要先跑一次自检？（最多 2 分钟）\r\n自检＝装机台自己开一次游戏，看会不会崩。崩了就说明这次装的 MOD 里有坏包（安全，不改任何文件）。",
-                            "完成 · 自检", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
-                        if (!doTest)
-                        {
-                            if (MessageBox.Show("那现在启动游戏吗？", "完成", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-                            {
-                                try { System.Diagnostics.Process.Start("steam://rungameid/550"); }
-                                catch (Exception ex2) { Core.Log("WARN", "启动游戏失败（请在 Steam 里手动开）: " + ex2.Message); }
-                            }
-                            return;
-                        }
-                        Core.Log("STEP", "自检：起游戏看会不会崩（最多 120 秒）");
+                        bool go = MessageBox.Show(
+                            "装好了。\r\n\r\n现在启动游戏吗？\r\n\r\n"
+                            + "启动就是校验 —— 不用跑两遍：\r\n"
+                            + "· 起游戏后顺带盯 2 分钟的崩溃记录\r\n"
+                            + "· 没崩 → 这次装的没问题，游戏留着直接玩\r\n"
+                            + "· 崩了 → 弹提示，说明这次至少有一个坏包\r\n\r\n"
+                            + "全程不改任何文件。不想现在玩就选「否」，游戏不会开。",
+                            "完成 · 启动游戏", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+                        if (!go) return;
+                        Core.Log("STEP", "启动游戏（同时盯崩溃记录，不再二次启动）");
                         SetBusy(true);
-                        SetStatus("自检中：正在起游戏…");
+                        SetStatus("正在启动游戏…");
                         Thread thTest = new Thread(delegate()
                         {
                             SelfTest.Result sr = null;
-                            try { sr = SelfTest.Run(root, 120, sel.Count, delegate(string s) { SetStatus(s); }); }
-                            catch (Exception ex3) { Core.Log("FAIL", "自检出错: " + ex3.Message); }
+                            bool released = false;
+                            Action<string> onStep = delegate(string s)
+                            {
+                                SetStatus(s);
+                                // 游戏一旦起来就放开按钮，别让它一直锁着
+                                if (!released) { released = true; SetBusy(false); }
+                            };
+                            try
+                            {
+                                sr = SelfTest.Run(root, 120, sel.Count, onStep, true,
+                                    delegate(SelfTest.Result cr)
+                                    {
+                                        Core.Log("FAIL", "玩着玩着崩了: " + cr.Message.Replace("\r\n", " "));
+                                        SafeBeginInvoke(delegate
+                                        {
+                                            MessageBox.Show(cr.Message, "游戏崩了", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                        });
+                                    });
+                            }
+                            catch (Exception ex3) { Core.Log("FAIL", "启动出错: " + ex3.Message); }
                             SetBusy(false);
                             SetBar(0);
                             SetStatus("就绪");
-                            if (sr != null && appliedProfile.Length > 0 && (sr.Kind == "crash" || sr.Kind == "clean"))
-                                ProfileStore.SetSelfTest(appliedProfile, sr.Kind == "crash" ? "FAIL" : "PASS", sr.Seconds);
                             if (sr == null) return;
-                            Core.Log(sr.Kind == "crash" ? "FAIL" : "OK", "自检: " + sr.Message.Replace("\r\n", " "));
+
+                            // 自检前置条件不满足（Steam 没开 / 没 reports 目录 / 起不来）：
+                            // 别把「启动游戏」一起吞掉，退化成就直接开
+                            if (sr.Kind == "nosteam" || sr.Kind == "noreport" || sr.Kind == "launchfail")
+                            {
+                                Core.Log("WARN", "这次盯不了崩溃记录（" + sr.Kind + "），改为直接启动游戏");
+                                StartGameDirect(root);
+                                return;
+                            }
+                            if (sr.Kind == "busy")
+                            {
+                                Core.Log("INFO", "游戏已经开着，不用再启动");
+                                SetStatus("游戏已经开着");
+                                return;
+                            }
+
+                            if (appliedProfile.Length > 0 && (sr.Kind == "crash" || sr.Kind == "clean"))
+                                ProfileStore.SetSelfTest(appliedProfile, sr.Kind == "crash" ? "FAIL" : "PASS", sr.Seconds);
+                            Core.Log(sr.Kind == "crash" ? "FAIL" : "OK", "启动: " + sr.Message.Replace("\r\n", " "));
+
+                            // 自己关掉游戏就别再弹框打扰
+                            if (sr.Kind == "exited" || sr.Kind == "clean")
+                            {
+                                if (sr.Kind == "clean") SetStatus("游戏已启动 · 后台盯着崩溃记录");
+                                return;
+                            }
                             SafeBeginInvoke(delegate
                             {
-                                MessageBox.Show(sr.Message, "自检结果 - " + sr.Kind,
-                                    MessageBoxButtons.OK,
-                                    sr.Kind == "crash" ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                                MessageBox.Show(sr.Message, "启动结果 - " + sr.Kind,
+                                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
                             });
                         });
                         thTest.IsBackground = true;
@@ -2255,6 +2292,44 @@ namespace Installer
             th.IsBackground = true;
             th.SetApartmentState(ApartmentState.STA);
             th.Start();
+        }
+
+        /// <summary>直接开游戏：先走 Steam，起不来就直接跑 exe。盯不了崩溃记录时兜底用。</summary>
+        private void StartGameDirect(string root)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start("steam://rungameid/550");
+                Core.Log("OK", "已通过 Steam 启动游戏（这次没盯崩溃记录）");
+                SetStatus("游戏已启动（这次没盯崩溃记录）");
+                return;
+            }
+            catch (Exception ex) { Core.Log("WARN", "steam:// 启动失败: " + ex.Message); }
+            try
+            {
+                string exe = Path.Combine(root, "left4dead2.exe");
+                if (!File.Exists(exe))
+                {
+                    SafeBeginInvoke(delegate
+                    {
+                        MessageBox.Show("找不到 left4dead2.exe，请在 Steam 里手动开游戏。", "启动失败",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    });
+                    return;
+                }
+                System.Diagnostics.Process.Start(exe, "-novid");
+                Core.Log("OK", "已直接启动 left4dead2.exe（这次没盯崩溃记录）");
+                SetStatus("游戏已启动（这次没盯崩溃记录）");
+            }
+            catch (Exception ex2)
+            {
+                Core.Log("WARN", "直接启动失败: " + ex2.Message);
+                SafeBeginInvoke(delegate
+                {
+                    MessageBox.Show("游戏没启动：\r\n" + ex2.Message + "\r\n\r\n请在 Steam 里手动开。", "启动失败",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                });
+            }
         }
 
         private void SetStatus(string s)

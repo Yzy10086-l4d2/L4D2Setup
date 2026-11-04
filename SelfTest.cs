@@ -38,7 +38,20 @@ public static class SelfTest
         return best;
     }
 
+    /// <summary>老入口：起游戏、看着、到点关掉。自检专用。</summary>
     public static Result Run(string root, int seconds, int modCount, Action<string> progress)
+    {
+        return Run(root, seconds, modCount, progress, false, null);
+    }
+
+    /// <summary>
+    /// 起游戏并盯着崩溃记录。
+    /// leaveRunning = true 时，撑过 seconds 没崩就当作「启动成功」，进程留着给人玩，
+    /// 之后继续在后台盯 dump 到游戏退出（或 30 分钟上限），真崩了回调 onCrash。
+    /// 这样「校验」和「启动游戏」就是一步，不用起两次。
+    /// </summary>
+    public static Result Run(string root, int seconds, int modCount, Action<string> progress,
+                             bool leaveRunning, Action<Result> onCrash)
     {
         Result r = new Result();
 
@@ -91,7 +104,8 @@ public static class SelfTest
         {
             Thread.Sleep(2000);
             used = (int)(DateTime.Now - started).TotalSeconds;
-            if (progress != null) progress("自检中：已等 " + used + " 秒…（崩了会自己出结果）");
+            if (progress != null)
+                progress((leaveRunning ? "游戏运行中：已跑 " : "自检中：已等 ") + used + " 秒…（崩了会自己出结果）");
 
             string cur = NewestDump(rep);
             if (cur != null && File.GetLastWriteTime(cur) > beforeTime) { crashed = true; dump = cur; break; }
@@ -109,8 +123,8 @@ public static class SelfTest
             if (used >= seconds) break;
         }
         used = (int)(DateTime.Now - started).TotalSeconds;
-        try { if (!p.HasExited) { p.Kill(); p.WaitForExit(5000); } }
-        catch { }
+        // 只有「跑完就关」的老模式才杀进程；启动模式要留给人玩
+        if (!leaveRunning) { try { if (!p.HasExited) { p.Kill(); p.WaitForExit(5000); } } catch { } }
 
         r.Seconds = used;
         if (crashed)
@@ -126,14 +140,70 @@ public static class SelfTest
         else if (used >= seconds)
         {
             r.Kind = "clean";
-            r.Message = "自检通过：" + seconds + " 秒没崩（游戏已自动关掉）。";
+            if (leaveRunning)
+            {
+                r.Message = "启动成功，玩了 " + used + " 秒没崩。\r\n"
+                    + "游戏不用关，直接玩就行；后面的时间装机台还在后台盯着，真崩了会弹提示。";
+                WatchAfterLaunch(p, rep, beforeTime, modCount, onCrash);
+            }
+            else
+            {
+                r.Message = "自检通过：" + seconds + " 秒没崩（游戏已自动关掉）。";
+            }
         }
         else
         {
             r.Kind = "exited";
-            r.Message = "自检没结论：游戏在第 " + used + " 秒自己退出了，没有崩溃记录。\r\n"
-                + "可能是被手动关掉，或者启动参数有问题。想确认就在 Steam 里正常开一次看看。";
+            r.Message = leaveRunning
+                ? "游戏在第 " + used + " 秒退出了，没有崩溃记录（自己关的？）。"
+                : "自检没结论：游戏在第 " + used + " 秒自己退出了，没有崩溃记录。\r\n"
+                  + "可能是被手动关掉，或者启动参数有问题。想确认就在 Steam 里正常开一次看看。";
         }
         return r;
+    }
+
+    /// <summary>
+    /// 游戏已经开着让人玩了，这里继续在后台盯 crash_dumps：
+    /// 有新 dump 就立刻回调，游戏自己退了就安静收工。不碰游戏进程。
+    /// </summary>
+    private static void WatchAfterLaunch(Process p, string rep, DateTime beforeTime,
+                                         int modCount, Action<Result> onCrash)
+    {
+        if (p == null) return;
+        Thread t = new Thread(delegate()
+        {
+            DateTime until = DateTime.Now.AddMinutes(30);
+            while (DateTime.Now < until)
+            {
+                Thread.Sleep(4000);
+                bool alive;
+                try { alive = !p.HasExited; }
+                catch { alive = false; }
+
+                string cur = null;
+                try { cur = NewestDump(rep); }
+                catch { }
+                if (cur != null)
+                {
+                    DateTime t2 = DateTime.MinValue;
+                    try { t2 = File.GetLastWriteTime(cur); }
+                    catch { }
+                    if (t2 > beforeTime)
+                    {
+                        Result r = new Result();
+                        r.Kind = "crash";
+                        r.Dump = cur;
+                        r.Message = "游戏崩了（这次装/改的 " + modCount + " 个 MOD 里至少有一个坏的）。\r\n\r\n"
+                            + "崩溃记录：" + Path.GetFileName(cur) + "\r\n\r\n"
+                            + "下次只勾一半再装，就能把坏包缩到那一半里。";
+                        if (onCrash != null) { try { onCrash(r); } catch { } }
+                        return;
+                    }
+                }
+                if (!alive) return;     // 正常退出，不用打扰
+            }
+        });
+        t.IsBackground = true;
+        t.Start();
     }
 }
