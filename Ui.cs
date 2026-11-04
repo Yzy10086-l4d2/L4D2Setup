@@ -300,6 +300,7 @@ namespace Installer
             cms.Items.Add("设置标签…", null, delegate { SetTags(); });
             cms.Items.Add("只装勾中的 MOD（不动平台/启动项）", null, delegate { InstallSelectedOnly(); });
             cms.Items.Add("从文件夹导入…（vpk / rar / zip）", null, delegate { BulkImport(); });
+            cms.Items.Add("识别压缩包内容（第一次慢，之后走缓存）", null, delegate { ProbeArchivesUi(); });
             cms.Items.Add("清理同名重复（每个名字留第一个）", null, delegate { CleanDupMods(); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealMod(); });
             lvMods.ContextMenuStrip = cms;
@@ -1172,6 +1173,34 @@ namespace Installer
             AddonList.Write(root, st);
             Core.Log("OK", "只装 MOD：写入 " + copied + " 个、跳过 " + skipped + " 个（平台/启动项/参数都没动）");
             MessageBox.Show("装好了：" + copied + " 个文件" + (skipped > 0 ? "，已是同样大小跳过 " + skipped + " 个" : "") + "。\r\n\r\n已经写进 addonlist，进游戏就生效。\r\n平台、启动项、参数都没动。", "只装 MOD");
+        }
+
+        // 压缩包内容识别：第一次把每个 rar 里的 vpk 目录表读一遍，结果落缓存
+        private void ProbeArchivesUi()
+        {
+            if (MessageBox.Show("会在后台把库里每个压缩包打开看一眼（只读前几百 KB，不解压整包），用来按内容判类型。\r\n\r\n第一次可能要几十秒，之后走缓存不再重复。开始吗？",
+                "识别压缩包内容", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            int done = 0;
+            try
+            {
+                RunBusy<int>("正在识别压缩包内容…", delegate
+                {
+                    done = Catalog.ProbeArchives(delegate(string s) { SetStatus(s); });
+                    return done;
+                });
+            }
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "识别压缩包出错: " + ex.Message);
+                MessageBox.Show("出错了：" + ex.Message, "识别压缩包");
+                return;
+            }
+            Core.ScanMods();
+            FillCats();
+            RefreshMods();
+            RefreshConflicts(true);
+            Core.Log("OK", "压缩包内容识别完成：新增 " + done + " 条");
+            MessageBox.Show("识别完成：新判出 " + done + " 条（其余读不出结论的也记下来了，不会再重算）。\r\n\r\n分类已刷新，切到「地图 / 人物」看看。", "识别压缩包内容");
         }
 
         private void BulkImport()

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -350,6 +351,45 @@ namespace Installer
             return ClassifyByPaths(ps, out cat, out sub);
         }
 
+        /// <summary>rar 里的 vpk：让 Rar.exe 把文件吐到管道，只读前几百 KB 的目录表就断开（不解整包）</summary>
+        public static bool ClassifyByContentRar(string rarPath, string innerPath, out string cat, out string sub)
+        {
+            cat = ""; sub = "";
+            try
+            {
+                string rar = Catalog.RarExe();
+                if (string.IsNullOrEmpty(rar)) return false;
+                ProcessStartInfo psi = new ProcessStartInfo(rar, "p -inul -y \"" + rarPath + "\" \"" + innerPath + "\"");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                using (Process p = Process.Start(psi))
+                {
+                    Stream s = p.StandardOutput.BaseStream;
+                    byte[] head = new byte[12];
+                    if (!ReadFull(s, head, 12)) { Kill(p); return false; }
+                    uint sig = BitConverter.ToUInt32(head, 0);
+                    uint ver = BitConverter.ToUInt32(head, 4);
+                    uint tree = BitConverter.ToUInt32(head, 8);
+                    if (sig != 0x55AA1234 || tree < 8 || tree > 16u * 1024 * 1024) { Kill(p); return false; }
+                    if (ver == 2 && !ReadFull(s, new byte[16], 16)) { Kill(p); return false; }
+                    byte[] buf = new byte[tree];
+                    if (!ReadFull(s, buf, (int)tree)) { Kill(p); return false; }
+                    Kill(p);
+                    List<string> ps = new List<string>();
+                    Vpk.WalkBuffer(buf, 30000, delegate(string x) { if (ps.Count < 30000) ps.Add(x.ToLowerInvariant()); });
+                    return ClassifyByPaths(ps, out cat, out sub);
+                }
+            }
+            catch { return false; }
+        }
+
+        private static void Kill(Process p)
+        {
+            try { if (!p.HasExited) p.Kill(); } catch { }
+        }
+
         /// <summary>zip 里的 vpk：只解压前几 MB 的目录表，不解整包</summary>
         public static bool ClassifyByContentZip(string zipPath, string innerPath, out string cat, out string sub)
         {
@@ -368,8 +408,10 @@ namespace Installer
                         byte[] hdr = new byte[12];
                         if (!ReadFull(s, hdr, 12)) return false;
                         uint sig = BitConverter.ToUInt32(hdr, 0);
+                        uint ver = BitConverter.ToUInt32(hdr, 4);
                         uint tree = BitConverter.ToUInt32(hdr, 8);
                         if (sig != 0x55AA1234 || tree < 8 || tree > 16u * 1024 * 1024) return false;
+                        if (ver == 2 && !ReadFull(s, new byte[16], 16)) return false;
                         byte[] buf = new byte[tree];
                         if (!ReadFull(s, buf, (int)tree)) return false;
                         List<string> ps = new List<string>();

@@ -255,6 +255,117 @@ namespace Installer
 
         // ---------------------------------------------------------------- 扫描
 
+        // ---------- 压缩包内容分类缓存（rar 只能靠 Rar.exe 流式读前缀，很慢，必须缓存） ----------
+        static Dictionary<string, string> _arcContent;                 // key = rel|inner|size|ticks -> "cat|sub"
+        static readonly Dictionary<string, string> _arcSigCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        static string ArcContentPath { get { return Path.Combine(Core.LogDir, "archive-content-v1.tsv"); } }
+
+        static string ArcSig(string fullPath)
+        {
+            string v;
+            if (_arcSigCache.TryGetValue(fullPath, out v)) return v;
+            try
+            {
+                FileInfo fi = new FileInfo(fullPath);
+                v = fi.Length + "|" + fi.LastWriteTimeUtc.Ticks;
+            }
+            catch { v = "0|0"; }
+            _arcSigCache[fullPath] = v;
+            return v;
+        }
+
+        static string ArcKey(string fullPath, string inner)
+        {
+            return RelOf(fullPath) + "|" + inner + "|" + ArcSig(fullPath);
+        }
+
+        static void LoadArcContent()
+        {
+            if (_arcContent != null) return;
+            _arcContent = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (!File.Exists(ArcContentPath)) return;
+                foreach (string raw in File.ReadAllLines(ArcContentPath, Encoding.UTF8))
+                {
+                    string[] p = raw.TrimEnd((char)13).Split((char)9);
+                    if (p.Length >= 4) _arcContent[p[0] + "|" + p[1] + "|" + p[2]] = p[3];
+                }
+            }
+            catch { }
+        }
+
+        public static void SaveArcContent()
+        {
+            try
+            {
+                if (_arcContent == null) return;
+                StringBuilder sb = new StringBuilder();
+                foreach (KeyValuePair<string, string> kv in _arcContent)
+                {
+                    string[] k = kv.Key.Split('|');
+                    if (k.Length < 4) continue;
+                    int n = k.Length;
+                    string ticks = k[n - 1];
+                    string size = k[n - 2];
+                    string rel = k[0];
+                    string inner = string.Join("|", k, 1, n - 3);
+                    sb.Append(rel).Append((char)9).Append(inner).Append((char)9).Append(size).Append('|').Append(ticks).Append((char)9).Append(kv.Value).Append(Environment.NewLine);
+                }
+                File.WriteAllText(ArcContentPath, sb.ToString(), new UTF8Encoding(false));
+            }
+            catch { }
+        }
+
+        static bool TryArcContent(string fullPath, string inner, out string cat, out string sub)
+        {
+            cat = ""; sub = "";
+            LoadArcContent();
+            string v;
+            if (!_arcContent.TryGetValue(ArcKey(fullPath, inner), out v)) return false;
+            int bar = v.IndexOf('|');
+            if (bar <= 0) return false;
+            cat = v.Substring(0, bar);
+            sub = v.Substring(bar + 1);
+            return cat.Length > 0;
+        }
+
+        /// <summary>把所有还没缓存的 rar 逐个探一遍（只读前几百 KB）。返回新识别成功的数量。</summary>
+        public static int ProbeArchives(Action<string> progress)
+        {
+            LoadArcContent();
+            int done = 0;
+            try
+            {
+                foreach (string dir in Directory.GetDirectories(Core.ModRoot))
+                {
+                    foreach (string arc in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                    {
+                        if (!arc.EndsWith(".rar", StringComparison.OrdinalIgnoreCase)) continue;
+                        string rel = RelOf(arc);
+                        string sig = ArcSig(arc);
+                        bool hit;
+                        List<ArcEntry> list = ListArchiveCached(arc, out hit);
+                        foreach (ArcEntry e in list)
+                        {
+                            string key = rel + "|" + e.Inner + "|" + sig;
+                            if (_arcContent.ContainsKey(key)) continue;
+                            if (progress != null) progress("识别 " + Path.GetFileName(arc) + " → " + Path.GetFileName(e.Inner));
+                            string c, s;
+                            if (ModIdentify.ClassifyByContentRar(arc, e.Inner, out c, out s))
+                                _arcContent[key] = c + "|" + s;
+                            else
+                                _arcContent[key] = "|";
+                            done++;
+                        }
+                    }
+                }
+            }
+            catch { }
+            SaveArcContent();
+            return done;
+        }
+
         public static void ScanMods()
         {
             Core.ModList.Clear();
@@ -363,6 +474,10 @@ namespace Installer
                 else if (it.FullPath != null && it.FullPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
                     hitContent = ModIdentify.ClassifyByContentZip(it.FullPath, it.Inner, out ccat, out csub);
+                }
+                else if (it.FullPath != null && it.FullPath.EndsWith(".rar", StringComparison.OrdinalIgnoreCase))
+                {
+                    hitContent = TryArcContent(it.FullPath, it.Inner, out ccat, out csub);
                 }
             }
             catch { hitContent = false; }

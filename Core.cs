@@ -1,0 +1,674 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Reflection;
+using System.Text;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
+using Microsoft.Win32;
+
+namespace Installer
+{
+    public class ModItem
+    {
+        public string Key;                // 唯一标识：独立 vpk = RelPath；压缩包内 = #arc#容器#包内路径
+        public string Category;           // 大类（兼容旧字段，等于 Cat）
+        public string Cat = "杂项";        // 地图/人物/枪械/药品/杂项/喷漆
+        public string Sub = "其他";        // 细分：AWP / 一代 · 佐伊Zoey / 启示录系列
+        public string Name;
+        public long Size;
+        public string RelPath;
+        public string FullPath;           // 独立 vpk = 文件本身；压缩包内 = 压缩包
+        public string Container;          // 压缩包相对路径（空 = 独立文件）
+        public string Inner;              // 压缩包内路径
+        public string GroupKey;           // 所属套装
+        public string Role = "必装";       // 主体/必装/选配/可选
+        public string Type;
+        public string TypeDetail;
+        public string Subject = "";       // 改了什么（从 vpk 内容反推，不是看文件夹名）
+        public string SubjectLevel = "";  // 依据：模型 / HUD图标 / 音效 / 材质
+        public string SubjectKey = "";    // 被替换的模型名，用于同枪冲突检测
+        public string Kinds = "";         // 影响面：模型,音效,HUD...
+
+        public bool IsArchive { get { return Container != null && Container.Length > 0; } }
+    }
+
+    public class Config
+    {
+        public string GameRoot = "";
+        public string LastRun = "";
+        public bool L4N = true;
+        public bool Skeeto = true;
+        public bool AssetPack = true;
+        public bool Mqcam = true;
+        public bool Dxvk = true;
+        public bool Launch = true;
+        public string LaunchOptions = LaunchArgs.Default;   // 默认值只在 Launch.cs 里写一次
+        public bool CfgFile = true;
+        public bool Overwrite = false;      // false = 已装的跳过；true = 全部重装一遍
+        public string TweakSet = "";        // 套用哪套参数存档（空 = 不套）
+        public List<string> Recent = new List<string>();
+        public List<string> Mods = new List<string>();
+    }
+
+    public static class Core
+    {
+        public static string Here;
+        public static string UsbRoot;
+        public static string ModRoot;
+        public static string PkgDir;
+        public static string CfgPath;
+        public static string LogDir;
+        public static string LogFile;
+        public static Config Cfg = new Config();
+        public static List<ModItem> ModList = new List<ModItem>();
+        public static Dictionary<string, ModItem> ByRel = new Dictionary<string, ModItem>(StringComparer.OrdinalIgnoreCase);
+        public static Dictionary<string, int> DirCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        public static Action<string> Sink;
+
+        // 复制完是否回读目标再算一遍 SHA256。默认关：只比大小，装 30 GB 能省掉一半 I/O。
+        public static bool StrictVerify = false;
+        // 上次实测的落地速度（MB/s），用于估算剩余时间
+        public static double LastRateMBps = 20.0;
+
+        [ThreadStatic] private static byte[] _copyBuf;
+        private static StreamWriter _logWriter;
+        private static readonly object _logGate = new object();
+
+        public static void Init()
+        {
+            Here = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            PkgDir = ResolvePkgDir(Here);
+            UsbRoot = WalkUp(Here);
+            ModRoot = Path.Combine(Path.Combine(UsbRoot, "游戏内容"), "求生之路2各项MOD");
+            CfgPath = Path.Combine(PkgDir, "装机台.配置.ini");
+            LogDir = Path.Combine(PkgDir, "_装机记录");
+            if (!Directory.Exists(LogDir)) Directory.CreateDirectory(LogDir);
+            LogFile = Path.Combine(LogDir, "log-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");
+            PruneLogs();
+            LoadConfig();
+        }
+
+        // 包目录：exe 旁边就有包就用旁边；否则在 U 盘里找带「防闪退」或「Skeeto+MQCam」的目录
+        public static string ResolvePkgDir(string start)
+        {
+            if (LooksLikePkg(start)) return start;
+            string root = WalkUp(start);
+            string guess = Path.Combine(Path.Combine(root, "游戏内容"), "求生之路2各项MOD\\扩展平台");
+            if (Directory.Exists(guess) && LooksLikePkg(guess)) return guess;
+
+            // 只有 U 盘/网络盘才值得三层穷举。exe 被拷到桌面时 root 会是 C:\，
+            // 三层扫下去要摸几万个目录，启动直接卡死几十秒。
+            try
+            {
+                DriveInfo di = new DriveInfo(Path.GetPathRoot(root));
+                if (di.DriveType != DriveType.Removable && di.DriveType != DriveType.Network)
+                {
+                    Log("WARN", "exe 不在 U 盘包里，包目录按 exe 所在目录算: " + start);
+                    return start;
+                }
+            }
+            catch { }
+
+            try
+            {
+                foreach (string d in Directory.GetDirectories(root))
+                {
+                    if (LooksLikePkg(d)) return d;
+                    foreach (string d2 in Directory.GetDirectories(d))
+                    {
+                        if (LooksLikePkg(d2)) return d2;
+                        foreach (string d3 in Directory.GetDirectories(d2))
+                        {
+                            if (LooksLikePkg(d3)) return d3;
+                        }
+                    }
+                }
+            }
+            catch { }
+            return start;
+        }
+
+        private static bool LooksLikePkg(string dir)
+        {
+            try
+            {
+                if (!Directory.Exists(dir)) return false;
+                if (Directory.Exists(Path.Combine(dir, "防闪退"))) return true;
+                if (Directory.Exists(Path.Combine(dir, "Skeeto"))) return true;
+                if (Directory.Exists(Path.Combine(dir, "MQCam"))) return true;
+                return false;
+            }
+            catch { return false; }
+        }
+
+        private static string WalkUp(string start)
+        {
+            string p = start;
+            while (p != null && p.Length > 3)
+            {
+                string leaf = Path.GetFileName(p);
+                if (leaf == "游戏内容" || leaf == "工作区" || leaf == "编译用") return Path.GetDirectoryName(p);
+                p = Path.GetDirectoryName(p);
+            }
+            return Path.GetPathRoot(start);
+        }
+
+        public static void Log(string level, string text)
+        {
+            string line = "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + level.PadRight(4) + " " + text;
+            try
+            {
+                lock (_logGate)
+                {
+                    if (_logWriter == null)
+                    {
+                        _logWriter = new StreamWriter(new FileStream(LogFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false));
+                    }
+                    _logWriter.WriteLine(line);
+                    _logWriter.Flush();
+                }
+            }
+            catch { }
+            if (Sink != null) { try { Sink(line); } catch { } }
+        }
+
+        public static void CloseLog()
+        {
+            try { lock (_logGate) { if (_logWriter != null) { _logWriter.Dispose(); _logWriter = null; } } } catch { }
+        }
+
+        // 日志只留最近 40 个，不然 _装机记录 会一直涨
+        private static void PruneLogs()
+        {
+            try
+            {
+                string[] fs = Directory.GetFiles(LogDir, "log-*.txt");
+                if (fs.Length <= 40) return;
+                Array.Sort(fs, StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < fs.Length - 40; i++) { try { File.Delete(fs[i]); } catch { } }
+            }
+            catch { }
+        }
+
+        public static string Human(long b)
+        {
+            if (b >= 1073741824L) return (b / 1073741824.0).ToString("N2") + " GB";
+            if (b >= 1048576L) return (b / 1048576.0).ToString("N1") + " MB";
+            return (b / 1024.0).ToString("N0") + " KB";
+        }
+
+        // ---------------- 配置 ----------------
+        public static void LoadConfig()
+        {
+            try
+            {
+                if (!File.Exists(CfgPath)) return;
+                foreach (string raw in File.ReadAllLines(CfgPath, Encoding.UTF8))
+                {
+                    string s = raw.Trim();
+                    if (s.Length == 0 || s.StartsWith("#") || s.StartsWith("[")) continue;
+                    int eq = s.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string k = s.Substring(0, eq).Trim();
+                    string v = s.Substring(eq + 1).Trim();
+                    if (k == "GameRoot") Cfg.GameRoot = v;
+                    else if (k == "LastRun") Cfg.LastRun = v;
+                    else if (k == "L4N") Cfg.L4N = (v == "1");
+                    else if (k == "Skeeto") Cfg.Skeeto = (v == "1");
+                    else if (k == "AssetPack") Cfg.AssetPack = (v == "1");
+                    else if (k == "Mqcam") Cfg.Mqcam = (v == "1");
+                    else if (k == "Dxvk") Cfg.Dxvk = (v == "1");
+                    else if (k == "Launch") Cfg.Launch = (v == "1");
+                    else if (k == "LaunchOptions")
+                    {
+                        // 老配置里若还是 v1.7 的默认值，说明没人动过 —— 直接升到新默认，
+                        // 否则换了新 exe 还是按旧参数写，等于没改。
+                        if (v.Length == 0 || v == LaunchArgs.Legacy)
+                        {
+                            Cfg.LaunchOptions = LaunchArgs.Default;
+                            if (v.Length > 0) Log("INFO", "启动项是旧默认值（" + v + "），已换成新版默认参数");
+                        }
+                        else Cfg.LaunchOptions = v;
+                    }
+                    else if (k == "CfgFile") Cfg.CfgFile = (v == "1");
+                    else if (k == "Overwrite") Cfg.Overwrite = (v == "1");
+                    else if (k == "TweakSet") Cfg.TweakSet = v;
+                    else if (k == "Recent") Cfg.Recent.Add(v);
+                    else if (k.StartsWith("Mod:")) Cfg.Mods.Add(k.Substring(4));
+                }
+            }
+            catch { }
+        }
+
+        public static void SaveConfig()
+        {
+            try
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("# 装机台配置（勾选记忆）。删掉这个文件 = 恢复默认。");
+                sb.AppendLine("[general]");
+                sb.AppendLine("GameRoot=" + Cfg.GameRoot);
+                sb.AppendLine("LastRun=" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                sb.AppendLine("[platform]");
+                sb.AppendLine("L4N=" + (Cfg.L4N ? "1" : "0"));
+                sb.AppendLine("Skeeto=" + (Cfg.Skeeto ? "1" : "0"));
+                sb.AppendLine("AssetPack=" + (Cfg.AssetPack ? "1" : "0"));
+                sb.AppendLine("Mqcam=" + (Cfg.Mqcam ? "1" : "0"));
+                sb.AppendLine("Dxvk=" + (Cfg.Dxvk ? "1" : "0"));
+                sb.AppendLine("Launch=" + (Cfg.Launch ? "1" : "0"));
+                sb.AppendLine("LaunchOptions=" + Cfg.LaunchOptions);
+                sb.AppendLine("CfgFile=" + (Cfg.CfgFile ? "1" : "0"));
+                sb.AppendLine("Overwrite=" + (Cfg.Overwrite ? "1" : "0"));
+                sb.AppendLine("TweakSet=" + Cfg.TweakSet);
+                foreach (string rp in Cfg.Recent) sb.AppendLine("Recent=" + rp);
+                sb.AppendLine("[mods]");
+                foreach (string m in Cfg.Mods) sb.AppendLine("Mod:" + m + "=1");
+                File.WriteAllText(CfgPath, sb.ToString(), new UTF8Encoding(true));
+            }
+            catch (Exception ex) { Log("WARN", "配置写不进去: " + ex.Message); }
+        }
+
+        // ---------------- 找游戏 ----------------
+        public static bool TestGame(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            try
+            {
+                string p = path.Trim().Trim('"').TrimEnd('\\');
+                return File.Exists(Path.Combine(p, "left4dead2.exe")) && Directory.Exists(Path.Combine(p, "left4dead2"));
+            }
+            catch { return false; }
+        }
+
+        public static List<string> FindGames()
+        {
+            List<string> hits = new List<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Action<string> add = delegate(string p)
+            {
+                if (string.IsNullOrEmpty(p)) return;
+                string t = p.Trim().Trim('"').TrimEnd('\\');
+                if (TestGame(t) && seen.Add(t)) hits.Add(t);
+            };
+
+            if (TestGame(Cfg.GameRoot)) add(Cfg.GameRoot);
+
+            List<string> steamLibs = new List<string>();
+            string[] regs = new string[] {
+                "HKEY_CURRENT_USER\\Software\\Valve\\Steam",
+                "HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Valve\\Steam",
+                "HKEY_LOCAL_MACHINE\\SOFTWARE\\Valve\\Steam"
+            };
+            foreach (string r in regs)
+            {
+                foreach (string valName in new string[] { "SteamPath", "InstallPath" })
+                {
+                    try
+                    {
+                        object v = Registry.GetValue(r, valName, null);
+                        if (v != null && v.ToString().Length > 0)
+                        {
+                            string s = v.ToString().Replace('/', '\\').TrimEnd('\\');
+                            if (Directory.Exists(s) && !steamLibs.Contains(s)) steamLibs.Add(s);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            foreach (string lib in steamLibs)
+            {
+                add(Path.Combine(lib, "steamapps\\common\\Left 4 Dead 2"));
+                try
+                {
+                    string vdf = Path.Combine(lib, "steamapps\\libraryfolders.vdf");
+                    if (File.Exists(vdf))
+                    {
+                        string txt = File.ReadAllText(vdf);
+                        foreach (Match m in Regex.Matches(txt, "\"path\"\\s*\"([^\"]+)\""))
+                        {
+                            string d = m.Groups[1].Value.Replace("\\\\", "\\").TrimEnd('\\');
+                            if (Directory.Exists(d)) add(Path.Combine(d, "steamapps\\common\\Left 4 Dead 2"));
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            string[] bases = new string[] { "Steam", "SteamLibrary", "storygames", "Games", "" };
+            foreach (DriveInfo di in DriveInfo.GetDrives())
+            {
+                try
+                {
+                    if (!di.IsReady) continue;
+                    string root = di.RootDirectory.FullName;
+                    foreach (string b in bases)
+                    {
+                        string p1 = (b.Length == 0) ? root : Path.Combine(root, b);
+                        add(Path.Combine(p1, "steamapps\\common\\Left 4 Dead 2"));
+                        add(Path.Combine(p1, "Left 4 Dead 2"));
+                    }
+                    // 网维：storygames\<编号>\steamapps\common\...
+                    string sg = Path.Combine(root, "storygames");
+                    if (Directory.Exists(sg))
+                    {
+                        foreach (string sub in Directory.GetDirectories(sg))
+                        {
+                            add(Path.Combine(sub, "steamapps\\common\\Left 4 Dead 2"));
+                            foreach (string sub2 in Directory.GetDirectories(sub))
+                                add(Path.Combine(sub2, "steamapps\\common\\Left 4 Dead 2"));
+                        }
+                    }
+                }
+                catch { }
+            }
+            return hits;
+        }
+
+        // ---------------- MOD 库 ----------------
+        public static void BumpDir(string key)
+        {
+            int n;
+            DirCount.TryGetValue(key, out n);
+            DirCount[key] = n + 1;
+        }
+
+        public static void ScanMods()
+        {
+            Catalog.ScanMods();
+            Catalog.BuildGroups();
+            Log("INFO", "整理成 " + Catalog.Groups.Count + " 个 MOD（其中 " + CountSets() + " 个是多 vpk 套装）");
+        }
+
+        private static int CountSets()
+        {
+            int n = 0;
+            foreach (ModGroup g in Catalog.Groups) if (g.IsSet) n++;
+            return n;
+        }
+
+        // 文件所在的相对目录（用于“位置”列）
+        public static string RelDir(string relPath)
+        {
+            int i = relPath.LastIndexOf('\\');
+            return i > 0 ? relPath.Substring(0, i) : "";
+        }
+
+        // 文件夹名是给资源管理器看的（addons各类物品储藏库\AK47），界面上只说「是什么东西」。
+        // 去掉 addons 前缀 + 别名，多级用「 · 」连起来：枪械 · AK47
+        public static string PrettyCat(string folder)
+        {
+            if (folder == null || folder.Length == 0) return "";
+            string[] parts = folder.Split('\\');
+            List<string> outs = new List<string>();
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string p = parts[i];
+                if (p.Length == 0) continue;
+                if (i == 0 && p.StartsWith("addons", StringComparison.OrdinalIgnoreCase)) p = p.Substring(6);
+                p = CatAlias(p);
+                if (p.Length > 0) outs.Add(p);
+            }
+            return string.Join(" · ", outs.ToArray());
+        }
+
+        // 单层目录名 → 人话。认不出来的就不动，别硬编一个错的名字上去。
+        public static string CatAlias(string n)
+        {
+            if (n == null) return "";
+            if (n.StartsWith("addons", StringComparison.OrdinalIgnoreCase)) n = n.Substring(6);
+            switch (n)
+            {
+                case "各类物品储藏库": return "物品库";
+                case "武器类": return "枪械";
+                case "枪械类": return "枪械";
+                case "喷漆扩展": return "喷漆";
+                case "喷图扩展": return "喷漆";
+                case "三方地图": return "地图";
+                case "医疗物品": return "医疗";
+                case "杂项功能": return "杂项";
+            }
+            return n;
+        }
+
+        // ---------------- 包检查 ----------------
+        public static List<string> CheckPackages(out bool allOk)
+        {
+            List<string> lines = new List<string>();
+            allOk = true;
+            string l4nZip = FirstFile(PkgDir, "L4N_v*.zip");
+            string l4nDir = Path.Combine(PkgDir, "L4N平台\\L4N");
+            bool hasL4N = (l4nZip != null) || File.Exists(Path.Combine(l4nDir, "left4dead2.exe"));
+            lines.Add(hasL4N ? ("L4N      OK  " + (l4nZip != null ? Path.GetFileName(l4nZip) : "L4N平台\\L4N")) : "L4N      缺");
+            if (!hasL4N) allOk = false;
+
+            string skDll = Path.Combine(PkgDir, "Skeeto\\Skeeto\\skeeto.dll");
+            string skPs1 = Path.Combine(PkgDir, "Skeeto\\Skeeto\\Skeeto\\Maintain.ps1");
+            bool hasSk = File.Exists(skDll) || File.Exists(skPs1);
+            lines.Add(hasSk ? ("Skeeto   OK  " + SkeetoVersion()) : "Skeeto   缺");
+            if (!hasSk) allOk = false;
+
+            string vpk = FirstFile(Path.Combine(PkgDir, "Skeeto\\素材包"), "*.vpk");
+            lines.Add(vpk != null ? ("素材包   OK  " + Human(new FileInfo(vpk).Length)) : "素材包   缺");
+            if (vpk == null) allOk = false;
+
+            string mq = Path.Combine(PkgDir, "MQCam\\MQCam\\mqcore_package_tool.exe");
+            lines.Add(File.Exists(mq) ? ("MQCam    OK  " + File.GetLastWriteTime(mq).ToString("yyyy-MM-dd")) : "MQCam    缺");
+            if (!File.Exists(mq)) allOk = false;
+
+            string dx1 = Path.Combine(PkgDir, "防闪退\\d3d9.dll");
+            string dx2 = Path.Combine(PkgDir, "防闪退\\dxvk.conf");
+            bool hasDx = File.Exists(dx1) && File.Exists(dx2);
+            lines.Add(hasDx ? ("dxvk     OK  " + (new FileInfo(dx1).Length / 1024).ToString("N0") + " KB, " + File.GetLastWriteTime(dx1).ToString("yyyy-MM-dd")) : "dxvk     缺");
+            if (!hasDx) allOk = false;
+
+            foreach (string l in lines) Log("INFO", l);
+            return lines;
+        }
+
+        private static string SkeetoVersion()
+        {
+            try
+            {
+                string v = Path.Combine(Core.PkgDir, "Skeeto\\Skeeto\\VERSION.txt");
+                if (File.Exists(v))
+                {
+                    string[] lines = File.ReadAllLines(v);
+                    if (lines.Length > 0) return lines[0].Trim();
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        public static string FirstFile(string dir, string pattern)
+        {
+            try
+            {
+                if (!Directory.Exists(dir)) return null;
+                string[] f = Directory.GetFiles(dir, pattern);
+                if (f.Length == 0) return null;
+                Array.Sort(f);
+                return f[f.Length - 1];
+            }
+            catch { return null; }
+        }
+
+        // ---------------- 复制（带进度、可跳过） ----------------
+        public static bool SameFile(string a, string b)
+        {
+            try
+            {
+                if (!File.Exists(b)) return false;
+                FileInfo fa = new FileInfo(a);
+                FileInfo fb = new FileInfo(b);
+                return fa.Length == fb.Length && Math.Abs((fa.LastWriteTimeUtc - fb.LastWriteTimeUtc).TotalSeconds) < 3;
+            }
+            catch { return false; }
+        }
+
+        public static void CopyOne(string src, string dst)
+        {
+            string h;
+            CopyOneHash(src, dst, out h);
+        }
+
+        // 不算哈希的纯复制：大包搬运（L4N / Skeeto / 素材包）不需要哈希
+        public static void CopyOnePlain(string src, string dst)
+        {
+            string d = Path.GetDirectoryName(dst);
+            if (!string.IsNullOrEmpty(d) && !Directory.Exists(d)) Directory.CreateDirectory(d);
+            if (_copyBuf == null) _copyBuf = new byte[2 * 1024 * 1024];
+            byte[] buf = _copyBuf;
+            using (FileStream fi = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan))
+            using (FileStream fo = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024))
+            {
+                int n;
+                while ((n = fi.Read(buf, 0, buf.Length)) > 0) fo.Write(buf, 0, n);
+            }
+            try { File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src)); } catch { }
+        }
+
+        // 文件名里不能出现的字符换成下划线，顺带掐掉路径分隔符，防止写到别的目录
+        public static string SafeName(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            const string bad = "\\/:*?\"<>|";
+            StringBuilder sb = new StringBuilder(s.Length);
+            foreach (char ch in s) sb.Append(bad.IndexOf(ch) >= 0 ? '_' : ch);
+            string r = sb.ToString().Trim().TrimEnd('.');
+            if (r.Length == 0) r = "_";
+            return r;
+        }
+
+        // 复制一遍的同时把源文件 SHA256 算掉（不额外读第二遍），并保留源文件的修改时间
+        public static void CopyOneHash(string src, string dst, out string hash)
+        {
+            hash = null;
+            string d = Path.GetDirectoryName(dst);
+            if (!string.IsNullOrEmpty(d) && !Directory.Exists(d)) Directory.CreateDirectory(d);
+            if (_copyBuf == null) _copyBuf = new byte[2 * 1024 * 1024];
+            byte[] buf = _copyBuf;
+            using (SHA256 sha = SHA256.Create())
+            using (FileStream fi = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan))
+            using (FileStream fo = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024))
+            {
+                int n;
+                while ((n = fi.Read(buf, 0, buf.Length)) > 0)
+                {
+                    fo.Write(buf, 0, n);
+                    sha.TransformBlock(buf, 0, n, null, 0);
+                }
+                sha.TransformFinalBlock(buf, 0, 0);
+                hash = ToHex(sha.Hash);
+            }
+            try { File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src)); } catch { }
+        }
+
+        private static string ToHex(byte[] h)
+        {
+            if (h == null) return null;
+            StringBuilder sb = new StringBuilder(h.Length * 2);
+            foreach (byte b in h) sb.Append(b.ToString("x2"));
+            return sb.ToString();
+        }
+
+        public static string HashOf(string path)
+        {
+            try
+            {
+                using (SHA256 sha = SHA256.Create())
+                using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    byte[] h = sha.ComputeHash(fs);
+                    StringBuilder sb = new StringBuilder(h.Length * 2);
+                    foreach (byte b in h) sb.Append(b.ToString("x2"));
+                    return sb.ToString();
+                }
+            }
+            catch { return null; }
+        }
+
+        // 校验：大小必查；StrictVerify 打开时才回读目标算一遍 SHA256
+        public static bool CopyOneVerified(string src, string dst, out string why)
+        {
+            why = null;
+            try
+            {
+                string hs;
+                CopyOneHash(src, dst, out hs);
+                long a = new FileInfo(src).Length, b = new FileInfo(dst).Length;
+                if (a != b) { why = "大小不符 " + b + "/" + a; return false; }
+                if (StrictVerify)
+                {
+                    string hd = HashOf(dst);
+                    if (hd == null) { why = "目标哈希算不出来"; return false; }
+                    if (!string.Equals(hs, hd, StringComparison.OrdinalIgnoreCase)) { why = "SHA256 不一致"; return false; }
+                }
+                return true;
+            }
+            catch (Exception ex) { why = ex.Message; return false; }
+        }
+
+        // 覆盖式备份：每次写之前把当前版本存成 <path>.装之前，上一份留成 .装之前.上次
+        public static void BackupOnce(string path)
+        {
+            try
+            {
+                if (!File.Exists(path)) return;
+                string bak = path + ".装之前";
+                if (File.Exists(bak))
+                {
+                    string old = path + ".装之前.上次";
+                    try { if (File.Exists(old)) File.Delete(old); } catch { }
+                    try { File.Move(bak, old); } catch { }
+                }
+                File.Copy(path, bak, true);
+            }
+            catch { }
+        }
+
+        public static void BackupGame(string gameRoot, out string backupDir)
+        {
+            backupDir = Path.Combine(gameRoot, "_backup_l4d2suite_" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+            Directory.CreateDirectory(backupDir);
+            PruneBackups(gameRoot);
+            string exe = Path.Combine(gameRoot, "left4dead2.exe");
+            if (File.Exists(exe))
+            {
+                File.Copy(exe, Path.Combine(backupDir, "left4dead2.exe.原版备份"), true);
+                Log("OK", "备份 left4dead2.exe");
+            }
+            string cfg = Path.Combine(gameRoot, "left4dead2\\cfg");
+            if (Directory.Exists(cfg))
+            {
+                foreach (string f in Directory.GetFiles(cfg, "*", SearchOption.AllDirectories))
+                {
+                    string rel = f.Substring(cfg.Length).TrimStart('\\');
+                    string d = Path.Combine(Path.Combine(backupDir, "cfg"), rel);
+                    Directory.CreateDirectory(Path.GetDirectoryName(d));
+                    File.Copy(f, d, true);
+                }
+                Log("OK", "备份 left4dead2\\cfg");
+            }
+        }
+
+        // 游戏目录里的旧备份最多留 3 份，不然每装一次就多一个目录
+        private static void PruneBackups(string gameRoot)
+        {
+            try
+            {
+                string[] ds = Directory.GetDirectories(gameRoot, "_backup_l4d2suite_*");
+                if (ds.Length <= 3) return;
+                Array.Sort(ds, StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < ds.Length - 3; i++) { try { Directory.Delete(ds[i], true); } catch { } }
+            }
+            catch { }
+        }
+
+        public static void SelfTestCore(string gameRoot)
+        {
+        }
+    }
+}
