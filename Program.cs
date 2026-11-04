@@ -64,6 +64,7 @@ namespace Installer
             bool uiExpand = false;
             bool uiDeps = false;
             bool uiTree = false;
+            string uiSelect = null;
             bool uiMenu = false;
             bool uiSetCat = false;
             bool uiCatForm = false;
@@ -98,6 +99,7 @@ namespace Installer
                 else if (string.Equals(a, "--uiexpand", StringComparison.OrdinalIgnoreCase)) uiExpand = true;
                 else if (string.Equals(a, "--uideps", StringComparison.OrdinalIgnoreCase)) uiDeps = true;
                 else if (string.Equals(a, "--uitree", StringComparison.OrdinalIgnoreCase)) uiTree = true;
+                else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
                 else if (string.Equals(a, "--uimenu", StringComparison.OrdinalIgnoreCase)) uiMenu = true;
                 else if (string.Equals(a, "--uisetcat", StringComparison.OrdinalIgnoreCase)) uiSetCat = true;
                 else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
@@ -255,6 +257,7 @@ namespace Installer
                     if (uiExpand) { f.UiTestExpand(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiTree) { f.UiTestTree(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiSelect != null) { f.UiTestSelect(uiSelect); System.Windows.Forms.Application.DoEvents(); }
                     if (uiMenu) { f.UiTestMenu(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSetCat) { f.UiTestSetCat(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiCatForm) { f.UiTestCatForm(); System.Windows.Forms.Application.DoEvents(); }

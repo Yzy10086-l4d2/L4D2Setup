@@ -973,7 +973,7 @@ namespace Installer
                     {
                         // 组合装：改了什么列红字标出来，不用悬停也知道这行能挑部件
                         li.UseItemStyleForSubItems = false;
-                        li.SubItems[1].Text = KindsOf(g) + " ·组合装 " + g.Parts.Count + " 件";
+                        li.SubItems[1].Text = KindsOf(g) + "·组合装" + g.Parts.Count + "件";
                         li.SubItems[1].ForeColor = Theme.Accent;
                         li.SubItems[1].Font = Theme.UIBold;
                         li.ToolTipText = PartsTip(g);
@@ -1019,7 +1019,7 @@ namespace Installer
                         if (g.IsSet)
                         {
                             li.UseItemStyleForSubItems = false;
-                            li.SubItems[1].Text = KindsOf(g) + " ·组合装 " + g.Parts.Count + " 件";
+                            li.SubItems[1].Text = KindsOf(g) + "·组合装" + g.Parts.Count + "件";
                             li.SubItems[1].ForeColor = Theme.Accent;
                             li.SubItems[1].Font = Theme.UIBold;
                             li.ToolTipText = PartsTip(g);
@@ -1480,6 +1480,18 @@ namespace Installer
 {
     public partial class MainForm
     {
+        /// <summary>自测：切到方案树并选某个槽位（按显示名），用来截指定位置的效果图。</summary>
+        internal void UiTestSelect(string slotName)
+        {
+            if (viewHost == null) { Core.Log("FAIL", "TREE 没有 viewHost"); return; }
+            ShowTree();
+            Application.DoEvents();
+            Slot s = treeView.SlotByName(slotName);
+            if (s == null) { Core.Log("WARN", "SELECT 没找到槽位: " + slotName); return; }
+            treeView.SelectSlot(s.Key);
+            Core.Log("INFO", "SELECT 已选中槽位 " + s.Name);
+        }
+
         /// <summary>自测：切到方案树、数槽位、验证「一个位置只留一个」的替换逻辑。</summary>
         internal void UiTestTree()
         {
