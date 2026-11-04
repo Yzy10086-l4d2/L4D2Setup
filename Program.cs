@@ -78,6 +78,7 @@ namespace Installer
             bool tweakSelf = false;
             bool addonSelf = false;
             bool dumpId = false;
+            bool dumpTree = false;
             string vpkFile = null;
 
 
@@ -111,6 +112,7 @@ namespace Installer
                 else if (string.Equals(a, "--tweakself", StringComparison.OrdinalIgnoreCase)) tweakSelf = true;
                 else if (string.Equals(a, "--addonself", StringComparison.OrdinalIgnoreCase)) addonSelf = true;
                 else if (string.Equals(a, "--dumpid", StringComparison.OrdinalIgnoreCase)) dumpId = true;
+                else if (string.Equals(a, "--dumptree", StringComparison.OrdinalIgnoreCase)) dumpTree = true;
                 else if (a.StartsWith("--vpk=", StringComparison.OrdinalIgnoreCase)) vpkFile = a.Substring(6).Trim('"');
 
                 else if (a.StartsWith("--game=", StringComparison.OrdinalIgnoreCase)) gameRoot = a.Substring(7).Trim('"');
@@ -120,7 +122,7 @@ namespace Installer
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
             if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf
-                && !addonSelf && !dumpId && vpkFile == null)
+                && !addonSelf && !dumpId && !dumpTree && vpkFile == null)
             {
                 ActivateExisting();
                 try { only.Dispose(); } catch { }
@@ -145,6 +147,13 @@ namespace Installer
                 Core.ScanMods();
                 string f = Catalog.DumpIdentify();
                 Console.WriteLine("dumpid: " + f + "（" + Catalog.Groups.Count + " 个 MOD）");
+                return 0;
+            }
+            if (dumpTree)
+            {
+                Core.ScanMods();
+                string f = SlotIndex.DumpTree();
+                Console.WriteLine("dumptree: " + f);
                 return 0;
             }
             if (tweakSelf)

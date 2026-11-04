@@ -53,6 +53,20 @@ namespace Installer
                     nm = (m.Subject ?? "").Trim();
                     if (IsCountName(nm)) continue;                 // 「4 件」是「一个包里改了好几样」的上报格式，不是东西
                     nm = SplitKind(nm, out hint);                  // 「霰弹枪/木喷」→ 木喷（枪种当小分类）
+                    // 一个包同时改了两件（UZI + MAC-10 共用一套动画，作者常一起换），位置只能占一个：
+                    // 用户把它放在哪个目录，就归哪个 —— 目录名比「A/B」这种并列表述有用。
+                    if (nm.IndexOf('/') >= 0)
+                    {
+                        string c0 = Concrete("", g, m);
+                        if (c0.Length > 0 && HasHalf(nm, c0)) { nm = c0; key = "c:" + c0; }
+                    }
+                    // 只靠材质认出来的名字不能定死：铁喷的贴图就放在 materials/.../shotgun/ 下，
+                    // 会被认成木喷。这种时候听目录名。
+                    if (m.SubjectLevel == "材质" && cat != "杂项" && cat != "地图" && cat != "喷漆")
+                    {
+                        string c1 = Concrete(nm, g, m);
+                        if (c1.Length > 0) { nm = c1; key = "c:" + c1; }
+                    }
                     // 只认出「步枪 / 霰弹枪 / 幸存者」这种泛称时，用目录名或 MOD 名里的具体型号补回来。
                     // 用户自己的目录名（sg552 / 铁喷 / 黑胖Coach）比内容识别准得多。
                     if (Vague(nm))
@@ -195,6 +209,7 @@ namespace Installer
                 }
                 case "人物": return CharKindOf(n);
                 case "药品": return MedKindOf(n, key);
+                case "特感": return "特感";        // 一个特感就是一个位置，不再往下分层
             }
             string s = (gsub ?? "").Trim();
             if (s.Length > 0 && s != "其他") return s;
@@ -204,23 +219,25 @@ namespace Installer
         private static string GunKindOf(string nm, string key)
         {
             string s = ((nm ?? "") + " " + (key ?? "")).ToLowerInvariant();
-            // 顺序有讲究：带 rifle 的「猎枪/鸟狙」得先被狙击认走，否则会被步枪抢
+            // 顺序有讲究：带 rifle 的「15发木狙/鸟狙」得先被狙击认走，否则会被步枪抢
             if (HasAny(s, "awp", "scout", "military", "hunting", "sniper", "鸟狙", "猎枪", "狙击", "狙"))
                 return "狙击枪";
             if (HasAny(s, "pump", "chrome", "spas", "autoshotgun", "shotgun", "木喷", "铁喷", "连喷", "霰弹"))
                 return "霰弹枪";
             if (HasAny(s, "uzi", "mp5", "mac10", "mac-10", "silenced", "消音", "smg", "冲锋"))
                 return "冲锋枪";
-            if (HasAny(s, "ak47", "ak-47", "m16", "三连发", "scar", "sg552", "galil", "m4", "ar15", "ar-15", "desert", "rifle", "步枪"))
+            if (HasAny(s, "ak47", "ak-47", "m16", "scar", "sg552", "galil", "m4", "ar15", "ar-15", "desert", "rifle", "步枪"))
                 return "步枪";
+            // 榴弹发射器带 grenade，必须排在投掷物前面，否则会被当成手雷
+            if (HasAny(s, "grenade_launcher", "launcher", "榴弹", "m60", "machinegun", "机枪", "特殊武器"))
+                return "特殊武器";
+            if (HasAny(s, "molotov", "pipebomb", "vomitjar", "vomit", "grenade", "投掷", "燃烧瓶", "土制", "胆汁"))
+                return "投掷物";
             if (HasAny(s, "magnum", "pistol", "手枪", "马格南"))
                 return "手枪";
-            if (HasAny(s, "m60", "machinegun", "机枪"))
-                return "机枪";
-            if (HasAny(s, "katana", "machete", "crowbar", "fireaxe", "武士刀", "砍刀", "斧", "锤", "吉他", "球棒", "近战"))
+            if (HasAny(s, "katana", "machete", "crowbar", "fireaxe", "武士刀", "砍刀", "撬棍", "消防斧",
+                          "平底锅", "斧", "锤", "吉他", "球棒", "近战"))
                 return "近战";
-            if (HasAny(s, "grenade", "launcher", "榴弹"))
-                return "爆炸物";
             return "其他枪械";
         }
 
@@ -238,13 +255,13 @@ namespace Installer
         private static string MedKindOf(string nm, string key)
         {
             string s = ((nm ?? "") + " " + (key ?? "")).ToLowerInvariant();
-            if (HasAny(s, "medkit", "医疗包", "除颤", "defib")) return "治疗与复活";
+            if (HasAny(s, "medkit", "医疗包", "除颤", "电击", "defib")) return "治疗与复活";
             if (HasAny(s, "pill", "止痛", "adrenaline", "肾上腺", "针")) return "暂时增益";
             return "其他药品";
         }
 
         private static readonly string[] GunKindNames =
-        { "步枪", "冲锋枪", "霰弹枪", "狙击枪", "手枪", "机枪", "近战", "爆炸物" };
+        { "步枪", "冲锋枪", "霰弹枪", "狙击枪", "手枪", "特殊武器", "近战", "投掷物" };
 
         private static bool IsGunKindName(string s)
         {
@@ -261,7 +278,7 @@ namespace Installer
 
         private static readonly string[] SubOrder =
         {
-            "步枪", "冲锋枪", "霰弹枪", "狙击枪", "手枪", "机枪", "近战", "爆炸物", "其他枪械",
+            "步枪", "冲锋枪", "霰弹枪", "狙击枪", "手枪", "特殊武器", "近战", "投掷物", "其他枪械",
             "一代", "二代", "特感", "其他人物",
             "治疗与复活", "暂时增益", "其他药品"
         };
@@ -270,6 +287,33 @@ namespace Installer
         {
             for (int i = 0; i < SubOrder.Length; i++) if (SubOrder[i] == sub) return i;
             return 500;
+        }
+
+        // 同一小分类里谁排前面：照游戏里武器的默认顺序来（用户也是这么记的）。
+        private static readonly string[,] PosOrder = new string[,]
+        {
+            {"步枪","AK-47"},{"步枪","M16"},{"步枪","sg552"},{"步枪","SCAR-L"},
+            {"冲锋枪","UZI"},{"冲锋枪","MAC-10"},{"冲锋枪","MP5"},
+            {"霰弹枪","木喷"},{"霰弹枪","铁喷"},{"霰弹枪","一代连喷"},{"霰弹枪","二代连喷"},
+            {"狙击枪","AWP"},{"狙击枪","鸟狙"},{"狙击枪","15发木狙"},{"狙击枪","30发军用狙"},
+            {"特殊武器","M60"},{"特殊武器","榴弹发射器"},
+            {"投掷物","燃烧瓶"},{"投掷物","土制炸弹"},{"投掷物","胆汁"},
+            {"手枪","手枪"},{"手枪","马格南"},
+            {"近战","近战武器"},{"近战","武士刀"},{"近战","砍刀"},{"近战","撬棍"},
+            {"近战","消防斧"},{"近战","平底锅"},
+            {"治疗与复活","医疗包"},{"治疗与复活","电击器"},
+            {"暂时增益","肾上腺素"},{"暂时增益","止痛药"},
+            {"一代","比尔"},{"一代","佐伊"},{"一代","路易斯"},{"一代","弗朗西斯"},
+            {"二代","教练"},{"二代","埃利斯"},{"二代","尼克"},{"二代","罗谢尔"},
+            {"特感","Boomer"},{"特感","Charger"},{"特感","Hunter"},{"特感","Jockey"},
+            {"特感","Smoker"},{"特感","Spitter"},{"特感","Tank"},{"特感","Witch"},
+        };
+
+        public static int NameRank(string sub, string name)
+        {
+            for (int i = 0; i < PosOrder.GetLength(0); i++)
+                if (PosOrder[i, 0] == sub && PosOrder[i, 1] == name) return i;
+            return 1000;
         }
 
         /// <summary>两把不同的枪可能都叫「鸟狙」，加个尾巴区分开，否则树里看着像重复项。</summary>
@@ -323,7 +367,8 @@ namespace Installer
         private static bool Vague(string s)
         {
             return s == "步枪" || s == "冲锋枪" || s == "霰弹枪" || s == "投掷物"
-                || s == "手枪" || s == "机枪" || s == "狙击枪"
+                || s == "手枪" || s == "机枪" || s == "狙击枪" || s == "特殊武器"
+                || s == "爆炸物" || s == "其他枪械" || s == "其他枪"
                 || s == "幸存者" || s == "人物" || s == "近战" || s == "近战武器"
                 || s == "其他" || s.Length == 0;
         }
@@ -331,14 +376,19 @@ namespace Installer
         // 泛称补全用：关键词 → 标准位置名。长的排前面，免得 "M4" 抢走 "M4A1"。
         private static readonly string[,] GunPairs = new string[,]
         {
+            {"30发连狙","30发军用狙"},{"30连","30发军用狙"},{"军用狙","30发军用狙"},
+            {"15发连狙","15发木狙"},{"15连","15发木狙"},{"木狙","15发木狙"},
             {"一代连喷","一代连喷"},{"二代连喷","二代连喷"},
-            {"sg552","sg552"},{"SG552","sg552"},
+            {"sg552","sg552"},
             {"AK-47","AK-47"},{"AK47","AK-47"},
-            {"AR15","AR15"},{"SCAR","SCAR"},{"M4A1","M4"},{"M249","M249"},
+            {"SCAR","SCAR-L"},{"三连发","SCAR-L"},
+            {"AR15","AR15"},{"M4A1","M4"},{"M249","M249"},
             {"M16","M16"},{"AWP","AWP"},{"MP5","MP5"},{"M60","M60"},
             {"UZI","UZI"},{"MAC-10","MAC-10"},{"MAC10","MAC-10"},{"P90","P90"},
-            {"三连发","三连发"},{"铁喷","铁喷"},{"铁盆","铁喷"},{"木喷","木喷"},
-            {"鸟狙","鸟狙"},{"猎枪","猎枪"},{"连狙","连狙"},
+            {"铁喷","铁喷"},{"铁盆","铁喷"},{"木喷","木喷"},
+            {"鸟狙","鸟狙"},{"猎枪","15发木狙"},{"连狙","30发军用狙"},
+            {"榴弹","榴弹发射器"},
+            {"燃烧瓶","燃烧瓶"},{"土制","土制炸弹"},{"胆汁","胆汁"},
             {"武士刀","武士刀"},{"砍刀","砍刀"},{"撬棍","撬棍"},{"平底锅","平底锅"},{"马格南","马格南"},
         };
 
@@ -353,6 +403,15 @@ namespace Installer
             {"佐伊","佐伊"},{"Zoey","佐伊"},
             {"比尔","比尔"},{"Bill","比尔"},
         };
+
+        /// <summary>「UZI/MAC-10」里是不是正好有 MAC-10 这一半。</summary>
+        private static bool HasHalf(string nm, string one)
+        {
+            if (string.IsNullOrEmpty(nm) || string.IsNullOrEmpty(one)) return false;
+            foreach (string p in nm.Split('/'))
+                if (p.Trim() == one) return true;
+            return false;
+        }
 
         /// <summary>泛称 → 具体位置名。先看 MOD 所在目录，再看 MOD 自己的名字。</summary>
         private static string Concrete(string vague, ModGroup g, ModItem m)
@@ -369,6 +428,7 @@ namespace Installer
             string hit = null;
             if (vague == "幸存者" || vague == "人物") hit = Find(CharPairs, text);
             if (hit == null) hit = Find(GunPairs, text);
+            if (hit == null && vague.Length == 0) hit = Find(CharPairs, text);   // A/B 拆不开时再试人物
             return hit ?? "";
         }
 
@@ -380,9 +440,49 @@ namespace Installer
             return null;
         }
 
-        /// <summary>树里的大类顺序：跟着分类顺序走，地图/喷漆不进树。</summary>
-        public static List<string> CatOrder(List<Slot> slots)
+        /// <summary>把方案树摊平成文本，方便不开界面核对分类对不对（--dumptree）。</summary>
+        public static string DumpTree()
         {
+            List<Slot> slots = Build();
+            List<string> order = CatOrder(slots);
+            slots.Sort(delegate(Slot a, Slot b)
+            {
+                int ia = order.IndexOf(a.Cat), ib = order.IndexOf(b.Cat);
+                if (ia != ib) return ia.CompareTo(ib);
+                int sa = SubRank(a.Sub), sb2 = SubRank(b.Sub);
+                if (sa != sb2) return sa.CompareTo(sb2);
+                int na = NameRank(a.Sub, a.Name), nb = NameRank(b.Sub, b.Name);
+                if (na != nb) return na.CompareTo(nb);
+                int c = string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
+                return c != 0 ? c : string.Compare(a.Key, b.Key, StringComparison.Ordinal);
+            });
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            foreach (string cat in order)
+            {
+                List<Slot> inCat = new List<Slot>();
+                foreach (Slot s in slots) if (s.Cat == cat) inCat.Add(s);
+                if (inCat.Count == 0) continue;
+                sb.AppendLine();
+                sb.AppendLine("【" + cat + "】");
+                // 只有一层分组的大类不画那行标题，跟界面里一致
+                int subCount = 0;
+                string prev = null;
+                foreach (Slot s in inCat) if (s.Sub != prev) { prev = s.Sub; subCount++; }
+                bool showSub = subCount > 1;
+                string lastSub = null;
+                foreach (Slot s in inCat)
+                {
+                    if (showSub && s.Sub != lastSub) { sb.AppendLine("  〈" + s.Sub + "〉"); lastSub = s.Sub; }
+                    sb.AppendLine("    " + s.Name + "  (" + s.Items.Count + " 个)" + (s.Manual ? " [人工]" : ""));
+                }
+            }
+            string f = System.IO.Path.Combine(Core.LogDir, "方案树.txt");
+            System.IO.File.WriteAllText(f, sb.ToString(), new System.Text.UTF8Encoding(true));
+            return f;
+        }
+
+        /// <summary>树里的大类顺序：跟着分类顺序走，地图/喷漆不进树。</summary>
+        public static List<string> CatOrder(List<Slot> slots)        {
             List<string> order = new List<string>();
             foreach (string c in CatPrefs.Cats())
                 if (c != "地图" && c != "喷漆" && !order.Contains(c)) order.Add(c);
@@ -582,6 +682,8 @@ namespace Installer
                 if (ia != ib) return ia.CompareTo(ib);
                 int sa = SlotIndex.SubRank(a.Sub), sb = SlotIndex.SubRank(b.Sub);
                 if (sa != sb) return sa.CompareTo(sb);
+                int na = SlotIndex.NameRank(a.Sub, a.Name), nb = SlotIndex.NameRank(b.Sub, b.Name);
+                if (na != nb) return na.CompareTo(nb);
                 // 人工排过的位置按人工顺序；没排过的往后
                 int ra = CatPrefs.SlotRank(a.Cat, a.Name), rb = CatPrefs.SlotRank(b.Cat, b.Name);
                 if (ra != rb) return ra.CompareTo(rb);
@@ -608,17 +710,22 @@ namespace Installer
                 if (folded.Contains(cat)) continue;
 
                 // 小分类（枪械 → 步枪 → AK-47）。slots 已按小分类排好，这里顺着切段。
+                // 一大类底下只有一个分组时不画那行标题 ——「特感 → 特感 → Tank」这种重复层没意义。
+                int subCount = 0;
+                string prevSub = null;
+                foreach (Slot s in inCat) if (s.Sub != prevSub) { prevSub = s.Sub; subCount++; }
+                bool showSub = subCount > 1;
                 string lastSub = null;
                 foreach (Slot s in inCat)
                 {
-                    if (s.Sub != lastSub)
+                    if (showSub && s.Sub != lastSub)
                     {
                         lastSub = s.Sub;
                         TreeRow sh = new TreeRow();
                         sh.IsSub = true; sh.Cat = cat; sh.Sub = s.Sub;
                         rows.Add(sh);
                     }
-                    if (folded.Contains(SubKey(cat, s.Sub))) continue;        // 这一段整段收起
+                    if (showSub && folded.Contains(SubKey(cat, s.Sub))) continue;        // 这一段整段收起
                     TreeRow r = new TreeRow();
                     r.Slot = s; r.Cat = cat; r.Sub = s.Sub;
                     rows.Add(r);

@@ -20,7 +20,7 @@ namespace Installer
     internal static class CatPrefs
     {
         // 默认顺序：树里看得见的四类在前，地图/喷漆不进树、排最后
-        public static readonly string[] DefaultCats = { "枪械", "人物", "药品", "杂项", "地图", "喷漆" };
+        public static readonly string[] DefaultCats = { "枪械", "人物", "特感", "药品", "杂项", "地图", "喷漆" };
 
         private static bool loaded;
         private static int ver;                    // 每次改都 +1，Catalog.Cats 的缓存靠它失效
@@ -498,10 +498,20 @@ namespace Installer
             lbSlot.Items.Clear();
             lbSlot.Items.Add(string.Format(AUTO, autoSlot.Length > 0 ? autoSlot : "认不出来"));
             List<string> names = new List<string>(CatPrefs.Slots(curCat));
-            // 这一类里已经认出来的位置也列上：新 MOD 可以并到现成的位置，而不是又开一个
+            // 这一类里已经认出来的位置也列上：新 MOD 可以并到现成的位置，而不是又开一个。
+            // 顺序跟方案树里一致（步枪 → AK-47 → M16 → …），不然这里是乱序，找位置很费眼。
+            List<Slot> mine = new List<Slot>();
             if (snapshot != null)
-                foreach (Slot s in snapshot)
-                    if (s.Cat == curCat && !names.Contains(s.Name)) names.Add(s.Name);
+                foreach (Slot s in snapshot) if (s.Cat == curCat) mine.Add(s);
+            mine.Sort(delegate(Slot x, Slot y)
+            {
+                int a = SlotIndex.SubRank(x.Sub), b = SlotIndex.SubRank(y.Sub);
+                if (a != b) return a.CompareTo(b);
+                int c = SlotIndex.NameRank(x.Sub, x.Name), d = SlotIndex.NameRank(y.Sub, y.Name);
+                if (c != d) return c.CompareTo(d);
+                return string.Compare(x.Name, y.Name, StringComparison.CurrentCulture);
+            });
+            foreach (Slot s in mine) if (!names.Contains(s.Name)) names.Add(s.Name);
             foreach (string n in names) lbSlot.Items.Add(n);
             lbSlot.EndUpdate();
             int i = keep.Length > 0 ? lbSlot.Items.IndexOf(keep) : 0;

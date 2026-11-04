@@ -50,6 +50,7 @@ namespace Installer
     {
         public const string CAT_MAP = "地图";
         public const string CAT_CHAR = "人物";
+        public const string CAT_INFECTED = "特感";
         public const string CAT_GUN = "枪械";
         public const string CAT_MED = "药品";
         public const string CAT_MISC = "杂项";
@@ -564,6 +565,15 @@ namespace Installer
                 return;
             }
 
+            int iInf = IndexOfContain(segs, "特感");
+            if (iInf >= 0)
+            {
+                it.Cat = CAT_INFECTED;
+                it.Sub = (iInf + 1 < segs.Length) ? segs[iInf + 1] : "特感";
+                it.Category = it.Cat;
+                return;
+            }
+
             int iStore = IndexOfContain(segs, "物品储藏库");
             if (iStore >= 0)
             {
@@ -572,6 +582,7 @@ namespace Installer
                 if (s == "改视角") { it.Cat = CAT_MISC; it.Sub = "改视角"; }
                 else if (s.IndexOf("火光", StringComparison.Ordinal) >= 0) { it.Cat = CAT_MISC; it.Sub = "火光"; }
                 else if (s.IndexOf("杂项", StringComparison.Ordinal) >= 0) { it.Cat = CAT_MISC; it.Sub = "特效杂项"; }
+                else if (s.IndexOf("特感", StringComparison.Ordinal) >= 0) { it.Cat = CAT_INFECTED; it.Sub = "特感"; }
                 else { it.Cat = CAT_GUN; it.Sub = s; }
                 it.Category = it.Cat;
                 return;
@@ -587,6 +598,8 @@ namespace Installer
             it.Cat = CAT_MISC; it.Sub = "其他";
             if (ContainsAny(s, "医疗包", "medkit", "止痛药", "pill", "肾上腺素", "adrenaline", "defib"))
             { it.Cat = CAT_MED; it.Sub = "医疗包"; }
+            else if (ContainsAny(s, "Tank", "Hunter", "Smoker", "Boomer", "Spitter", "Jockey", "Charger", "Witch", "特感"))
+            { it.Cat = CAT_INFECTED; it.Sub = "特感"; }
             else if (ContainsAny(s, "武士刀", "katana", "斧", "锤", "砍刀", "吉他", "球棒", "machete", "近战"))
             { it.Cat = CAT_GUN; it.Sub = "近战"; }
             else if (ContainsAny(s, "步枪", "冲锋枪", "霰弹枪", "狙击", "手枪", "机枪", "rifle", "smg", "shotgun", "sniper", "pistol", "枪"))

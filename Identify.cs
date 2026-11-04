@@ -22,55 +22,11 @@ namespace Installer
         }
 
         // 特征串 -> 显示名。顺序即优先级：越具体的排在越前面。
+        // 名字对齐 L4D2 官方武器名：v_ / w_ 两个前缀靠同一段特征串归到同一件东西，
+        // 否则 w_shotgun + v_pumpshotgun 会被当成两件，Subject 变成「霰弹枪/木喷」。
         private static readonly string[,] Dict = new string[,]
         {
-            {"desert_rifle",     "三连发"},
-            {"rifle_ak47",       "AK-47"},
-            {"rifle_m60",        "M60"},
-            {"machinegun_m60",   "M60"},
-            {"smg_mp5",          "MP5"},
-            {"smg_silenced",     "消音冲锋枪"},
-            {"silenced_smg",     "消音冲锋枪"},
-            {"sniper_military",  "连狙"},
-            {"sniper_scout",     "鸟狙"},
-            {"sniper_awp",       "AWP"},
-            {"snip_awp",         "AWP"},
-            {"awp",              "AWP"},
-            {"shotgun_chrome",   "铁喷"},
-            {"shotgun_spas",     "二代连喷"},
-            {"pumpshotgun",      "木喷"},
-            {"autoshotgun",      "一代连喷"},
-            {"huntingrifle",     "猎枪"},
-            {"hunting_rifle",    "猎枪"},
-            {"grenade_launcher", "榴弹发射器"},
-            {"pistol_magnum",    "马格南"},
-            {"machinegun",       "机枪"},
-            {"rifle_m16",        "M16"},
-            {"mac-10",           "MAC-10"},
-            {"mac10",            "MAC-10"},
-            {"concrete_spawnchunk", "石头"},
-            {"survivor_namvet",  "比尔"},
-            {"survivor_teenangst","佐伊"},
-            {"survivor_manager", "路易斯"},
-            {"survivor_biker",   "弗朗西斯"},
-            {"survivor_producer","教练"},
-            {"survivor_gambler", "尼克"},
-            {"survivor_mechanic","埃利斯"},
-            {"survivor",         "幸存者"},
-            {"painpills",        "止痛药"},
-            {"pain_pills",       "止痛药"},
-            {"adrenaline",       "肾上腺素"},
-            {"firstaid",         "医疗包"},
-            {"medkit",           "医疗包"},
-            {"molotov",          "燃烧瓶"},
-            {"pipebomb",         "土制炸弹"},
-            {"gascan",           "油桶"},
-            {"fryingpan",        "平底锅"},
-            {"grenade",          "投掷物"},
-            {"katana",           "武士刀"},
-            {"machete",          "砍刀"},
-            {"crowbar",          "撬棍"},
-            {"ammo",             "弹药"},
+            // ---- 特感：先判，免得被下面的人名/枪名抢走
             {"hulk",             "Tank"},
             {"boomer",           "Boomer"},
             {"hunter",           "Hunter"},
@@ -80,19 +36,82 @@ namespace Installer
             {"charger",          "Charger"},
             {"witch",            "Witch"},
             {"tank",             "Tank"},
-            {"v_rifle",          "M16"},
-            {"v_smg",            "消音冲锋枪"},
-            {"v_pistol",         "手枪"},
-            {"m16",              "M16"},
+
+            // ---- 幸存者：L4D2 四人 + L4D1 四人。具体模型名必须排在 "survivor" 之前
+            {"survivor_namvet",   "比尔"},
+            {"survivor_teenangst","佐伊"},
+            {"survivor_manager",  "路易斯"},
+            {"survivor_biker",    "弗朗西斯"},
+            {"survivor_coach",    "教练"},
+            {"survivor_producer", "罗谢尔"},     // producer = 新闻制片人 = Rochelle（原来错写成教练）
+            {"survivor_mechanic", "埃利斯"},
+            {"survivor_gambler",  "尼克"},
+            {"survivor",          "幸存者"},
+
+            // ---- 药品
+            {"painpills",        "止痛药"},
+            {"pain_pills",       "止痛药"},
+            {"adrenaline",       "肾上腺素"},
+            {"defibrillator",    "电击器"},
+            {"firstaid",         "医疗包"},
+            {"medkit",           "医疗包"},
+
+            // ---- 投掷物
+            {"vomitjar",         "胆汁"},
+            {"vomit_jar",        "胆汁"},
+            {"molotov",          "燃烧瓶"},
+            {"pipebomb",         "土制炸弹"},
+            {"grenade_launcher", "榴弹发射器"},
+
+            // ---- 枪械：具体型号在前，泛称在后
+            {"rifle_ak47",       "AK-47"},
             {"ak47",             "AK-47"},
+            {"rifle_desert",     "SCAR-L"},      // 三连发 = Desert Rifle，玩家都按 SCAR 叫
+            {"desert_rifle",     "SCAR-L"},
+            {"rif_sg552",        "sg552"},       // v_ 版模型名是缩写 rif_sg552
+            {"rifle_sg552",      "sg552"},
+            {"sg552",            "sg552"},
+            {"rifle_m60",        "M60"},
+            {"machinegun_m60",   "M60"},
             {"m60",              "M60"},
+            {"smg_mp5",          "MP5"},
             {"mp5",              "MP5"},
+            {"smg_silenced",     "MAC-10"},
+            {"silenced_smg",     "MAC-10"},
+            {"mac-10",           "MAC-10"},
+            {"mac10",            "MAC-10"},
+            {"smg",              "UZI"},         // 裸 smg = v_smg = UZI
             {"uzi",              "UZI"},
+            {"sniper_military",  "30发军用狙"},
+            {"huntingrifle",     "15发木狙"},
+            {"hunting_rifle",    "15发木狙"},
+            {"sniper_scout",     "鸟狙"},
+            {"sniper_awp",       "AWP"},
+            {"snip_awp",         "AWP"},
+            {"awp",              "AWP"},
+            {"shotgun_chrome",   "铁喷"},
+            {"shotgun_spas",     "二代连喷"},
+            {"pumpshotgun",      "木喷"},
+            {"autoshotgun",      "一代连喷"},
+            {"shotgun",          "木喷"},        // 裸 shotgun = v_shotgun = 一代木喷的模型
+            {"rifle",            "M16"},         // 裸 rifle = v_rifle = M16
+            {"machinegun",       "M60"},
+            {"pistol_magnum",    "马格南"},
+            {"magnum",           "马格南"},
             {"pistol",           "手枪"},
-            {"smg",              "消音冲锋枪"},
-            {"shotgun",          "霰弹枪"},
-            {"rifle",            "步枪"},
             {"melee",            "近战武器"},
+
+            // ---- 近战具体型号
+            {"katana",           "武士刀"},
+            {"machete",          "砍刀"},
+            {"crowbar",          "撬棍"},
+            {"fireaxe",          "消防斧"},
+            {"fryingpan",        "平底锅"},
+
+            // ---- 其余杂项
+            {"concrete_spawnchunk", "石头"},
+            {"ammo",             "弹药"},
+            {"gascan",           "油桶"},
             {"pills",            "药丸"},
         };
 
@@ -354,7 +373,7 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
-            get { return Path.Combine(Core.LogDir, "identify-cache-v7.tsv"); }
+            get { return Path.Combine(Core.LogDir, "identify-cache-v8.tsv"); }
         }
 
         private static void LoadCache()
@@ -385,28 +404,48 @@ namespace Installer
 
         // ============ 内容分类：只读目录表，判"大类型" ============
         // 原则：有把握才返回 true；没把握交回目录规则（不猜）
+        // 这里只问「是不是枪」，细分名字统一由 ModIdentify.Dict 那套给（Sub 不再各写一份）
         private static readonly string[,] GunKeys = new string[,]
         {
-            {"rifle_ak47","AK47"},{"ak47","AK47"},
+            {"rifle_ak47","AK-47"},{"ak47","AK-47"},
+            {"rifle_desert","SCAR-L"},{"desert_rifle","SCAR-L"},{"scar","SCAR-L"},
+            {"rif_sg552","sg552"},{"rifle_sg552","sg552"},{"sg552","sg552"},
             {"smg_mp5","MP5"},{"mp5","MP5"},
+            {"smg_silenced","MAC-10"},{"mac-10","MAC-10"},{"mac10","MAC-10"},
             {"rifle_m16","M16"},{"m16","M16"},
-            {"rifle_desert","三连发"},{"desert_rifle","三连发"},
-            {"scar","scar"},{"sg552","sg552"},{"uzi","uzi"},{"mac10","MAC-10"},{"mac-10","MAC-10"},
-            {"m60","M60"},{"machinegun","机枪"},
+            {"uzi","UZI"},{"smg","UZI"},
+            {"m60","M60"},{"machinegun","M60"},
             {"sniper_awp","AWP"},{"awp","AWP"},
-            {"sniper_scout","鸟狙"},{"sniper_military","连狙"},{"huntingrifle","猎枪"},
+            {"sniper_scout","鸟狙"},{"scout","鸟狙"},
+            {"sniper_military","30发军用狙"},{"military","30发军用狙"},
+            {"huntingrifle","15发木狙"},
             {"pumpshotgun","木喷"},{"shotgun_pump","木喷"},
-            {"shotgun_chrome","铁喷"},{"chrome","铁喷"},
-            {"autoshotgun","一代连喷"},{"shotgun_spas","二代连喷"},
+            {"shotgun_chrome","铁喷"},
+            {"autoshotgun","一代连喷"},{"shotgun_spas","二代连喷"},{"shotgun","木喷"},
             {"grenade_launcher","榴弹发射器"},{"pistol_magnum","马格南"},
-            {"katana","近战"},{"machete","近战"},{"crowbar","近战"},{"fireaxe","近战"}
+            {"katana","近战武器"},{"machete","近战武器"},{"crowbar","近战武器"},
+            {"fireaxe","近战武器"},{"melee","近战武器"}
+        };
+
+        private static readonly string[,] ThrowKeys = new string[,]
+        {
+            {"vomitjar","胆汁"},{"vomit_jar","胆汁"},
+            {"molotov","燃烧瓶"},{"pipebomb","土制炸弹"},{"grenade","投掷物"}
         };
 
         private static readonly string[,] CharKeys = new string[,]
         {
             {"survivor_namvet","比尔"},{"survivor_teenangst","佐伊"},{"survivor_manager","路易斯"},
-            {"survivor_biker","弗朗西斯"},{"survivor_producer","教练"},{"survivor_gambler","尼克"},
+            {"survivor_biker","弗朗西斯"},{"survivor_producer","罗谢尔"},{"survivor_gambler","尼克"},
             {"survivor_mechanic","埃利斯"},{"survivor_coach","教练"}
+        };
+
+        // 特感的模型目录就是 models/infected/<名字>/，名字对得上就够
+        private static readonly string[,] InfectKeys = new string[,]
+        {
+            {"hulk","Tank"},{"boomer","Boomer"},{"hunter","Hunter"},{"smoker","Smoker"},
+            {"jockey","Jockey"},{"spitter","Spitter"},{"charger","Charger"},{"witch","Witch"},
+            {"tank","Tank"}
         };
 
         private static bool ClassifyByPaths(List<string> ps, out string cat, out string sub)
@@ -429,16 +468,28 @@ namespace Installer
                 cat = "人物"; sub = "其他"; return true;
             }
 
-            // 3) 药品：医疗包/止痛药/肾上腺素 的模型或图标
+            // 3) 特感：必须有 infected 的模型文件。「特感高亮」那种只改贴图的包不算 ——
+            //    它的材质路径里也全是 infected，按路径判会把一堆特效包塞进特感大类。
+            foreach (string p in ps)
+            {
+                if (!p.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase)) continue;
+                if (p.IndexOf("models/infected/", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                for (int i = 0; i < InfectKeys.GetLength(0); i++)
+                    if (p.IndexOf(InfectKeys[i, 0], StringComparison.OrdinalIgnoreCase) >= 0)
+                    { cat = "特感"; sub = InfectKeys[i, 1]; return true; }
+                cat = "特感"; sub = "特感"; return true;
+            }
+
+            // 4) 药品：医疗包/止痛药/肾上腺素/电击器 的模型或图标
             foreach (string p in ps)
             {
                 if (p.IndexOf("medkit", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "医疗包"; return true; }
                 if (p.IndexOf("painpills", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "止痛药"; return true; }
                 if (p.IndexOf("adrenaline", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "肾上腺素"; return true; }
-                if (p.IndexOf("defibrillator", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "医疗包"; return true; }
+                if (p.IndexOf("defibrillator", StringComparison.OrdinalIgnoreCase) >= 0) { cat = "药品"; sub = "电击器"; return true; }
             }
 
-            // 4) 枪械：模型名命中已知枪种
+            // 5) 枪械：模型名命中已知枪种
             foreach (string p in ps)
             {
                 if (!p.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase)) continue;
@@ -447,6 +498,17 @@ namespace Installer
                 for (int i = 0; i < GunKeys.GetLength(0); i++)
                     if (bn.IndexOf(GunKeys[i, 0], StringComparison.OrdinalIgnoreCase) >= 0)
                     { cat = "枪械"; sub = GunKeys[i, 1]; return true; }
+            }
+
+            // 6) 投掷物：模型也在武器槽里，算枪械大类下的一个小分类
+            foreach (string p in ps)
+            {
+                if (!p.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase)) continue;
+                int s3 = p.LastIndexOf('/');
+                string bn = s3 >= 0 ? p.Substring(s3 + 1) : p;
+                for (int i = 0; i < ThrowKeys.GetLength(0); i++)
+                    if (bn.IndexOf(ThrowKeys[i, 0], StringComparison.OrdinalIgnoreCase) >= 0)
+                    { cat = "枪械"; sub = ThrowKeys[i, 1]; return true; }
             }
             return false;
         }
