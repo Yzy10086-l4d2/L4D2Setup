@@ -21,7 +21,6 @@ namespace Installer
         // 最近套用/保存过的方案名（空=没套方案）：自检结果写回它
         private string appliedProfile = "";
         private Section gMod, gLog, gPlat, gOpt;
-        private Dictionary<string, string> modTags;
         private Button btnManage;
         private TextBox txtSearch;
         private Button btnSaveProfile, btnApplyProfile;
@@ -121,7 +120,6 @@ namespace Installer
                     __sw.Restart();
                     Core.ScanMods();
                     Core.Log("INFO", "启动计时: 扫库 " + __sw.ElapsedMilliseconds + " ms（" + Core.ModList.Count + " 个）");
-                    modTags = ModTags.Load();
 
                     string found = null;
                     if (needFind)
@@ -310,13 +308,7 @@ namespace Installer
             tileHost.SizeChanged += delegate { LayoutTiles(); };
             tileHost.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             gm.Controls.Add(tileHost);
-            foreach (string c in Catalog.Cats)
-            {
-                CatTile t = new CatTile(c);
-                t.Click += delegate { ShowCatView(t.Cat); };
-                catTiles[c] = t;
-                tileHost.Controls.Add(t);
-            }
+            SyncTileCats();
 
             // 类列表就放在同一块矩形里，切换时只换可见性
             viewHost = new Panel();
@@ -978,18 +970,22 @@ namespace Installer
             treeView.PickRow(li);
         }
 
-        /// <summary>设置这个 MOD 在方案树里算哪一类、替换什么。磁贴的页签不动。</summary>
+        /// <summary>设置这个 MOD 算哪一类、替换什么。分类只有一份：页签 / 磁贴 / 方案树一起跟着变。</summary>
         internal void SetModCatIn(ListView lv)
         {
             ModGroup g = FirstSelectedGroup(lv);
             if (g == null) { MessageBox.Show("先选中一个 MOD。"); return; }
             using (ModCatForm f = new ModCatForm(g))
             {
-                if (f.ShowDialog(this) != DialogResult.OK) return;
-                Core.Log("OK", "分类已保存: " + g.Name + " → " + f.ResultCat
-                    + (f.ResultSlot.Length > 0 ? " / " + f.ResultSlot : ""));
+                if (f.ShowDialog(this) == DialogResult.OK)
+                    Core.Log("OK", "分类已保存: " + g.Name + " → " + f.ResultCat
+                        + (f.ResultSlot.Length > 0 ? " / " + f.ResultSlot : ""));
             }
+            // 窗口里还可能新建/改名/排序过分类，取消也要同步一次
+            Catalog.ApplyCats();          // 人工分类落到 ModGroup.Cat 上：页签、磁贴、搜索全跟着走
+            SyncTileCats();               // 新建的分类补一块磁贴
             if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
+            RefreshMods();
         }
 
         /// <summary>右键点中的那一行。右键时已经把它选中了，所以取第一行选中项。</summary>
@@ -1209,16 +1205,16 @@ namespace Installer
         // 展开出来的单件行要照这个判断自己该不该打勾
         internal bool IsChecked(string key) { return key != null && checkedKeys.Contains(key); }
 
+        /// <summary>搜名字、搜「替换了什么」、搜大类/位置 —— 分类就是筛选词，不再另有一套标签。</summary>
         private bool MatchGroup(ModGroup g, string kw)
         {
             if (g.Name.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (g.Subject.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (g.Where.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            string slot = SlotIndex.SlotNameOf(g);
+            if (slot.Length > 0 && slot.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             foreach (ModItem p in g.Parts)
-            {
                 if (p.Name.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
-                if (ModTags.Get(modTags, p.Key).IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            }
             return false;
         }
 
@@ -1533,19 +1529,6 @@ namespace Installer
                 System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + target + "\"");
             }
             catch { }
-        }
-
-        internal void SetTagsIn(ListView lv)
-        {
-            ModGroup g = FirstSelectedGroup(lv);
-            if (g == null) { MessageBox.Show("先选中一个 MOD。"); return; }
-            ModItem m = g.Main;
-            string cur = ModTags.Get(modTags, m.Key);
-            string v = PromptForm.Ask("标签，用逗号分隔（例：武器,刀,替换）\r\n留空 = 清除", "设置标签 " + g.Name + "（当前：" + (cur.Length == 0 ? "无" : cur) + "）");
-            if (v == null) return;
-            foreach (ModItem p in g.Parts) modTags[p.Key] = v.Trim();
-            ModTags.Save(modTags);
-            Core.Log("OK", "标签已保存: " + g.Name + " = " + v.Trim());
         }
 
         private void ShowModInfo(ModGroup g)
@@ -1946,6 +1929,34 @@ namespace Installer
                 t.SetBounds((i % cols) * (tw + gap), (i / cols) * (th + gap), tw, th);
                 i++;
             }
+        }
+
+        /// <summary>
+        /// 磁贴跟分类走：新建分类补一块，分类没了就撤掉。
+        /// 分类只有一份，页签、磁贴、方案树都读它，改一处三处一起变。
+        /// </summary>
+        private void SyncTileCats()
+        {
+            if (tileHost == null) return;
+            string[] want = Catalog.Cats;
+            List<string> drop = new List<string>();
+            foreach (string c in new List<string>(catTiles.Keys))
+                if (Array.IndexOf(want, c) < 0) drop.Add(c);
+            foreach (string c in drop)
+            {
+                tileHost.Controls.Remove(catTiles[c]);
+                catTiles[c].Dispose();
+                catTiles.Remove(c);
+            }
+            foreach (string c in want)
+            {
+                if (catTiles.ContainsKey(c)) continue;
+                CatTile t = new CatTile(c);
+                t.Click += delegate { ShowCatView(t.Cat); };
+                catTiles[c] = t;
+                tileHost.Controls.Add(t);
+            }
+            LayoutTiles();
         }
 
         private bool TestWritable(string dir)

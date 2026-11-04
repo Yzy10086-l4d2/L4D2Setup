@@ -376,8 +376,16 @@ namespace Installer
 
         public static void ScanMods()
         {
-            Catalog.ScanMods();
-            Catalog.BuildGroups();
+            try
+            {
+                Catalog.ScanMods();
+                Catalog.BuildGroups();
+            }
+            catch (Exception ex)
+            {
+                Log("FAIL", "整理 MOD 出错: " + ex);
+                throw;
+            }
             Log("INFO", "整理成 " + Catalog.Groups.Count + " 个 MOD（其中 " + CountSets() + " 个是多 vpk 套装）");
         }
 

@@ -19,9 +19,13 @@ namespace Installer
 
     internal static class CatPrefs
     {
-        public static readonly string[] DefaultCats = { "枪械", "人物", "药品", "杂项" };
+        // 默认顺序：树里看得见的四类在前，地图/喷漆不进树、排最后
+        public static readonly string[] DefaultCats = { "枪械", "人物", "药品", "杂项", "地图", "喷漆" };
 
         private static bool loaded;
+        private static int ver;                    // 每次改都 +1，Catalog.Cats 的缓存靠它失效
+        private static string[] catCache;
+        private static int catCacheVer = -1;
         private static readonly List<string> cats = new List<string>();
         private static readonly Dictionary<string, List<string>> slotsOfCat =
             new Dictionary<string, List<string>>(StringComparer.Ordinal);
@@ -30,7 +34,10 @@ namespace Installer
         private static readonly Dictionary<string, string> modSlot =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        public static string FileOf() { return Path.Combine(Core.PkgDir, "方案树分类.ini"); }
+        public static string FileOf()
+        {
+            return string.IsNullOrEmpty(Core.PkgDir) ? "" : Path.Combine(Core.PkgDir, "方案树分类.ini");
+        }
 
         public static void Ensure() { if (!loaded) Load(); }
 
@@ -73,13 +80,18 @@ namespace Installer
                             if (k.Length == 0) continue;
                             string c = p[1].Trim();
                             string sl = p.Length > 2 ? p[2].Trim() : "-";
-                            if (c.Length > 0 && c != "-") modCat[k] = c;
+                            if (c.Length > 0 && c != "-")
+                            {
+                                modCat[k] = c;
+                                if (!cats.Contains(c)) cats.Add(c);   // 手改 ini 漏了 cat= 也不会让 MOD 掉出页签
+                            }
                             if (sl.Length > 0 && sl != "-") modSlot[k] = sl;
                         }
                     }
             }
             catch { }
             foreach (string d in DefaultCats) if (!cats.Contains(d)) cats.Add(d);
+            Touch();
         }
 
         public static void Save()
@@ -115,6 +127,20 @@ namespace Installer
             return new List<string>(cats);
         }
 
+        /// <summary>给 Catalog.Cats 用：整套分类顺序（页签、磁贴、树都按这个走）。</summary>
+        public static string[] CatsArray()
+        {
+            Ensure();
+            if (catCache == null || catCacheVer != ver)
+            {
+                catCache = cats.ToArray();
+                catCacheVer = ver;
+            }
+            return (string[])catCache.Clone();
+        }
+
+        private static void Touch() { ver++; }
+
         public static List<string> Slots(string cat)
         {
             Ensure();
@@ -146,6 +172,31 @@ namespace Installer
             return modCat.ContainsKey(m.Key) || modSlot.ContainsKey(m.Key);
         }
 
+        /// <summary>人工改过大类没有？</summary>
+        public static bool HasCat(ModItem m)
+        {
+            Ensure();
+            return m != null && modCat.ContainsKey(m.Key);
+        }
+
+        /// <summary>按 Key 直接指定大类（大类改名时批量搬运用）。</summary>
+        public static void SetCat(string key, string cat)
+        {
+            Ensure();
+            if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(cat)) return;
+            modCat[key] = cat;
+            if (!cats.Contains(cat)) { cats.Add(cat); Touch(); }
+        }
+
+        /// <summary>兜底：分类表里没有这一栏就补上，别让 MOD 掉出页签。</summary>
+        public static void EnsureCat(string cat)
+        {
+            Ensure();
+            if (string.IsNullOrEmpty(cat) || cats.Contains(cat)) return;
+            cats.Add(cat);
+            Touch();
+        }
+
         /// <summary>位置在这个大类里排第几（没列过的排最后）。</summary>
         public static int SlotRank(string cat, string name)
         {
@@ -170,7 +221,7 @@ namespace Installer
                 if (c.Length > 0)
                 {
                     modCat[p.Key] = c;
-                    if (!cats.Contains(c)) cats.Add(c);
+                    if (!cats.Contains(c)) { cats.Add(c); Touch(); }
                 }
                 else modCat.Remove(p.Key);
                 if (c.Length > 0 && s.Length > 0)
@@ -199,6 +250,7 @@ namespace Installer
             name = (name ?? "").Trim();
             if (name.Length == 0 || cats.Contains(name)) return;
             cats.Add(name);
+            Touch();
             Save();
         }
 
@@ -218,6 +270,7 @@ namespace Installer
             if (slotsOfCat.TryGetValue(oldName, out l)) { slotsOfCat.Remove(oldName); if (!slotsOfCat.ContainsKey(newName)) slotsOfCat[newName] = l; }
             List<string> keys = new List<string>(modCat.Keys);
             foreach (string k in keys) if (modCat[k] == oldName) modCat[k] = newName;
+            Touch();
             Save();
         }
 
@@ -228,6 +281,7 @@ namespace Installer
             int j = i + delta;
             if (i < 0 || j < 0 || j >= cats.Count) return;
             string t = cats[i]; cats[i] = cats[j]; cats[j] = t;
+            Touch();
             Save();
         }
 
@@ -307,7 +361,7 @@ namespace Installer
             sb.Append("识别结果：").Append(autoCat);
             if (autoSlot.Length > 0) sb.Append(" · ").Append(autoSlot);
             else sb.Append(" · 位置认不出来");
-            sb.Append("　·　左边点一行 = 归到那一类；右边点一行 = 它替换那个位置");
+            sb.Append("　·　左边点一行 = 归到这一类；右边点一行 = 它替换那个位置");
             lblTop.Text = sb.ToString();
             Controls.Add(lblTop);
 
@@ -354,11 +408,12 @@ namespace Installer
             Small("并到上面的位置", 436, 404, 126).Click += delegate { HintSlot(); };
 
             lblTip = new Label();
-            lblTip.SetBounds(12, 440, 656, 44);
+            lblTip.SetBounds(12, 436, 656, 54);
             lblTip.Font = Theme.UISmall;
             lblTip.ForeColor = Theme.Ink3;
-            lblTip.Text = "大类决定它在树的哪儿；位置决定它和谁「只能留一个」。\r\n"
-                        + "位置选「自动」= 只改大类，位置仍按识别结果。";
+            lblTip.Text = "分类只有这一套：页签、磁贴、方案树、搜索都按它走，改一处三处一起变。\r\n"
+                        + "新建分类 → 磁贴和页签会多出一栏；地图 / 喷漆不进树（它们能叠好几张）。\r\n"
+                        + "位置选「自动」= 只改分类，位置仍按识别结果。";
             Controls.Add(lblTip);
 
             FlatButton b = new FlatButton();
@@ -459,7 +514,8 @@ namespace Installer
             string slot = curSlot.Length > 0 ? curSlot : "自动（" + (autoSlot.Length > 0 ? autoSlot : "认不出来") + "）";
             lblSlotHd.Text = "替换什么 · " + curCat;
             lblTip.Text = "这个 MOD：" + (resetMode ? "恢复全自动" : curCat + " · " + slot) + "\r\n"
-                        + "位置决定它和谁「只能留一个」；同名的位置会并成一行。";
+                        + "分类只有这一套：页签 / 磁贴 / 方案树 / 搜索一起变；新建分类会多一栏。\r\n"
+                        + "位置决定它和谁「只能留一个」，同名的位置会并成一行。";
         }
 
         // ---------------------------------------------------------- 大类操作
@@ -487,6 +543,7 @@ namespace Installer
             n = n.Trim();
             if (n.Length == 0 || n == old) return;
             CatPrefs.RenameCat(old, n);
+            Catalog.AdoptCatRename(old, n);      // 原来在这一类的 MOD 跟着搬，不然会掉出页签
             curCat = n;
             FillCats();
             FillSlots();

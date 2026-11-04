@@ -533,49 +533,6 @@ namespace Installer
         }
     }
 
-    // ---------- MOD 标签（Key=相对路径，Value=逗号分隔标签） ----------
-    public static class ModTags
-    {
-        public static string FileOf()
-        {
-            return Path.Combine(Core.PkgDir, "mod标签.ini");
-        }
-
-        public static Dictionary<string, string> Load()
-        {
-            Dictionary<string, string> d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            try
-            {
-                string f = FileOf();
-                if (!File.Exists(f)) return d;
-                foreach (string raw in File.ReadAllLines(f, Encoding.UTF8))
-                {
-                    string s = raw.Trim();
-                    if (s.Length == 0 || s.StartsWith("#")) continue;
-                    int eq = s.IndexOf('=');
-                    if (eq <= 0) continue;
-                    d[s.Substring(0, eq).Trim()] = s.Substring(eq + 1).Trim();
-                }
-            }
-            catch { }
-            return d;
-        }
-
-        public static void Save(Dictionary<string, string> d)
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("# MOD 标签：相对路径=标签1,标签2");
-            foreach (KeyValuePair<string, string> kv in d)
-                if (kv.Value.Trim().Length > 0) sb.AppendLine(kv.Key + "=" + kv.Value);
-            File.WriteAllText(FileOf(), sb.ToString(), new UTF8Encoding(true));
-        }
-
-        public static string Get(Dictionary<string, string> d, string rel)
-        {
-            return d.ContainsKey(rel) ? d[rel] : "";
-        }
-    }
-
     // ---------- 按顺序写 addonlist（顺序=覆盖优先级） ----------    // ---------- VPK 目录表解析（只读文件表，不读内容） ----------
     public static class Vpk
     {

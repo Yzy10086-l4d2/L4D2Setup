@@ -59,14 +59,17 @@ namespace Installer
                     }
                 }
                 Slot s;
-                if (!map.TryGetValue(key, out s))
+                // 人工改过分类/位置的，位置键带上分类，免得和原分类下的同名位置抢一个槽；
+                // 没改过的还是原来的键：同一个模型不管被认成哪类，仍然只占一个位置。
+                string mapKey = (hand.Length > 0 || CatPrefs.HasCat(m)) ? cat + "\u0001" + key : key;
+                if (!map.TryGetValue(mapKey, out s))
                 {
                     s = new Slot();
-                    s.Key = key;
+                    s.Key = mapKey;
                     s.Name = nm.Length > 0 ? nm : key;
                     s.Cat = cat;
                     s.Manual = hand.Length > 0;
-                    map[key] = s;
+                    map[mapKey] = s;
                     list.Add(s);
                 }
                 else if (Vague(s.Name) && nm.Length > 0 && !Vague(nm))
@@ -132,7 +135,18 @@ namespace Installer
             return k.ToUpperInvariant();
         }
 
-        private static bool IsCountName(string s)
+        /// <summary>这个 MOD 替换的位置名（人工优先，其次识别结果）。搜索和树共用一套说法。</summary>
+        public static string SlotNameOf(ModGroup g)
+        {
+            ModItem m = g == null ? null : g.Main;
+            if (m == null) return "";
+            string hand = CatPrefs.SlotOf(m).Trim();
+            if (hand.Length > 0) return hand;
+            string nm = (m.Subject ?? "").Trim();
+            return IsCountName(nm) ? "" : nm;
+        }
+
+        internal static bool IsCountName(string s)
         {
             if (s == null || s.Length < 2 || s[s.Length - 1] != '件') return false;
             for (int i = 0; i < s.Length - 1; i++)
@@ -146,11 +160,12 @@ namespace Installer
                 || s == "幸存者" || s == "近战" || s == "其他" || s.Length == 0;
         }
 
-        /// <summary>大类按「人工排过的顺序」排，没排过的按 Catalog.Cats 跟在后面。</summary>
+        /// <summary>树里的大类顺序：跟着分类顺序走，地图/喷漆不进树。</summary>
         public static List<string> CatOrder(List<Slot> slots)
         {
             List<string> order = new List<string>();
-            foreach (string c in CatPrefs.Cats()) order.Add(c);       // 默认枪械/人物/药品/杂项 + 用户新建的
+            foreach (string c in CatPrefs.Cats())
+                if (c != "地图" && c != "喷漆" && !order.Contains(c)) order.Add(c);
             foreach (string c in Catalog.Cats)
                 if (c != "地图" && c != "喷漆" && !order.Contains(c)) order.Add(c);
             foreach (Slot s in slots) if (!order.Contains(s.Cat)) order.Add(s.Cat);
@@ -1051,12 +1066,18 @@ namespace Installer
             if (known == null) { Core.Log("FAIL", "SETCAT 找不到已知位置的样本"); return; }
 
             ModGroup t1 = miss != null ? miss : known;
+            string autoCatOfT1 = t1.Cat;
             CatPrefs.Assign(t1, "测试分类", "测试位置");
+            Catalog.ApplyCats();                 // 分类落到 ModGroup.Cat 上：页签 / 磁贴 / 搜索一起变
             treeView.Rebuild();
             bool inSlot = false, catOk = false;
             foreach (Slot s in SlotIndex.Build())
                 if (s.Name == "测试位置" && s.Items.Contains(t1)) { inSlot = true; catOk = s.Cat == "测试分类"; }
             Core.Log(inSlot && catOk ? "OK" : "FAIL", "SETCAT 全人工：" + t1.Name + " → 测试分类 / 测试位置，进树=" + inSlot + " 归类=" + catOk);
+            Core.Log(t1.Cat == "测试分类" ? "OK" : "FAIL",
+                "SETCAT 分类落到数据上：ModGroup.Cat=" + t1.Cat + "（磁贴/页签跟着走）");
+            Core.Log(Array.IndexOf(Catalog.Cats, "测试分类") >= 0 ? "OK" : "FAIL",
+                "SETCAT 页签分类表里有「测试分类」：" + string.Join(" / ", Catalog.Cats));
 
             List<string> order = CatPrefs.Cats();
             Core.Log(order[order.Count - 1] == "测试分类" ? "OK" : "FAIL",
@@ -1066,24 +1087,40 @@ namespace Installer
 
             string autoName = (known.Main.Subject ?? "").Trim();
             CatPrefs.Assign(known, "测试分类", "");
+            Catalog.ApplyCats();
             treeView.Rebuild();
             bool moved = false;
             foreach (Slot s in SlotIndex.Build())
-                if (s.Name == autoName && s.Items.Contains(known)) moved = s.Cat == "测试分类";
+                if (s.Items.Contains(known)) moved = s.Cat == "测试分类";   // 位置名可能带后缀，只认「这个 MOD 在哪一类的槽里」
             Core.Log(moved ? "OK" : "FAIL", "SETCAT 只改归类：" + known.Name + " → 测试分类（位置仍是 " + autoName + "）");
 
             CatPrefs.Reset(t1);
             CatPrefs.Reset(known);
+            Catalog.ApplyCats();
             treeView.Rebuild();
             bool gone = true;
             foreach (Slot s in SlotIndex.Build()) if (s.Name == "测试位置") { gone = false; break; }
             Core.Log(gone ? "OK" : "FAIL", "SETCAT 恢复自动后「测试位置」已消失");
+            Core.Log(t1.Cat == autoCatOfT1 ? "OK" : "FAIL",
+                "SETCAT 恢复自动后 ModGroup.Cat 回到 " + t1.Cat + "（原 " + autoCatOfT1 + "）");
             Core.Log(treeView.SlotCount == before ? "OK" : "FAIL",
                 "SETCAT 槽位数回到 " + treeView.SlotCount + "（原 " + before + "）");
+
+            // 大类改名：整类跟着搬，不能因为旧名字从分类表里消失就掉出页签
+            int medBefore = 0;
+            foreach (ModGroup x in Catalog.Groups) if (x.Cat == "药品") medBefore++;
+            CatPrefs.RenameCat("药品", "测试改名类");
+            Catalog.AdoptCatRename("药品", "测试改名类");
+            int medAfter = 0;
+            foreach (ModGroup x in Catalog.Groups) if (x.Cat == "测试改名类") medAfter++;
+            bool inTabs = Array.IndexOf(Catalog.Cats, "测试改名类") >= 0 && Array.IndexOf(Catalog.Cats, "药品") < 0;
+            Core.Log(medBefore == medAfter && inTabs ? "OK" : "FAIL",
+                "SETCAT 大类改名：药品 " + medBefore + " 个 → 测试改名类 " + medAfter + " 个，页签跟上了=" + inTabs);
 
             if (backup == null) { try { System.IO.File.Delete(f); } catch { } }
             else System.IO.File.WriteAllText(f, backup, new System.Text.UTF8Encoding(true));
             CatPrefs.Reload();
+            Catalog.ApplyCats();
             treeView.Rebuild();
             Core.Log(CatPrefs.Cats().Contains("测试分类") ? "FAIL" : "OK",
                 "SETCAT 配置已还原：" + string.Join(" / ", CatPrefs.Cats().ToArray()));

@@ -20,7 +20,8 @@ namespace Installer
     {
         public string Key;
         public string Name;
-        public string Cat = "杂项";     // 大类：地图/人物/枪械/药品/杂项/喷漆
+        public string Cat = "杂项";     // 大类：地图/人物/枪械/药品/杂项/喷漆（人工改过的会覆盖它）
+        public string AutoCat = "";     // 识别出来的原始大类：人工改了分类还能改回来
         public string Sub = "其他";     // 细分：AWP / 一代 · 佐伊Zoey / 启示录系列
         public List<ModItem> Parts = new List<ModItem>();
         public long Size;
@@ -54,8 +55,9 @@ namespace Installer
         public const string CAT_MISC = "杂项";
         public const string CAT_SPRAY = "喷漆";
 
-        // 大类的固定顺序，界面上照这个排
-        public static readonly string[] Cats = new string[] { CAT_MAP, CAT_CHAR, CAT_GUN, CAT_MED, CAT_SPRAY, CAT_MISC };
+        // 大类的顺序只有一份：CatPrefs 里那份（页签、磁贴、方案树都按它排）。
+        // 内建六类永远在里面，用户新建的分类跟在后面，可以上下移。
+        public static string[] Cats { get { return CatPrefs.CatsArray(); } }
 
         public static List<ModGroup> Groups = new List<ModGroup>();
         public static Dictionary<string, ModGroup> GroupByKey = new Dictionary<string, ModGroup>(StringComparer.OrdinalIgnoreCase);
@@ -635,6 +637,57 @@ namespace Installer
                 foreach (List<ModItem> c in Cluster(kv.Value, names[kv.Key]))
                     MakeGroup(c);
 
+            ApplyCatsCore();                       // 人工归过类的，先按人工的算
+            SortGroups();
+        }
+
+        /// <summary>
+        /// 人工分类落到数据上：改过分类的 MOD 直接换 Cat。
+        /// 页签、磁贴、方案树、搜索都读 Cat，所以一处改完全局跟着走 —— 不再另有一套「标签」。
+        /// </summary>
+        public static void ApplyCats()
+        {
+            if (ApplyCatsCore()) SortGroups();
+        }
+
+        private static bool ApplyCatsCore()
+        {
+            bool any = false;
+            foreach (ModGroup g in Groups)
+            {
+                ModItem m = g.Main;
+                if (m == null) continue;
+                string auto = g.AutoCat.Length > 0 ? g.AutoCat : g.Cat;   // 基准永远是识别结果，不是上次改过的值
+                string c = CatPrefs.CatOf(m, auto);
+                if (c.Length == 0 || c == g.Cat) { CatPrefs.EnsureCat(g.Cat); continue; }
+                CatPrefs.EnsureCat(c);
+                g.Cat = c;
+                foreach (ModItem p in g.Parts) p.Cat = c;
+                any = true;
+            }
+            return any;
+        }
+
+        /// <summary>
+        /// 大类改名：原来归在这一类的 MOD 一起搬过去。
+        /// 不搬的话，自动分类的那批（没人指定过的）Cat 还是旧名，旧名又已从分类表里删掉 —— 它们会掉出页签。
+        /// </summary>
+        public static void AdoptCatRename(string oldCat, string newCat)
+        {
+            if (string.IsNullOrEmpty(oldCat) || string.IsNullOrEmpty(newCat) || oldCat == newCat) return;
+            bool any = false;
+            foreach (ModGroup g in Groups)
+            {
+                if (g.Cat != oldCat) continue;
+                foreach (ModItem p in g.Parts) CatPrefs.SetCat(p.Key, newCat);
+                any = true;
+            }
+            CatPrefs.Save();
+            if (any) ApplyCats();
+        }
+
+        public static void SortGroups()
+        {
             Groups.Sort(delegate(ModGroup a, ModGroup b)
             {
                 int x = Array.IndexOf(Cats, a.Cat), y = Array.IndexOf(Cats, b.Cat);
@@ -738,6 +791,7 @@ namespace Installer
             g.Parts = parts;
             g.Key = parts[0].Key;
             g.Cat = parts[0].Cat;
+            g.AutoCat = g.Cat;
             g.Sub = parts[0].Sub;
 
             foreach (ModItem it in parts)
