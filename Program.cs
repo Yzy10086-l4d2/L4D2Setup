@@ -77,6 +77,7 @@ namespace Installer
             bool launchSelf = false;
             bool tweakSelf = false;
             bool addonSelf = false;
+            bool dumpId = false;
             string vpkFile = null;
 
 
@@ -109,6 +110,7 @@ namespace Installer
                 else if (string.Equals(a, "--launchself", StringComparison.OrdinalIgnoreCase)) launchSelf = true;
                 else if (string.Equals(a, "--tweakself", StringComparison.OrdinalIgnoreCase)) tweakSelf = true;
                 else if (string.Equals(a, "--addonself", StringComparison.OrdinalIgnoreCase)) addonSelf = true;
+                else if (string.Equals(a, "--dumpid", StringComparison.OrdinalIgnoreCase)) dumpId = true;
                 else if (a.StartsWith("--vpk=", StringComparison.OrdinalIgnoreCase)) vpkFile = a.Substring(6).Trim('"');
 
                 else if (a.StartsWith("--game=", StringComparison.OrdinalIgnoreCase)) gameRoot = a.Substring(7).Trim('"');
@@ -118,7 +120,7 @@ namespace Installer
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
             if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf
-                && !addonSelf && vpkFile == null)
+                && !addonSelf && !dumpId && vpkFile == null)
             {
                 ActivateExisting();
                 try { only.Dispose(); } catch { }
@@ -136,6 +138,13 @@ namespace Installer
                 sbv.AppendLine("# 共 " + ps.Count + " 条");
                 foreach (string p in ps) sbv.AppendLine(p);
                 System.IO.File.WriteAllText(System.IO.Path.Combine(Core.LogDir, "vpklist.txt"), sbv.ToString(), new System.Text.UTF8Encoding(false));
+                return 0;
+            }
+            if (dumpId)
+            {
+                Core.ScanMods();
+                string f = Catalog.DumpIdentify();
+                Console.WriteLine("dumpid: " + f + "（" + Catalog.Groups.Count + " 个 MOD）");
                 return 0;
             }
             if (tweakSelf)

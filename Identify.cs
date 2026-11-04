@@ -31,7 +31,7 @@ namespace Installer
             {"smg_mp5",          "MP5"},
             {"smg_silenced",     "消音冲锋枪"},
             {"silenced_smg",     "消音冲锋枪"},
-            {"sniper_military",  "鸟狙"},
+            {"sniper_military",  "连狙"},
             {"sniper_scout",     "鸟狙"},
             {"sniper_awp",       "AWP"},
             {"snip_awp",         "AWP"},
@@ -81,7 +81,7 @@ namespace Installer
             {"witch",            "Witch"},
             {"tank",             "Tank"},
             {"v_rifle",          "M16"},
-            {"v_smg",            "冲锋枪"},
+            {"v_smg",            "消音冲锋枪"},
             {"v_pistol",         "手枪"},
             {"m16",              "M16"},
             {"ak47",             "AK-47"},
@@ -89,7 +89,7 @@ namespace Installer
             {"mp5",              "MP5"},
             {"uzi",              "UZI"},
             {"pistol",           "手枪"},
-            {"smg",              "冲锋枪"},
+            {"smg",              "消音冲锋枪"},
             {"shotgun",          "霰弹枪"},
             {"rifle",            "步枪"},
             {"melee",            "近战武器"},
@@ -354,7 +354,7 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
-            get { return Path.Combine(Core.LogDir, "identify-cache-v6.tsv"); }
+            get { return Path.Combine(Core.LogDir, "identify-cache-v7.tsv"); }
         }
 
         private static void LoadCache()
@@ -394,7 +394,7 @@ namespace Installer
             {"scar","scar"},{"sg552","sg552"},{"uzi","uzi"},{"mac10","MAC-10"},{"mac-10","MAC-10"},
             {"m60","M60"},{"machinegun","机枪"},
             {"sniper_awp","AWP"},{"awp","AWP"},
-            {"sniper_scout","鸟狙"},{"sniper_military","鸟狙"},{"huntingrifle","鸟狙"},
+            {"sniper_scout","鸟狙"},{"sniper_military","连狙"},{"huntingrifle","猎枪"},
             {"pumpshotgun","木喷"},{"shotgun_pump","木喷"},
             {"shotgun_chrome","铁喷"},{"chrome","铁喷"},
             {"autoshotgun","一代连喷"},{"shotgun_spas","二代连喷"},

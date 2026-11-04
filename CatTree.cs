@@ -53,17 +53,33 @@ namespace Installer
                     nm = (m.Subject ?? "").Trim();
                     if (IsCountName(nm)) continue;                 // 「4 件」是「一个包里改了好几样」的上报格式，不是东西
                     nm = SplitKind(nm, out hint);                  // 「霰弹枪/木喷」→ 木喷（枪种当小分类）
+                    // 只认出「步枪 / 霰弹枪 / 幸存者」这种泛称时，用目录名或 MOD 名里的具体型号补回来。
+                    // 用户自己的目录名（sg552 / 铁喷 / 黑胖Coach）比内容识别准得多。
+                    if (Vague(nm))
+                    {
+                        string c = Concrete(nm, g, m);
+                        if (c.Length > 0) { nm = c; key = "c:" + c; }
+                    }
                     if (key.Length == 0)
                     {
+                        // 什么都没认出来：看目录名是不是个具体型号（「铁喷」这种），是就照它归位
+                        if (nm.Length == 0)
+                        {
+                            string c = Concrete("", g, m);
+                            if (c.Length > 0) { nm = c; key = "c:" + c; }
+                        }
                         // 人物、投掷物这类没有「模型名」，只有认出来的名字 —— 就用名字当位置
-                        if (nm.Length == 0) continue;              // 名字都认不出：不进树
-                        key = "sub:" + nm;
+                        if (key.Length == 0)
+                        {
+                            if (nm.Length == 0) continue;              // 名字都认不出：不进树
+                            key = "sub:" + nm;
+                        }
                     }
                 }
                 Slot s;
-                // 人工改过分类/位置的，位置键带上分类，免得和原分类下的同名位置抢一个槽；
-                // 没改过的还是原来的键：同一个模型不管被认成哪类，仍然只占一个位置。
-                string mapKey = (hand.Length > 0 || CatPrefs.HasCat(m)) ? cat + "\u0001" + key : key;
+                // 位置键永远带上大类：枪械的「消音冲锋枪」模型和杂项的「UZI 改视角」用的是同一个模型名，
+                // 但它们不是「二选一」的关系（改视角是叠加的），混进一个槽就错了。
+                string mapKey = cat + "\u0001" + key;
                 if (!map.TryGetValue(mapKey, out s))
                 {
                     s = new Slot();
@@ -157,7 +173,8 @@ namespace Installer
 
         private static bool KindWord(string s)
         {
-            foreach (string k in KindWords) if (s == k) return true;
+            // 「消音冲锋枪」这种带前缀的也算枪种词，否则「UZI/消音冲锋枪」拆不开
+            foreach (string k in KindWords) if (s.IndexOf(k, StringComparison.Ordinal) >= 0) return true;
             return false;
         }
 
@@ -169,10 +186,11 @@ namespace Installer
             {
                 case "枪械":
                 {
-                    if (hint != null && hint.Length > 0) return hint;   // 名字里本来就带着枪种，直接信它
                     string k = GunKindOf(n, key);
-                    // 名字推不出来时，用识别出来的细分兜一层（人工改名之后常这样）
-                    if (k == "其他枪械" && IsGunKindName(gsub)) return gsub.Trim();
+                    if (k != "其他枪械") return k;
+                    if (hint != null && hint.Length > 0) return hint;   // 名字推不出来，才用「/」前面那个枪种
+                    // 还是推不出来时，用识别出来的细分兜一层（人工改名之后常这样）
+                    if (IsGunKindName(gsub)) return gsub.Trim();
                     return k;
                 }
                 case "人物": return CharKindOf(n);
@@ -193,7 +211,7 @@ namespace Installer
                 return "霰弹枪";
             if (HasAny(s, "uzi", "mp5", "mac10", "mac-10", "silenced", "消音", "smg", "冲锋"))
                 return "冲锋枪";
-            if (HasAny(s, "ak47", "ak-47", "m16", "三连发", "scar", "sg552", "galil", "m4", "desert", "rifle", "步枪"))
+            if (HasAny(s, "ak47", "ak-47", "m16", "三连发", "scar", "sg552", "galil", "m4", "ar15", "ar-15", "desert", "rifle", "步枪"))
                 return "步枪";
             if (HasAny(s, "magnum", "pistol", "手枪", "马格南"))
                 return "手枪";
@@ -305,7 +323,61 @@ namespace Installer
         private static bool Vague(string s)
         {
             return s == "步枪" || s == "冲锋枪" || s == "霰弹枪" || s == "投掷物"
-                || s == "幸存者" || s == "近战" || s == "其他" || s.Length == 0;
+                || s == "手枪" || s == "机枪" || s == "狙击枪"
+                || s == "幸存者" || s == "人物" || s == "近战" || s == "近战武器"
+                || s == "其他" || s.Length == 0;
+        }
+
+        // 泛称补全用：关键词 → 标准位置名。长的排前面，免得 "M4" 抢走 "M4A1"。
+        private static readonly string[,] GunPairs = new string[,]
+        {
+            {"一代连喷","一代连喷"},{"二代连喷","二代连喷"},
+            {"sg552","sg552"},{"SG552","sg552"},
+            {"AK-47","AK-47"},{"AK47","AK-47"},
+            {"AR15","AR15"},{"SCAR","SCAR"},{"M4A1","M4"},{"M249","M249"},
+            {"M16","M16"},{"AWP","AWP"},{"MP5","MP5"},{"M60","M60"},
+            {"UZI","UZI"},{"MAC-10","MAC-10"},{"MAC10","MAC-10"},{"P90","P90"},
+            {"三连发","三连发"},{"铁喷","铁喷"},{"铁盆","铁喷"},{"木喷","木喷"},
+            {"鸟狙","鸟狙"},{"猎枪","猎枪"},{"连狙","连狙"},
+            {"武士刀","武士刀"},{"砍刀","砍刀"},{"撬棍","撬棍"},{"平底锅","平底锅"},{"马格南","马格南"},
+        };
+
+        private static readonly string[,] CharPairs = new string[,]
+        {
+            {"弗朗西斯","弗朗西斯"},{"Francis","弗朗西斯"},
+            {"埃利斯","埃利斯"},{"Ellis","埃利斯"},
+            {"路易斯","路易斯"},{"Louis","路易斯"},
+            {"罗谢尔","罗谢尔"},{"Rochelle","罗谢尔"},
+            {"教练","教练"},{"Coach","教练"},
+            {"尼克","尼克"},{"Nick","尼克"},
+            {"佐伊","佐伊"},{"Zoey","佐伊"},
+            {"比尔","比尔"},{"Bill","比尔"},
+        };
+
+        /// <summary>泛称 → 具体位置名。先看 MOD 所在目录，再看 MOD 自己的名字。</summary>
+        private static string Concrete(string vague, ModGroup g, ModItem m)
+        {
+            string dir = "";
+            string rel = m == null ? "" : (m.RelPath ?? "");
+            int i = rel.LastIndexOf('\\');
+            if (i > 0)
+            {
+                int j = rel.LastIndexOf('\\', i - 1);
+                dir = j >= 0 ? rel.Substring(j + 1, i - j - 1) : rel.Substring(0, i);
+            }
+            string text = dir + " " + (g.Name ?? "") + " " + (m == null ? "" : (m.Name ?? ""));
+            string hit = null;
+            if (vague == "幸存者" || vague == "人物") hit = Find(CharPairs, text);
+            if (hit == null) hit = Find(GunPairs, text);
+            return hit ?? "";
+        }
+
+        private static string Find(string[,] pairs, string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            for (int i = 0; i < pairs.GetLength(0); i++)
+                if (text.IndexOf(pairs[i, 0], StringComparison.OrdinalIgnoreCase) >= 0) return pairs[i, 1];
+            return null;
         }
 
         /// <summary>树里的大类顺序：跟着分类顺序走，地图/喷漆不进树。</summary>

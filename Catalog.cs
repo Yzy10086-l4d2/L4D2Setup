@@ -469,7 +469,22 @@ namespace Installer
         /// <summary>一个 mod 归到哪：先看它放在哪（确定性强），再看 vpk 里改了什么（兜底）。</summary>
         public static void Classify(ModItem it)
         {
-            // 0) 内容优先：有把握才用（散装 vpk 直接读；zip 里的读目录表前缀）
+            string[] segs0 = DirSegs(it);
+
+            // 0) 放在「三方地图」目录下的一律算地图：路径比包里的东西可靠
+            //    （有个「叛乱」地图包里带了人物模型，之前被判成人物，进不了地图页签）
+            int iMap0 = IndexOfContain(segs0, "三方地图");
+            if (iMap0 >= 0)
+            {
+                string[] cs0 = ContainerSegs(it);
+                int cm0 = IndexOfContain(cs0, "三方地图");
+                it.Cat = CAT_MAP;
+                it.Sub = (cm0 >= 0 && cm0 + 1 < cs0.Length) ? cs0[cm0 + 1] : "单张地图";
+                it.Category = it.Cat;
+                return;
+            }
+
+            // 1) 内容优先：有把握才用（散装 vpk 直接读；zip 里的读目录表前缀）
             string ccat = "", csub = "";
             bool hitContent = false;
             try
@@ -848,8 +863,12 @@ namespace Installer
         public static string CleanName(string fileName)
         {
             string s = Path.GetFileNameWithoutExtension(fileName);
-            s = System.Text.RegularExpressions.Regex.Replace(s, @"^[\s\(\[]*\d+[\s\)\]]*[\.\-_]?\s*", "");
+            // 开头的编号要「编号 + 分隔符」才洗掉。
+            // 原来的写法遇到「(15连) 卡提加兰德」会把「(15」啃掉，剩个「连) 」；
+            // 「30连 星野」这种编号本身带意思（30 发连狙），也不该动。
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"^[\s\(\[]*\d+[\s\)\]]*(?:[\.\-_]|\s)+", "");
             s = System.Text.RegularExpressions.Regex.Replace(s, @"\s*[\(\（]\s*\d+\s*[\)\）]\s*$", "");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\s*[-–—]+\s*$", "");   // 名字尾巴上的孤立短横
             return s.Trim();
         }
 
@@ -870,6 +889,42 @@ namespace Installer
             }
             if (list.Count == 0 && g.Parts.Count > 0) list.Add(g.Parts[0]);
             return list;
+        }
+
+        /// <summary>自测用：把每个 MOD 的识别结果铺成一张表，人眼核错用。</summary>
+        public static string DumpIdentify()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("大类\t小分类\t名字\t识别结果\t键\t部件\t路径");
+            foreach (ModGroup g in Groups)
+            {
+                ModItem m = g.Main;
+                sb.Append(g.Cat).Append('\t')
+                  .Append(g.Sub).Append('\t')
+                  .Append(g.Name).Append('\t')
+                  .Append(g.Subject).Append('\t')
+                  .Append(m == null ? "" : (m.SubjectKey ?? "")).Append('\t')
+                  .Append(g.Parts.Count).Append('\t')
+                  .Append(m == null ? "" : m.RelPath).AppendLine();
+            }
+            string f = Path.Combine(Core.LogDir, "识别清单.tsv");
+            File.WriteAllText(f, sb.ToString(), new UTF8Encoding(true));
+
+            // 明细：每个 vpk 单独一行，看套装里有没有部件被认错
+            StringBuilder d = new StringBuilder();
+            d.AppendLine("所在MOD\t部件角色\t部件名\t大类\t小分类\t识别结果\t键\t路径");
+            foreach (ModGroup g in Groups)
+                foreach (ModItem it in g.Parts)
+                    d.Append(g.Name).Append('\t')
+                     .Append(it.Role).Append('\t')
+                     .Append(it.Name).Append('\t')
+                     .Append(it.Cat).Append('\t')
+                     .Append(it.Sub).Append('\t')
+                     .Append(it.Subject).Append('\t')
+                     .Append(it.SubjectKey ?? "").Append('\t')
+                     .Append(it.RelPath).AppendLine();
+            File.WriteAllText(Path.Combine(Core.LogDir, "识别明细.tsv"), d.ToString(), new UTF8Encoding(true));
+            return f;
         }
     }
 }
