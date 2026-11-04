@@ -928,15 +928,64 @@ namespace Installer
             cms.Font = Theme.UI;
             cms.Items.Add("展开 / 收起这套的 vpk（双击也行）", null, delegate { ToggleExpandIn(lv); });
             cms.Items.Add("选择部件…（老弹窗）", null, delegate { PickPartsIn(lv); });
-            cms.Items.Add("删除所选 → U 盘 _回收的MOD", null, delegate { DeleteSelectedIn(lv); });
-            cms.Items.Add("重命名所选", null, delegate { RenameSelectedIn(lv); });
+            cms.Items.Add(new ToolStripSeparator());
+
+            cms.Items.Add("只装这个 MOD（不动平台/启动项）", null, delegate { InstallThisOne(lv); });
+            // 勾了好几行时再给一条批量的；只有一行就没什么可选的了
+            int checkedRows = lv.CheckedItems.Count;
+            if (checkedRows > 1)
+                cms.Items.Add("只装勾中的这 " + checkedRows + " 行 MOD", null, delegate { InstallSelectedOnly(); });
+            cms.Items.Add(new ToolStripSeparator());
+
+            cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
             cms.Items.Add("设置标签…", null, delegate { SetTagsIn(lv); });
-            cms.Items.Add("只装勾中的 MOD（不动平台/启动项）", null, delegate { InstallSelectedOnly(); });
+            cms.Items.Add(checkedRows > 0
+                ? "删除勾中的 " + checkedRows + " 行 → U 盘 _回收的MOD"
+                : "删除这个 MOD → U 盘 _回收的MOD", null, delegate { DeleteSelectedIn(lv); });
+            cms.Items.Add(new ToolStripSeparator());
+
             cms.Items.Add("从文件夹导入…（vpk / rar / zip）", null, delegate { BulkImport(); });
             cms.Items.Add("识别压缩包内容（第一次慢，之后走缓存）", null, delegate { ProbeArchivesUi(); });
             cms.Items.Add("清理同名重复（每个名字留第一个）", null, delegate { CleanDupMods(); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
             return cms;
+        }
+
+        /// <summary>右键点中的那一行。右键时已经把它选中了，所以取第一行选中项。</summary>
+        private ListViewItem RowTarget(ListView lv)
+        {
+            return lv.SelectedItems.Count > 0 ? lv.SelectedItems[0] : null;
+        }
+
+        /// <summary>
+        /// 这一行到底是哪几个 vpk。
+        /// 展开出来的子件行 = 那一个文件；套装行 = 这套里当前勾着的件，一件都没勾就按默认部件（主体+必装+第一个选配）。
+        /// </summary>
+        private List<ModItem> RowItems(ListView lv)
+        {
+            List<ModItem> list = new List<ModItem>();
+            ListViewItem li = RowTarget(lv);
+            if (li == null) return list;
+            ModItem single = li.Tag as ModItem;
+            if (single != null) { list.Add(single); return list; }
+            ModGroup g = li.Tag as ModGroup;
+            if (g == null) return list;
+            foreach (ModItem p in g.Parts) if (checkedKeys.Contains(p.Key)) list.Add(p);
+            if (list.Count == 0) list.AddRange(Catalog.DefaultParts(g));
+            return list;
+        }
+
+        /// <summary>只装右键点的那一行，别的什么都不动。</summary>
+        private void InstallThisOne(ListView lv)
+        {
+            ListViewItem li = RowTarget(lv);
+            if (li == null) { MessageBox.Show("先在列表里右键点一行。"); return; }
+            List<ModItem> sel = RowItems(lv);
+            if (sel.Count == 0) { MessageBox.Show("这一行没有对应的 vpk。"); return; }
+            string what = sel.Count == 1
+                ? sel[0].Name
+                : "「" + ((li.Tag as ModGroup) != null ? ((ModGroup)li.Tag).Name : li.Text) + "」的 " + sel.Count + " 个 vpk";
+            InstallMods(sel, "只装这个 MOD", what);
         }
 
         internal void ToggleExpandIn(ListView lv)
@@ -1392,16 +1441,33 @@ namespace Installer
             Core.ScanMods(); RefreshMods(); RefreshConflicts();
         }
 
+        /// <summary>改名作用在右键点的那一行上，不再看勾选；一次只改一个 vpk。</summary>
         internal void RenameSelectedIn(ListView lv)
         {
-            List<ModItem> list = CheckedOrSelected(lv);
-            if (list.Count != 1) { MessageBox.Show("重命名一次只能选一个。"); return; }
-            if (list[0].IsArchive) { MessageBox.Show("压缩包里的 vpk 不能改名。", "不能重命名"); return; }
-            string nn = PromptForm.Ask("新名字（不用写 .vpk）", "重命名 " + list[0].Name);
+            ListViewItem li = RowTarget(lv);
+            if (li == null) { MessageBox.Show("先在列表里右键点一行。"); return; }
+
+            ModItem it = li.Tag as ModItem;          // 展开出来的子件行：就是那一个文件
+            if (it == null)
+            {
+                ModGroup g = li.Tag as ModGroup;
+                if (g == null) return;
+                if (g.IsSet && g.Parts.Count > 1)
+                {
+                    MessageBox.Show("「" + g.Name + "」这套由 " + g.Parts.Count + " 个 vpk 组成，一次只能改一个。\r\n"
+                        + "先双击这一行展开，再对里面具体那一件右键改名。", "重命名 VPK 文件名");
+                    return;
+                }
+                it = g.Main;                          // 只有一个 vpk 的套装，直接改它
+            }
+            if (it == null) { MessageBox.Show("这一行没有对应的 vpk。"); return; }
+            if (it.IsArchive) { MessageBox.Show("压缩包里的 vpk 不能改名。\r\n要用改名后的版本，请先解压出来。", "不能重命名"); return; }
+
+            string nn = PromptForm.Ask("新名字（不用写 .vpk）", "重命名 " + it.Name);
             if (string.IsNullOrEmpty(nn)) return;
-            string err = Work.RenameMod(list[0], nn.Trim());
+            string err = Work.RenameMod(it, nn.Trim());
             if (err != null) { MessageBox.Show(err); return; }
-            Core.Log("OK", "已改名: " + list[0].Name + " -> " + nn.Trim() + ".vpk");
+            Core.Log("OK", "已改名: " + it.Name + " -> " + nn.Trim() + ".vpk");
             Core.ScanMods(); RefreshMods();
         }
 
@@ -1472,7 +1538,24 @@ namespace Installer
         }
 
         // 只装勾中的这几个 MOD：不碰平台、不写启动项、不改参数（给"我就想加一个"用）
+        /// <summary>只装勾中的那几行（批量）。</summary>
         private void InstallSelectedOnly()
+        {
+            List<ModItem> sel = Selected();
+            if (sel.Count == 0)
+            {
+                MessageBox.Show("先在列表里勾上要装的 MOD（行首的方块）。");
+                return;
+            }
+            // 一个套装勾了几件就装几件，勾满整套也不会重复算
+            InstallMods(sel, "只装勾中的 MOD", sel.Count + " 个 vpk");
+        }
+
+        /// <summary>
+        /// 真正的「只装这几个 vpk」：复制文件 + 写 addonlist，平台/启动项/参数一概不碰。
+        /// what 用来在提示里说清楚这次装的是哪一份。
+        /// </summary>
+        private void InstallMods(List<ModItem> sel, string title, string what)
         {
             string root = txtGame == null ? "" : txtGame.Text.Trim();
             if (root.Length == 0 || !Core.TestGame(root))
@@ -1480,18 +1563,18 @@ namespace Installer
                 MessageBox.Show("先选对游戏目录（有 left4dead2.exe 的那个）。");
                 return;
             }
-            List<ModItem> sel = Selected();
-            if (sel.Count == 0)
+            if (sel == null || sel.Count == 0)
             {
-                MessageBox.Show("先在右边列表里勾上要装的 MOD（行首的方块）。");
+                MessageBox.Show("这次没有要装的 vpk。");
                 return;
             }
+            // 压缩包里的 vpk 也能装：CopyMods 会单独抽那一个出来，不解整包、不动 U 盘上的包
             Work.Overwrite = !rdSkip.Checked;
             int copied = 0, skipped = 0;
             List<string> added = null, failed = null;
             try
             {
-                RunBusy<int>("正在装这几个 MOD…", delegate
+                RunBusy<int>("正在装 " + what + "…", delegate
                 {
                     Work.CopyMods(root, sel, null, out copied, out skipped, out added, out failed);
                     return 0;
@@ -1499,21 +1582,24 @@ namespace Installer
             }
             catch (Exception ex)
             {
-                Core.Log("FAIL", "只装 MOD 出错: " + ex.Message);
-                MessageBox.Show("装失败了：" + ex.Message + "\r\n详细信息看下面的日志。", "只装 MOD");
+                Core.Log("FAIL", title + " 出错: " + ex.Message);
+                MessageBox.Show("装失败了：" + ex.Message + "\r\n详细信息看下面的日志。", title);
                 return;
             }
             if (failed != null && failed.Count > 0)
             {
-                Core.Log("FAIL", "只装 MOD：失败 " + failed.Count + " 个（" + string.Join("、", failed.ToArray()) + "）");
+                Core.Log("FAIL", title + "：失败 " + failed.Count + " 个（" + string.Join("、", failed.ToArray()) + "）");
                 MessageBox.Show("有 " + failed.Count + " 个没装进去，多半是游戏正开着（文件被占用）或盘满了。\r\n看下面日志的 FAIL 行。", "没装全", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             foreach (ModItem it in sel) st[it.Name] = true;
             AddonList.Write(root, st);
-            Core.Log("OK", "只装 MOD：写入 " + copied + " 个、跳过 " + skipped + " 个（平台/启动项/参数都没动）");
-            MessageBox.Show("装好了：" + copied + " 个文件" + (skipped > 0 ? "，已是同样大小跳过 " + skipped + " 个" : "") + "。\r\n\r\n已经写进 addonlist，进游戏就生效。\r\n平台、启动项、参数都没动。", "只装 MOD");
+            Core.Log("OK", title + "：写入 " + copied + " 个、跳过 " + skipped + " 个（平台/启动项/参数都没动）");
+            MessageBox.Show("装好了：" + what + "，共 " + copied + " 个文件"
+                + (skipped > 0 ? "（已是同样大小，跳过 " + skipped + " 个）" : "") + "。\r\n\r\n"
+                + "已经写进 addonlist，进游戏就生效。\r\n"
+                + "其它 MOD 的开关状态没动，平台、启动项、参数也没动。", title);
         }
 
         // 压缩包内容识别：第一次把每个 rar 里的 vpk 目录表读一遍，结果落缓存

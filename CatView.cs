@@ -456,6 +456,17 @@ namespace Installer
                     mf.OnRowChecked(lv, e);
                 };
                 lv.DoubleClick += delegate { mf.OpenRowAt(lv); };
+                // 右键先把鼠标底下那一行选中：WinForms 的 ListView 右键不会自动选中，
+                // 否则「重命名 / 只装这个 MOD」会作用在上一次左键点的那行上。
+                lv.MouseDown += delegate(object s, MouseEventArgs e)
+                {
+                    if (e.Button != MouseButtons.Right) return;
+                    ListViewItem hit = lv.GetItemAt(e.X, e.Y);
+                    if (hit == null || hit.Selected) return;
+                    lv.SelectedItems.Clear();
+                    hit.Selected = true;
+                    hit.Focused = true;
+                };
                 lv.ContextMenuStrip = mf.BuildRowMenu(lv);
                 lv.Resize += delegate { LayoutCols(); };
                 lv.SelectedIndexChanged += delegate { if (mf.tabs != null) mf.SyncTabs(); };
@@ -657,6 +668,9 @@ namespace Installer
             }
 
             public void FocusList() { lv.Focus(); }
+
+            /// <summary>自测用：直接拿这块列表。</summary>
+            internal ListView List { get { return lv; } }
 
             internal void SetOnlyScheme(bool on) { chkOnly.Checked = on; }
 
