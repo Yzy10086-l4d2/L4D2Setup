@@ -664,9 +664,11 @@ namespace Installer
             none.Click += delegate { SetAll(false); }; Controls.Add(none);
             Button collect = new Button(); collect.Text = "收回新 MOD"; collect.SetBounds(184, 402, 110, 30);
             collect.Click += delegate { Collect(); }; Controls.Add(collect);
+            Button park = new Button(); park.Text = "清理关着的"; park.SetBounds(300, 402, 104, 30);
+            park.Click += delegate { Park(); }; Controls.Add(park);
             Button ok = new Button(); ok.Text = "写入并关闭"; ok.SetBounds(410, 402, 138, 30);
             ok.Click += delegate { Apply(); }; Controls.Add(ok);
-            lbl = new Label(); lbl.SetBounds(300, 408, 100, 20); lbl.Text = ""; Controls.Add(lbl);
+            lbl = new Label(); lbl.SetBounds(12, 436, 536, 20); lbl.Text = ""; Controls.Add(lbl);
 
             LoadItems();
         }
@@ -725,7 +727,26 @@ namespace Installer
             MessageBox.Show("已收回 " + got.Count + " 个到 U 盘 addons回收 目录：\r\n" + string.Join("\r\n", got.ToArray()));
         }
 
-        private void Apply()
+        /// <summary>把「关闭」的 MOD 挪回 U 盘，给游戏盘腾地方（开着的一概不碰）。</summary>
+        private void Park()
+        {
+            if (MessageBox.Show(
+                "把「关闭」状态的 MOD 从游戏 addons 里挪回 U 盘？\r\n\r\n"
+                + "· 只动已经关掉的\r\n"
+                + "· 开着的、以及不是装机台装的，一概不碰\r\n"
+                + "· 挪走的以后要用会自动重新复制\r\n\r\n"
+                + "先把上面的开关写进去，再清理。", "清理关着的 MOD",
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            ApplyQuiet();                       // 界面上的勾选先落到 addonlist，否则清的还是旧状态
+            int n = Work.ParkDisabled(gameRoot);
+            state = AddonList.Read(gameRoot);
+            LoadItems();
+            MessageBox.Show(n > 0
+                ? ("已挪回 U 盘 " + n + " 个。\r\n下次装到这套时会重新复制回来。")
+                : "没有可清理的：关着的 MOD 本来就不在 addons 里。");
+        }
+
+        private void ApplyQuiet()
         {
             Dictionary<string, bool> changes = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             List<string> order = new List<string>();
@@ -736,13 +757,18 @@ namespace Installer
                 int on = 0;
                 foreach (KeyValuePair<string, bool> kv in changes) if (kv.Value) on++;
                 Core.Log("OK", "addonlist 已更新：" + on + " 个启用 / " + (changes.Count - on) + " 个关闭（备份 " + Path.GetFileName(bak) + "）");
-                DialogResult = DialogResult.OK;
-                Close();
             }
             catch (Exception ex)
             {
                 MessageBox.Show("写入失败: " + ex.Message);
             }
+        }
+
+        private void Apply()
+        {
+            ApplyQuiet();
+            DialogResult = DialogResult.OK;
+            Close();
         }
     }
 }

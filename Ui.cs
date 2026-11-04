@@ -226,9 +226,12 @@ namespace Installer
             // ---- 左栏中：安装选项（原来挤在 MOD 列表底部，语义上属于"怎么装"，跟"挑什么"分开）----
             gOpt = new Section();
             gOpt.Caption = "安装选项"; gOpt.SetBounds(Theme.M, 286, leftW, 144); Controls.Add(gOpt);
-            chkSwap = new CheckBox(); chkSwap.Text = "换整套（清掉不在方案里的 MOD）";
+            chkSwap = new CheckBox(); chkSwap.Text = "换整套（把不在这套里的 MOD 关掉）";
             chkSwap.SetBounds(12, 28, leftW - 24, 22); Theme.Dress(chkSwap); gOpt.Controls.Add(chkSwap);
-            tips.SetToolTip(chkSwap, "先清掉游戏 addons 目录里不属于这次方案的 MOD，再装。\r\n清掉的会挪到回收站，不会真删。");
+            chkSwap.Checked = true;
+            tips.SetToolTip(chkSwap, "切方案时，上一套的 MOD 在 addonlist 里改成「关闭」，文件留在 addons 里不动。\r\n"
+                + "切回去直接打开就能用，不用重新复制。\r\n"
+                + "只认 U 盘库里有的 vpk —— 你自己丢进 addons 的不会被碰。");
             chkStrict = new CheckBox(); chkStrict.Text = "严格校验（慢一倍，更保险）";
             chkStrict.SetBounds(12, 52, leftW - 24, 22); Theme.Dress(chkStrict); gOpt.Controls.Add(chkStrict);
             tips.SetToolTip(chkStrict, "默认只比文件大小。勾上之后，复制完再回读源文件和目标各算一遍 SHA256 比对。");
@@ -2281,12 +2284,6 @@ namespace Installer
                         SetStatus("正在装 MQCam…");
                         Work.InstallMqcam(root);
                     }
-                    if (chkSwap.Checked)
-                    {
-                        Core.Log("STEP", "换整套：先清掉旧 MOD");
-                        SetStatus("正在清掉上一套…");
-                        Work.SwapToSet(root, sel);
-                    }
                     List<string> added = new List<string>();
                     if (sel.Count > 0)
                     {
@@ -2314,11 +2311,29 @@ namespace Installer
                             Core.Log("WARN", "重试 " + retryList.Count + " 个失败的 MOD");
                             todo = retryList;
                         }
-                        Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-                        foreach (ModItem it in sel) st[it.Name] = true;
-                        if (assetName != null) st[assetName] = true;
-                        string bak = AddonList.Write(root, st);
-                        Core.Log("OK", "启用状态已写入（原文件备份 " + Path.GetFileName(bak) + "）");
+                        // 换整套：只翻 addonlist 的开关（这次的打开、上一套的关上），文件一个都不动
+                        if (chkSwap.Checked)
+                        {
+                            Core.Log("STEP", "换整套：把不在这套里的 MOD 关掉");
+                            SetStatus("正在切换 MOD 开关…");
+                            int onN, offN, keepN;
+                            Work.SwitchAddons(root, sel, assetName, out onN, out offN, out keepN);
+                        }
+                        else
+                        {
+                            Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                            foreach (ModItem it in sel) st[it.Name] = true;
+                            if (assetName != null) st[assetName] = true;
+                            string bak = AddonList.Write(root, st);
+                            Core.Log("OK", "启用状态已写入（原文件备份 " + Path.GetFileName(bak) + "）");
+                        }
+                    }
+                    else if (chkSwap.Checked)
+                    {
+                        // 一个 MOD 都没勾、但开着「换整套」：等于这套不要 MOD，全关掉
+                        Core.Log("STEP", "换整套：这套没有 MOD，把旧的都关掉");
+                        int onN, offN, keepN;
+                        Work.SwitchAddons(root, sel, assetName, out onN, out offN, out keepN);
                     }
                     else if (assetName != null)
                     {

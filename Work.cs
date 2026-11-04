@@ -640,22 +640,47 @@ namespace Installer
             return moved;
         }
 
-        // ---------- 换整套 ----------
-        public static int SwapToSet(string gameRoot, List<ModItem> sel)
+        // ---------- 换整套：只翻 addonlist 的开关，文件一个都不动 ----------
+        /// <summary>
+        /// 按方案把 addonlist 翻一遍：这一套打开、上一套关上。
+        /// 不动 addons 里的文件 —— 切回来只需把开关翻回去，不用重新复制。
+        /// 只认 U 盘库里存在的 vpk；用户自己丢进 addons 的不碰。
+        /// </summary>
+        public static void SwitchAddons(string gameRoot, List<ModItem> sel, string assetName,
+                                        out int on, out int off, out int untouched)
         {
-            HashSet<string> keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (ModItem m in sel) keep.Add(m.Name);
+            on = 0; off = 0; untouched = 0;
             string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
-            if (!Directory.Exists(addons)) return 0;
-            int moved = 0;
-            foreach (string f in Directory.GetFiles(addons, "*.vpk"))
-            {
-                string name = Path.GetFileName(f);
-                if (keep.Contains(name)) continue;
-                try { Bin.Move(gameRoot, f); moved++; } catch (Exception ex) { Core.Log("WARN", "挪走 " + name + " 失败: " + ex.Message); }
-            }
-            Core.Log("OK", "换整套：旧 MOD 挪进回收站 " + moved + " 个，保留 " + keep.Count + " 个");
-            return moved;
+            Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> want = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (sel != null)
+                foreach (ModItem m in sel)
+                {
+                    if (m == null || string.IsNullOrEmpty(m.Name)) continue;
+                    if (!want.Add(m.Name)) continue;
+                    st[m.Name] = true;
+                }
+            if (!string.IsNullOrEmpty(assetName) && want.Add(assetName)) st[assetName] = true;
+
+            HashSet<string> known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (Core.ModList != null)
+                foreach (ModItem m in Core.ModList) if (!string.IsNullOrEmpty(m.Name)) known.Add(m.Name);
+
+            if (Directory.Exists(addons))
+                foreach (string f in Directory.GetFiles(addons, "*.vpk"))
+                {
+                    string n = Path.GetFileName(f);
+                    if (want.Contains(n)) continue;
+                    if (!known.Contains(n)) { untouched++; continue; }   // 不认识的：不是我们装的，别管
+                    st[n] = false;
+                }
+
+            if (st.Count == 0) return;
+            AddonList.Write(gameRoot, st);
+            foreach (KeyValuePair<string, bool> kv in st) { if (kv.Value) on++; else off++; }
+            Core.Log("OK", "整套开关：打开 " + on + " 个、关闭 " + off + " 个"
+                + (untouched > 0 ? "、不认识的 " + untouched + " 个没动" : "")
+                + "（addons 里的文件一个都没动，切回来直接开）");
         }
 
         // ---------- 回收新 MOD ----------
@@ -973,6 +998,125 @@ namespace Installer
                 File.WriteAllText(Path.Combine(Core.LogDir, "最近一次.ini"), sb.ToString(), new UTF8Encoding(true));
             }
             catch (Exception ex) { Core.Log("WARN", "装机记录写失败: " + ex.Message); }
+        }
+
+        // ---------- 自测：换整套只翻开关，文件不动 ----------
+        /// <summary>
+        /// 拿个假游戏目录跑一遍 SwitchAddons，检查：
+        ///   这次选的 → 1；上一套（库里有的）→ 0；用户自己放的 → 一个字节都没被改；文件数量不变。
+        /// </summary>
+        public static int SelfTestAddons()
+        {
+            int bad = 0;
+            string tmp = Path.Combine(Path.GetTempPath(), "l4d2-addonlist-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            string l4d2 = Path.Combine(tmp, "left4dead2");
+            string addons = Path.Combine(l4d2, "addons");
+            try
+            {
+                Directory.CreateDirectory(addons);
+                Core.ScanMods();
+                List<ModItem> pool = new List<ModItem>();
+                foreach (ModItem m in Core.ModList)
+                {
+                    if (string.IsNullOrEmpty(m.Name)) continue;
+                    pool.Add(m);
+                    if (pool.Count >= 3) break;
+                }
+                if (pool.Count < 3) { Console.WriteLine("ADDON 库里不到 3 个 MOD，测不了"); return 1; }
+
+                foreach (ModItem m in pool) File.WriteAllText(Path.Combine(addons, m.Name), "x");
+                string mine = "我自己放的.vpk";
+                File.WriteAllText(Path.Combine(addons, mine), "x");
+
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("\"AddonList\"");
+                sb.AppendLine("{");
+                foreach (ModItem m in pool) sb.AppendLine("\t\"" + m.Name + "\"\t\t\"1\"");
+                sb.AppendLine("\t\"" + mine + "\"\t\t\"1\"");
+                sb.AppendLine("}");
+                File.WriteAllText(AddonList.FileOf(tmp), sb.ToString(), Encoding.Default);
+
+                int on, off, keep;
+                SwitchAddons(tmp, new List<ModItem> { pool[0] }, null, out on, out off, out keep);
+                Dictionary<string, bool> st = AddonList.Read(tmp);
+
+                bool a = st.ContainsKey(pool[0].Name) && st[pool[0].Name];
+                bool b = st.ContainsKey(pool[1].Name) && !st[pool[1].Name];
+                bool c = st.ContainsKey(pool[2].Name) && !st[pool[2].Name];
+                bool d = st.ContainsKey(mine) && st[mine];           // 用户自己放的：没被关
+                int files = Directory.GetFiles(addons, "*.vpk").Length;
+                bool e = files == pool.Count + 1;                    // 文件一个没少
+
+                if (!a) { bad++; Console.WriteLine("[FAIL] 这次选的没被打开: " + pool[0].Name); }
+                if (!b) { bad++; Console.WriteLine("[FAIL] 上一套的没被关掉: " + pool[1].Name); }
+                if (!c) { bad++; Console.WriteLine("[FAIL] 上一套的没被关掉: " + pool[2].Name); }
+                if (!d) { bad++; Console.WriteLine("[FAIL] 用户自己放的被改动了: " + mine); }
+                if (!e) { bad++; Console.WriteLine("[FAIL] addons 里文件数变了: " + files + " 个"); }
+                Console.WriteLine("ADDON 挑一个装：打开 " + on + " / 关闭 " + off + " / 不认识的 " + keep
+                    + "，文件 " + files + " 个（原 " + (pool.Count + 1) + "）");
+
+                // 一个都不选 + 换整套 = 全关（用户自己的仍然不碰）
+                SwitchAddons(tmp, new List<ModItem>(), null, out on, out off, out keep);
+                st = AddonList.Read(tmp);
+                bool g1, g2, g3;
+                st.TryGetValue(pool[0].Name, out g1);
+                st.TryGetValue(pool[1].Name, out g2);
+                st.TryGetValue(pool[2].Name, out g3);
+                bool f1 = !g1 && !g2 && !g3;
+                bool f2;
+                st.TryGetValue(mine, out f2);
+                if (!f1) { bad++; Console.WriteLine("[FAIL] 一个都不选时，库里的没全关"); }
+                if (!f2) { bad++; Console.WriteLine("[FAIL] 一个都不选时，用户自己放的被关了"); }
+                int files2 = Directory.GetFiles(addons, "*.vpk").Length;
+                if (files2 != files) { bad++; Console.WriteLine("[FAIL] 全关时文件数变了"); }
+                Console.WriteLine("ADDON 一个都不选：全关=" + f1 + "，用户自己的还开着=" + f2 + "，文件 " + files2 + " 个");
+            }
+            catch (Exception ex)
+            {
+                bad++;
+                Console.WriteLine("[FAIL] ADDON 自测抛异常: " + ex.Message);
+            }
+            finally
+            {
+                try { Directory.Delete(tmp, true); } catch { }
+            }
+            return bad;
+        }
+
+        /// <summary>
+        /// 手动腾地方：把 addonlist 里明确「关闭」的 MOD 挪回 U 盘（addons回收），再从 addons 删掉。
+        /// 只动「关着 + 库里认识」的；开着的一概不碰。复制校验通过才删源文件。
+        /// </summary>
+        public static int ParkDisabled(string gameRoot)
+        {
+            Dictionary<string, bool> st = AddonList.Read(gameRoot);
+            string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
+            if (!Directory.Exists(addons)) return 0;
+            HashSet<string> known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (Core.ModList != null)
+                foreach (ModItem m in Core.ModList) if (!string.IsNullOrEmpty(m.Name)) known.Add(m.Name);
+            string dst = Path.Combine(Core.ModRoot, "addons回收");
+            int n = 0;
+            foreach (string f in Directory.GetFiles(addons, "*.vpk"))
+            {
+                string name = Path.GetFileName(f);
+                bool on;
+                if (!st.TryGetValue(name, out on) || on) continue;      // 只动明确关掉的
+                if (!known.Contains(name)) continue;                     // 不认识的别碰
+                try
+                {
+                    if (!Directory.Exists(dst)) Directory.CreateDirectory(dst);
+                    string target = Path.Combine(dst, name);
+                    if (!Core.SameFile(f, target)) Core.CopyOne(f, target);
+                    if (!File.Exists(target) || new FileInfo(target).Length != new FileInfo(f).Length)
+                        throw new Exception("复制后大小对不上");
+                    File.Delete(f);
+                    n++;
+                }
+                catch (Exception ex) { Core.Log("WARN", "腾地方失败 " + name + ": " + ex.Message); }
+            }
+            Core.Log(n > 0 ? "OK" : "INFO", "清理关着的 MOD：" + (n > 0 ? "挪回 U 盘 " + n + " 个" : "没有可清理的"));
+            return n;
         }
 
         // ---------- 跑外部程序并抓输出 ----------

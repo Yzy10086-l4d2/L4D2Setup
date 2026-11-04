@@ -67,6 +67,7 @@ namespace Installer
             bool uiMenu = false;
             bool uiSetCat = false;
             bool uiCatForm = false;
+            bool uiAddons = false;
             string uiFix = null;
             string uiParts = null;
             string uiTweaks = null;
@@ -75,6 +76,7 @@ namespace Installer
             bool dupSelf = false;
             bool launchSelf = false;
             bool tweakSelf = false;
+            bool addonSelf = false;
             string vpkFile = null;
 
 
@@ -97,6 +99,7 @@ namespace Installer
                 else if (string.Equals(a, "--uimenu", StringComparison.OrdinalIgnoreCase)) uiMenu = true;
                 else if (string.Equals(a, "--uisetcat", StringComparison.OrdinalIgnoreCase)) uiSetCat = true;
                 else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
+                else if (string.Equals(a, "--uiaddons", StringComparison.OrdinalIgnoreCase)) uiAddons = true;
                 else if (a.StartsWith("--uifix=", StringComparison.OrdinalIgnoreCase)) uiFix = a.Substring(8).Trim('"');
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
@@ -105,6 +108,7 @@ namespace Installer
                 else if (string.Equals(a, "--dupself", StringComparison.OrdinalIgnoreCase)) dupSelf = true;
                 else if (string.Equals(a, "--launchself", StringComparison.OrdinalIgnoreCase)) launchSelf = true;
                 else if (string.Equals(a, "--tweakself", StringComparison.OrdinalIgnoreCase)) tweakSelf = true;
+                else if (string.Equals(a, "--addonself", StringComparison.OrdinalIgnoreCase)) addonSelf = true;
                 else if (a.StartsWith("--vpk=", StringComparison.OrdinalIgnoreCase)) vpkFile = a.Substring(6).Trim('"');
 
                 else if (a.StartsWith("--game=", StringComparison.OrdinalIgnoreCase)) gameRoot = a.Substring(7).Trim('"');
@@ -113,7 +117,8 @@ namespace Installer
             // 单实例只约束界面模式：已经开着就把那个窗口叫到前面来
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
-            if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf && vpkFile == null)
+            if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf
+                && !addonSelf && vpkFile == null)
             {
                 ActivateExisting();
                 try { only.Dispose(); } catch { }
@@ -137,6 +142,12 @@ namespace Installer
             {
                 int bad = Tweaks.SelfTest();
                 Console.WriteLine("tweakself failures = " + bad);
+                return bad == 0 ? 0 : 1;
+            }
+            if (addonSelf)
+            {
+                int bad = Work.SelfTestAddons();
+                Console.WriteLine("addonself failures = " + bad);
                 return bad == 0 ? 0 : 1;
             }
             if (launchSelf)
@@ -229,6 +240,7 @@ namespace Installer
                     if (uiMenu) { f.UiTestMenu(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSetCat) { f.UiTestSetCat(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiCatForm) { f.UiTestCatForm(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiAddons) { f.UiTestAddonSwitch(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFix != null) { f.UiFixProfile(uiFix); System.Windows.Forms.Application.DoEvents(); }
                     if (uiProfile) { f.UiTestProfileForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }

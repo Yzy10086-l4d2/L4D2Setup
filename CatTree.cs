@@ -1392,5 +1392,55 @@ namespace Installer
                 f.Close();
             }
         }
+
+        /// <summary>自测：拿个假游戏目录打开「已装 MOD 开关」，截图看按钮排版。</summary>
+        internal void UiTestAddonSwitch()
+        {
+            string tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                "l4d2-switch-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            string addons = System.IO.Path.Combine(tmp, "left4dead2", "addons");
+            try
+            {
+                System.IO.Directory.CreateDirectory(addons);
+                List<string> names = new List<string>();
+                foreach (ModGroup x in Catalog.Groups)
+                {
+                    if (x.Main == null || string.IsNullOrEmpty(x.Main.Name)) continue;
+                    names.Add(x.Main.Name);
+                    if (names.Count >= 6) break;
+                }
+                int i = 0;
+                foreach (string n in names)
+                {
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(addons, n), "x");
+                    i++;
+                }
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.AppendLine("\"AddonList\"");
+                sb.AppendLine("{");
+                for (int k = 0; k < names.Count; k++)
+                    sb.AppendLine("\t\"" + names[k] + "\"\t\t\"" + (k % 3 == 0 ? "1" : "0") + "\"");
+                sb.AppendLine("}");
+                System.IO.File.WriteAllText(AddonList.FileOf(tmp), sb.ToString(), System.Text.Encoding.Default);
+
+                using (AddonSwitchForm f = new AddonSwitchForm(tmp))
+                {
+                    f.Show();
+                    Application.DoEvents();
+                    f.PerformLayout();
+                    Application.DoEvents();
+                    using (System.Drawing.Bitmap bmp = new System.Drawing.Bitmap(f.Width, f.Height))
+                    {
+                        f.DrawToBitmap(bmp, new System.Drawing.Rectangle(0, 0, f.Width, f.Height));
+                        bmp.Save(System.IO.Path.Combine(Core.LogDir, "addonswitch.png"),
+                                 System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    Core.Log("INFO", "ADDONSW " + i + " 个假 MOD，截图已存 addonswitch.png");
+                    f.Close();
+                }
+            }
+            catch (Exception ex) { Core.Log("FAIL", "ADDONSW 截图失败: " + ex.Message); }
+            finally { try { System.IO.Directory.Delete(tmp, true); } catch { } }
+        }
     }
 }
