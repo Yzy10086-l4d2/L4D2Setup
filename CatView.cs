@@ -11,35 +11,21 @@ namespace Installer
     public partial class MainForm
     {
         private readonly Dictionary<string, CatView> catViews = new Dictionary<string, CatView>(StringComparer.Ordinal);
-        private readonly Dictionary<string, CatTile> catTiles = new Dictionary<string, CatTile>(StringComparer.Ordinal);
-        private string tabCur = "";                    // "" = 总览（磁贴），否则是当前正在看的大类
+        private string tabCur = "#tree";               // 当前页签：方案树，或某个大类
 
         internal string TabCurrent { get { return tabCur; } }
 
         /// <summary>切到某个大类：复用已建好的视图，没建过才新建。</summary>
         internal void ShowCatView(string cat)
         {
-            if (cat == "#tree") { ShowTree(); return; }
-            if (cat == null || cat.Length == 0) { ShowOverview(); return; }
+            if (string.IsNullOrEmpty(cat) || cat == "#tree") { ShowTree(); return; }
             CatView v = GetCatView(cat);
             tabCur = cat;
             foreach (CatView o in catViews.Values) if (o != v && o.Visible) o.Visible = false;
             viewHost.Visible = true;
-            tileHost.Visible = false;
             v.Visible = true;
             v.BringToFront();
             v.Fill();
-            UpdateModCaption();
-            SyncTabs();
-        }
-
-        /// <summary>回到六块磁贴的总览。</summary>
-        internal void ShowOverview()
-        {
-            tabCur = "";
-            if (viewHost != null) viewHost.Visible = false;
-            if (tileHost != null) tileHost.Visible = true;
-            SyncTileStates();
             UpdateModCaption();
             SyncTabs();
         }
@@ -64,7 +50,6 @@ namespace Installer
             tabCur = "#tree";
             foreach (CatView o in catViews.Values) if (o.Visible) o.Visible = false;
             viewHost.Visible = true;
-            tileHost.Visible = false;
             treeView.Visible = true;
             treeView.BringToFront();
             treeView.Rebuild();
@@ -96,20 +81,18 @@ namespace Installer
             if (tabs == null) return;
             Dictionary<string, int[]> d = new Dictionary<string, int[]>(StringComparer.Ordinal);
             foreach (string c in Catalog.Cats) d[c] = new int[3];        // total / 方案内 / 已选
-            int tAll = 0, iAll = 0, oAll = 0;
             foreach (ModGroup g in Catalog.Groups)
             {
                 int[] a;
                 if (!d.TryGetValue(g.Cat, out a)) continue;
                 a[0]++;
-                tAll++;
-                if (InScheme(g)) { a[1]++; iAll++; }
-                if (CountChecked(g) > 0) { a[2]++; oAll++; }
+                if (InScheme(g)) a[1]++;
+                if (CountChecked(g) > 0) a[2]++;
             }
-            tabs.SetData(d, tAll, iAll, oAll, schemeKeys.Count > 0);
+            tabs.SetData(d);
         }
 
-        /// <summary>右栏标题栏：在看总览还是某一类，顺带把这一类的数字写出来。</summary>
+        /// <summary>右栏标题栏：在看方案树还是某一类，顺带把这一类的数字写出来。</summary>
         internal void UpdateModCaption()
         {
             if (gMod == null) return;
@@ -119,14 +102,6 @@ namespace Installer
                 int sk = treeView == null ? 0 : treeView.SlotCheckedCount;
                 gMod.Caption = "方案树　" + sc + " 个可替换的位置 · 已选 " + sk
                              + "　点一个位置，右边列它的候选";
-                return;
-            }
-            if (tabCur.Length == 0)
-            {
-                int tot = 0;
-                foreach (ModGroup g in Catalog.Groups) tot++;
-                gMod.Caption = "MOD 库（U 盘的 vpk + 压缩包）   " + tot + " 个 MOD · "
-                             + Catalog.Cats.Length + " 类，点磁贴或页签查看";
                 return;
             }
             int total = 0, inn = 0, on = 0;
@@ -140,130 +115,13 @@ namespace Installer
             gMod.Caption = "MOD 库 · " + tabCur + "　" + total + " 个 · 方案内 " + inn + " · 已选 " + on;
         }
 
-        /// <summary>磁贴上的字要跟着勾选、方案、搜索变。</summary>
-        internal void SyncTileStates()
-        {
-            if (catTiles.Count == 0) return;
-            string kw = txtSearch == null ? "" : txtSearch.Text.Trim();
-            foreach (CatTile t in catTiles.Values)
-            {
-                int total = 0, inn = 0, on = 0;
-                List<string> names = new List<string>();
-                foreach (ModGroup g in Catalog.Groups)
-                {
-                    if (g.Cat != t.Cat) continue;
-                    if (kw.Length > 0 && !MatchGroup(g, kw)) continue;
-                    total++;
-                    if (InScheme(g)) { inn++; if (names.Count < 9) names.Add(g.Name); }
-                    if (CountChecked(g) > 0) on++;
-                }
-                // 方案里这一类没东西（或只有一两个）时，补几个类里别的名字把磁贴填满：
-                // 空着一大片什么信息都没有，不如让人看见这一类大概是什么货色
-                if (names.Count < 9)
-                {
-                    foreach (ModGroup g in Catalog.Groups)
-                    {
-                        if (names.Count >= 9) break;
-                        if (g.Cat != t.Cat) continue;
-                        if (kw.Length > 0 && !MatchGroup(g, kw)) continue;
-                        if (InScheme(g)) continue;
-                        names.Add(g.Name);
-                    }
-                }
-                t.Update(total, inn, on, names, tabCur == t.Cat, schemeKeys.Count > 0);
-            }
-        }
-
-        // 一格磁贴：类名 + 总数 + 方案内几个 + 方案内前几条名字
-        internal sealed class CatTile : Panel
-        {
-            public readonly string Cat;
-            private int total, inn, on;
-            private bool open, hover, hasScheme;
-            private readonly List<string> names = new List<string>();
-
-            public CatTile(string cat)
-            {
-                Cat = cat;
-                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                       | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-                BackColor = Theme.Bg;
-                Font = Theme.UI;
-                Cursor = Cursors.Hand;
-            }
-
-            public void Update(int total, int inn, int on, List<string> names, bool open, bool hasScheme)
-            {
-                this.total = total; this.inn = inn; this.on = on; this.open = open; this.hasScheme = hasScheme;
-                this.names.Clear();
-                if (names != null) this.names.AddRange(names);
-                Invalidate();
-            }
-
-            protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
-            protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.Clear(Theme.Bg);
-
-                Color accent = CatInk(Cat);
-                Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-                using (SolidBrush b = new SolidBrush(Theme.Surface)) g.FillRectangle(b, r);
-                using (Pen p = new Pen(hover || open ? accent : Theme.Line)) g.DrawRectangle(p, r);
-                using (SolidBrush b = new SolidBrush(accent)) g.FillRectangle(b, 0, 0, Width - 1, 3);
-
-                TextRenderer.DrawText(g, Cat, Theme.UIBold, new Rectangle(12, 7, Width - 100, 20), Theme.Ink,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-                TextRenderer.DrawText(g, total + " 个", Theme.UISmall, new Rectangle(Width - 88, 8, 76, 18), Theme.Ink3,
-                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-
-                // 第二行：方案内几个 / 已选几个；没有方案时就只报已选
-                string sub = hasScheme ? ("方案内 " + inn + " · 已选 " + on) : ("已选 " + on);
-                TextRenderer.DrawText(g, sub, Theme.UISmall, new Rectangle(12, 27, Width - 96, 16),
-                    inn > 0 ? Theme.Ok : Theme.Ink3,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-                TextRenderer.DrawText(g, open ? "在看" : "查看", Theme.UISmall, new Rectangle(Width - 64, 27, 52, 16),
-                    open ? Theme.Ink3 : accent,
-                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-
-                using (Pen p = new Pen(Theme.LineSoft)) g.DrawLine(p, 12, 45, Width - 13, 45);
-
-                // 下面几条：有方案就列方案内的名字 —— 不点开也知道这套里放了什么
-                int y = 49;
-                if (names.Count == 0)
-                {
-                    string tip = total == 0 ? "这一类没有匹配" : "点开看全部 " + total + " 个";
-                    TextRenderer.DrawText(g, tip, Theme.UISmall, new Rectangle(12, y, Width - 24, 16), Theme.Ink3,
-                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
-                        | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-                    return;
-                }
-                int room = (Height - y - 4) / 15;
-                int show = Math.Min(names.Count, Math.Max(0, room));
-                int strong = Math.Min(inn, show);
-                for (int i = 0; i < show; i++)
-                {
-                    TextRenderer.DrawText(g, names[i], Theme.UISmall, new Rectangle(12, y + i * 15, Width - 24, 15),
-                        i < strong ? Theme.Ink2 : Theme.Ink3,
-                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
-                        | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-                }
-                return;
-            }
-        }
-
-        /// <summary>页签条：总览 + 六个大类，每格写着「这类有几个、方案里放了几个」。</summary>
+        /// <summary>页签条：方案树 + 六个大类，每格写着「这类有几个、方案里放了几个」。</summary>
         internal sealed class CatTabs : Panel
         {
             private readonly MainForm mf;
             private readonly List<Rectangle> rects = new List<Rectangle>();
             private readonly List<string> keys = new List<string>();
             private readonly Dictionary<string, int[]> data = new Dictionary<string, int[]>(StringComparer.Ordinal);
-            private int allTotal, allInn, allOn;
-            private bool hasScheme;
             private int hover = -1;
 
             public CatTabs(MainForm owner)
@@ -278,15 +136,13 @@ namespace Installer
                     owner.tips.SetToolTip(this, "点页签换类。右侧数字是「这套方案在这一类里有几个 / 这一类一共几个」。");
             }
 
-            public void SetData(Dictionary<string, int[]> d, int total, int inn, int on, bool hasScheme)
+            public void SetData(Dictionary<string, int[]> d)
             {
                 data.Clear();
                 if (d != null) foreach (KeyValuePair<string, int[]> kv in d) data[kv.Key] = kv.Value;
-                allTotal = total; allInn = inn; allOn = on; this.hasScheme = hasScheme;
                 Invalidate();
             }
 
-            private int NavW { get { return 58; } }
             private int TreeW { get { return 74; } }
 
             private int CellW
@@ -294,7 +150,7 @@ namespace Installer
                 get
                 {
                     int n = Catalog.Cats.Length;
-                    int avail = Width - 2 - NavW - TreeW;
+                    int avail = Width - 2 - TreeW;
                     if (n <= 0) return avail;
                     return Math.Max(74, avail / n);
                 }
@@ -309,7 +165,6 @@ namespace Installer
 
                 int x = 2;
                 DrawTab(g, ref x, "#tree", "方案树", 0, 0, 0);
-                DrawTab(g, ref x, "", "总览", allTotal, allInn, allOn);
                 foreach (string c in Catalog.Cats)
                 {
                     int[] a;
@@ -320,7 +175,7 @@ namespace Installer
 
             private void DrawTab(Graphics g, ref int x, string key, string label, int total, int inn, int on)
             {
-                int w = key.Length == 0 ? NavW : (key == "#tree" ? TreeW : CellW);
+                int w = key == "#tree" ? TreeW : CellW;
                 if (x + w > Width - 1) w = Math.Max(40, Width - 1 - x);
                 Rectangle r = new Rectangle(x, 0, w, Height - 1);
                 int idx = rects.Count;
@@ -348,7 +203,7 @@ namespace Installer
                 }
                 if (sel)
                 {
-                    Color line = (key.Length == 0 || key == "#tree") ? Theme.Ink2 : CatInk(key);
+                    Color line = key == "#tree" ? Theme.Ink2 : CatInk(key);
                     using (SolidBrush b = new SolidBrush(line))
                         g.FillRectangle(b, r.X + 6, Height - 3, w - 12, 2);
                 }
@@ -378,7 +233,7 @@ namespace Installer
                 for (int i = 0; i < rects.Count; i++)
                 {
                     if (!rects[i].Contains(e.Location)) continue;
-                    mf.ShowCatView(keys[i]);          // 空 key = 总览
+                    mf.ShowCatView(keys[i]);
                     return;
                 }
                 base.OnMouseUp(e);
@@ -559,7 +414,6 @@ namespace Installer
                 finally { lv.EndUpdate(); mf.refreshing = prev; filling = false; }
                 listed = pass.Count;
                 UpdateFoot();
-                mf.SyncTileStates();
                 mf.SyncTabs();
             }
 

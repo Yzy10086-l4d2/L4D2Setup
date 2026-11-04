@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -1692,14 +1692,14 @@ namespace Installer
             ModGroup t1 = miss != null ? miss : known;
             string autoCatOfT1 = t1.Cat;
             CatPrefs.Assign(t1, "测试分类", "测试位置");
-            Catalog.ApplyCats();                 // 分类落到 ModGroup.Cat 上：页签 / 磁贴 / 搜索一起变
+            Catalog.ApplyCats();                 // 分类落到 ModGroup.Cat 上：页签 / 搜索一起变
             treeView.Rebuild();
             bool inSlot = false, catOk = false;
             foreach (Slot s in SlotIndex.Build())
                 if (s.Name == "测试位置" && s.Items.Contains(t1)) { inSlot = true; catOk = s.Cat == "测试分类"; }
             Core.Log(inSlot && catOk ? "OK" : "FAIL", "SETCAT 全人工：" + t1.Name + " → 测试分类 / 测试位置，进树=" + inSlot + " 归类=" + catOk);
             Core.Log(t1.Cat == "测试分类" ? "OK" : "FAIL",
-                "SETCAT 分类落到数据上：ModGroup.Cat=" + t1.Cat + "（磁贴/页签跟着走）");
+                "SETCAT 分类落到数据上：ModGroup.Cat=" + t1.Cat + "（页签跟着走）");
             Core.Log(Array.IndexOf(Catalog.Cats, "测试分类") >= 0 ? "OK" : "FAIL",
                 "SETCAT 页签分类表里有「测试分类」：" + string.Join(" / ", Catalog.Cats));
 

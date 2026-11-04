@@ -56,7 +56,7 @@ namespace Installer
         public const string CAT_MISC = "杂项";
         public const string CAT_SPRAY = "喷漆";
 
-        // 大类的顺序只有一份：CatPrefs 里那份（页签、磁贴、方案树都按它排）。
+        // 大类的顺序只有一份：CatPrefs 里那份（页签、方案树都按它排）。
         // 内建六类永远在里面，用户新建的分类跟在后面，可以上下移。
         public static string[] Cats { get { return CatPrefs.CatsArray(); } }
 
@@ -705,7 +705,7 @@ namespace Installer
 
         /// <summary>
         /// 人工分类落到数据上：改过分类的 MOD 直接换 Cat。
-        /// 页签、磁贴、方案树、搜索都读 Cat，所以一处改完全局跟着走 —— 不再另有一套「标签」。
+        /// 页签、方案树、搜索都读 Cat，所以一处改完全局跟着走 —— 不再另有一套「标签」。
         /// </summary>
         public static void ApplyCats()
         {

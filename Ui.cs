@@ -24,8 +24,7 @@ namespace Installer
         private Button btnManage;
         private TextBox txtSearch;
         private Button btnSaveProfile, btnApplyProfile;
-        private Panel tileHost;                  // 总览：六个大类磁贴
-        private Panel viewHost;                  // 某个大类的列表就嵌在这里，和磁贴同一块矩形二选一
+        private Panel viewHost;                  // 方案树 / 某一类的列表都嵌在这里，切换时只换可见性
         private CatTree treeView;                // 方案树：按「能替换的东西」看，一个位置只留一个 MOD
         private CatTabs tabs;                    // 顶部页签条
         private Label lblSel, lblStatus, lblConflict;
@@ -69,7 +68,7 @@ namespace Installer
             // 版本只写在 AssemblyInfo 里，标题跟着走，省得两处对不上
             Version ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             Text = "网吧装机台  v" + ver.Major + "." + ver.Minor;
-            // 一开始就开够大：右栏要放下六块磁贴和一整张类列表，940 宽时列挤得没地方
+            // 一开始就开够大：右栏要放下方案树和一整张类列表，940 宽时列挤得没地方
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
             int w0 = Math.Min(1440, Math.Max(1120, wa.Width - 100));
             int h0 = Math.Min(940, Math.Max(740, wa.Height - 80));
@@ -143,6 +142,7 @@ namespace Installer
                         Core.Log("INFO", "启动计时: 冲突检查 " + __sw2.ElapsedMilliseconds + " ms");
                         initializing = false;
                         ShowPackStatus(packs, packOk);
+                        ShowTree();                        // 启动第一屏就是方案树
                     });
                 }
                 catch (Exception ex) { Core.Log("FAIL", "初始化失败: " + ex.Message); }
@@ -270,7 +270,7 @@ namespace Installer
             gl.Controls.Add(txtLog);
 
             // ---- 右栏：MOD 库 ----
-            // 三样东西叠在同一块区域里，靠顶部页签切换：总览（六块磁贴）/ 任意一个大类的列表。
+            // 两样东西叠在同一块区域里，靠顶部页签切换：方案树 / 任意一个大类的列表。
             // 不另开窗口，勾选、搜索、方案下拉始终在视线里，关窗口把进程留在后台这种事也不会再发生。
             int modH = CH - 56 - 116;                        // 到下方按钮行为止，中间全给 MOD 库
             Section gm = new Section();
@@ -285,7 +285,7 @@ namespace Installer
 
             Label l9 = new Label(); l9.Text = "搜"; l9.SetBounds(12, 66, 24, 20); Theme.Dress(l9); gm.Controls.Add(l9);
             txtSearch = new TextBox(); txtSearch.SetBounds(50, 62, rightW - 62, 24); Theme.Dress(txtSearch); txtSearch.TextChanged += delegate { searchTimer.Stop(); searchTimer.Start(); }; gm.Controls.Add(txtSearch);
-            tips.SetToolTip(txtSearch, "按名字或标签过滤。停止输入 250 ms 自动筛，磁贴、页签和当前这一类的列表一起跟着变。");
+            tips.SetToolTip(txtSearch, "按名字或标签过滤。停止输入 250 ms 自动筛，页签和当前这一类的列表一起跟着变。");
 
             // 方案分布：一行说完这套在各类里放了几个
             lblScheme = new Label();
@@ -296,7 +296,7 @@ namespace Installer
             lblScheme.Text = "";
             gm.Controls.Add(lblScheme);
 
-            // 页签：总览 + 六个大类，每格右侧写着「方案内 / 本类总数」
+            // 页签：方案树 + 六个大类，每格右侧写着「方案内 / 本类总数」
             tabs = new CatTabs(this);
             tabs.SetBounds(12, 114, rightW - 24, 32);
             tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
@@ -305,19 +305,10 @@ namespace Installer
             int cw = rightW - 24;
             int ch = modH - 152 - 74;
 
-            tileHost = new Panel();
-            tileHost.SetBounds(12, 152, cw, ch);
-            tileHost.BackColor = Theme.Bg;
-            tileHost.SizeChanged += delegate { LayoutTiles(); };
-            tileHost.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            gm.Controls.Add(tileHost);
-            SyncTileCats();
-
-            // 类列表就放在同一块矩形里，切换时只换可见性
+            // 类列表 / 方案树就放在这块矩形里，切换时只换可见性
             viewHost = new Panel();
             viewHost.SetBounds(12, 152, cw, ch);
             viewHost.BackColor = Theme.Surface;
-            viewHost.Visible = false;
             viewHost.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             viewHost.SizeChanged += delegate
             {
@@ -662,10 +653,10 @@ namespace Installer
             RefreshMods();
         }
 
-        /// <summary>自测用：开两个类窗口，勾一行，看勾选数、另一个窗口的方案列、磁贴数字是不是一起变。</summary>
+        /// <summary>自测用：切类、勾一行，看勾选数、方案列、页签数字是不是一起变。</summary>
         internal void UiTestSync()
         {
-            // 单窗口下不再有「两个窗口互相看不见」的问题，改验：切类、勾选、页签数字、磁贴数字是否一致
+            // 单窗口下不再有「两个窗口互相看不见」的问题，改验：切类、勾选、页签数字是否一致
             ShowCatView(Catalog.CAT_GUN);
             int before = checkedKeys.Count;
             CatView a;
@@ -674,14 +665,14 @@ namespace Installer
             int gunOnBefore = TileOn(Catalog.CAT_GUN);
             string n = a.ToggleFirst();
             Core.Log("INFO", "SYNC 枪械窗口勾「" + n + "」：勾选数 " + before + " -> " + checkedKeys.Count
-                + "；磁贴枪械已选 " + gunOnBefore + " -> " + TileOn(Catalog.CAT_GUN)
+                + "；枪械已选 " + gunOnBefore + " -> " + TileOn(Catalog.CAT_GUN)
                 + "；首行方案列 = " + a.FirstMark());
             a.ToggleFirst();
             ShowCatView(Catalog.CAT_MAP);
             Core.Log("INFO", "SYNC 取消后勾选数 " + checkedKeys.Count + "；切到地图类："
-                + "标题=" + gMod.Caption + " 页签当前=" + (tabCur.Length == 0 ? "总览" : tabCur));
+                + "标题=" + gMod.Caption + " 页签当前=" + tabCur);
             ShowCatView(Catalog.CAT_GUN);
-            Core.Log("INFO", "SYNC 切回枪械：磁贴枪械已选 = " + TileOn(Catalog.CAT_GUN)
+            Core.Log("INFO", "SYNC 切回枪械：枪械已选 = " + TileOn(Catalog.CAT_GUN)
                 + "；勾选数 = " + checkedKeys.Count);
         }
 
@@ -868,7 +859,7 @@ namespace Installer
             return li;
         }
 
-        /// <summary>任何窗口里勾了一行，都走这里：先改 checkedKeys，再把所有窗口和磁贴同步一遍。</summary>
+        /// <summary>任何窗口里勾了一行，都走这里：先改 checkedKeys，再把所有窗口同步一遍。</summary>
         internal void OnRowChecked(ListView lv, ItemCheckedEventArgs e)
         {
             if (refreshing) return;
@@ -887,7 +878,6 @@ namespace Installer
                 SyncCatViews();
                 UpdateSchemeLabel();
                 UpdateSel();
-                SyncTileStates();
                 return;
             }
 
@@ -913,7 +903,6 @@ namespace Installer
             SyncCatViews();
             UpdateSchemeLabel();
             UpdateSel();
-            SyncTileStates();
         }
 
         /// <summary>右键菜单：每个窗口一份，动作作用在该窗口的列表上。</summary>
@@ -973,7 +962,7 @@ namespace Installer
             treeView.PickRow(li);
         }
 
-        /// <summary>设置这个 MOD 算哪一类、替换什么。分类只有一份：页签 / 磁贴 / 方案树一起跟着变。</summary>
+        /// <summary>设置这个 MOD 算哪一类、替换什么。分类只有一份：页签 / 方案树一起跟着变。</summary>
         internal void SetModCatIn(ListView lv)
         {
             ModGroup g = FirstSelectedGroup(lv);
@@ -985,8 +974,7 @@ namespace Installer
                         + (f.ResultSlot.Length > 0 ? " / " + f.ResultSlot : ""));
             }
             // 窗口里还可能新建/改名/排序过分类，取消也要同步一次
-            Catalog.ApplyCats();          // 人工分类落到 ModGroup.Cat 上：页签、磁贴、搜索全跟着走
-            SyncTileCats();               // 新建的分类补一块磁贴
+            Catalog.ApplyCats();          // 人工分类落到 ModGroup.Cat 上：页签、方案树、搜索全跟着走
             if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
             RefreshMods();
         }
@@ -1043,13 +1031,14 @@ namespace Installer
             RefreshMods();
         }
 
-        /// <summary>搜索或方案变了：磁贴、页签、已经建好的类视图一起重排。</summary>
+        /// <summary>搜索或方案变了：页签、已经建好的类视图一起重排。</summary>
         private void RefreshMods()
         {
-            SyncTileStates();
             UpdateSchemeLabel();
             List<CatView> vs = new List<CatView>(catViews.Values);
             foreach (CatView v in vs) v.Fill();
+            // 方案树是常驻第一屏：万一扫库还没完就点进来了，树会是空的，扫完这里补一次
+            if (treeView != null && treeView.SlotCount == 0) treeView.Rebuild();
             UpdateSel();
             SyncTabs();
             UpdateModCaption();
@@ -1062,7 +1051,7 @@ namespace Installer
             if (schemeName.Length == 0)
             {
                 lblScheme.ForeColor = Theme.Ink3;
-                lblScheme.Text = "没选方案：挑一套，磁贴上就会列出它在这一类里装了什么";
+                lblScheme.Text = "没选方案：挑一套，列表里就会标出它在这一类里装了什么";
                 return;
             }
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
@@ -1193,12 +1182,11 @@ namespace Installer
             foreach (ModItem p in Catalog.DefaultParts(g)) checkedKeys.Add(p.Key);
         }
 
-        /// <summary>在方案树里点了一个候选：分类列表、磁贴、方案行、页签一起对齐。</summary>
+        /// <summary>在方案树里点了一个候选：分类列表、方案行、页签一起对齐。</summary>
         internal void AfterTreePick()
         {
             List<CatView> vs = new List<CatView>(catViews.Values);
             foreach (CatView v in vs) v.Fill();
-            SyncTileStates();
             UpdateSchemeLabel();
             UpdateSel();
             SyncTabs();
@@ -1837,10 +1825,7 @@ namespace Installer
             sb.AppendLine("窗口客户区: " + ClientSize.Width + " x " + ClientSize.Height);
             sb.AppendLine("游戏路径框: " + txtGame.Width + " x " + txtGame.Height);
             sb.AppendLine("MOD 库分组: " + gMod.Width + " x " + gMod.Height);
-            CatTile t0;
-            sb.AppendLine("MOD 磁贴  : " + catTiles.Count + " 块"
-                + (catTiles.TryGetValue(Catalog.Cats[0], out t0) ? "，" + t0.Width + " x " + t0.Height : ""));
-            sb.AppendLine("类视图    : 已建 " + catViews.Count + " 个，当前显示「" + (tabCur.Length == 0 ? "总览" : tabCur) + "」");
+            sb.AppendLine("类视图    : 已建 " + catViews.Count + " 个，当前显示「" + tabCur + "」");
             sb.AppendLine("日志分组  : " + gLog.Width + " x " + gLog.Height);
             sb.AppendLine("日志框    : " + txtLog.Width + " x " + txtLog.Height);
             sb.AppendLine("进度条    : " + bar.Left + "," + bar.Top + " " + bar.Width + " x " + bar.Height);
@@ -1851,12 +1836,6 @@ namespace Installer
                           + (LaunchArgs.HasSlot(txtLaunch.Text) ? "   [含 0/1 占位]" : ""));
             sb.AppendLine("启动项默认: " + LaunchArgs.Default);
             sb.AppendLine("开始装按钮: " + btnInstall.Left + "," + btnInstall.Top + " " + btnInstall.Width + " x " + btnInstall.Height);
-            foreach (string c in Catalog.Cats)
-            {
-                CatTile t;
-                if (catTiles.TryGetValue(c, out t))
-                    sb.AppendLine("  " + c + " 磁贴 " + t.Left + "," + t.Top + " " + t.Width + "x" + t.Height);
-            }
             return sb.ToString();
         }
 
@@ -1886,9 +1865,7 @@ namespace Installer
             gMod.Left = rightX;
             gMod.Width = rightW;
             tabs.Width = rightW - 24;
-            tileHost.Width = rightW - 24;
             viewHost.Width = rightW - 24;
-            LayoutTiles();
             lblSel.Width = rightW - 24;
             lblConflict.Width = rightW - 24;
 
@@ -1909,57 +1886,6 @@ namespace Installer
             bar.Width = Math.Max(200, btnInstall.Left - 8 - Theme.M);
 
             ResumeLayout(true);
-        }
-
-        // 两列三行铺满右栏；窗口拉伸时磁贴跟着长高，一张屏尽量少滚动
-        private void LayoutTiles()
-        {
-            if (tileHost == null || catTiles.Count == 0) return;
-            int w = tileHost.ClientSize.Width;
-            int h = tileHost.ClientSize.Height;
-            if (w <= 0 || h <= 0) return;
-            // 窄窗口两列三行，宽了改三列两行 —— 磁贴越接近正方形，里面能塞的名字越多
-            int gap = 10;
-            int cols = w >= 760 ? 3 : 2;
-            int rows = (Catalog.Cats.Length + cols - 1) / cols;
-            int tw = Math.Max(120, (w - gap) / cols);
-            int th = Math.Max(88, (h - (rows - 1) * gap) / rows);
-            int i = 0;
-            foreach (string c in Catalog.Cats)
-            {
-                CatTile t;
-                if (!catTiles.TryGetValue(c, out t)) continue;
-                t.SetBounds((i % cols) * (tw + gap), (i / cols) * (th + gap), tw, th);
-                i++;
-            }
-        }
-
-        /// <summary>
-        /// 磁贴跟分类走：新建分类补一块，分类没了就撤掉。
-        /// 分类只有一份，页签、磁贴、方案树都读它，改一处三处一起变。
-        /// </summary>
-        private void SyncTileCats()
-        {
-            if (tileHost == null) return;
-            string[] want = Catalog.Cats;
-            List<string> drop = new List<string>();
-            foreach (string c in new List<string>(catTiles.Keys))
-                if (Array.IndexOf(want, c) < 0) drop.Add(c);
-            foreach (string c in drop)
-            {
-                tileHost.Controls.Remove(catTiles[c]);
-                catTiles[c].Dispose();
-                catTiles.Remove(c);
-            }
-            foreach (string c in want)
-            {
-                if (catTiles.ContainsKey(c)) continue;
-                CatTile t = new CatTile(c);
-                t.Click += delegate { ShowCatView(t.Cat); };
-                catTiles[c] = t;
-                tileHost.Controls.Add(t);
-            }
-            LayoutTiles();
         }
 
         private bool TestWritable(string dir)
