@@ -19,6 +19,7 @@ namespace Installer
             public string Kinds = "";         // 影响面：模型,音效,HUD图标,地图...
             public bool Only1P = false;       // 模型全是第一人称 v_，世界模型没动
             public int Entries = 0;
+            public string Assets = "";        // 归组证据：包内模型/材质完整路径，分号分隔
             public bool Ok = false;
         }
 
@@ -141,6 +142,23 @@ namespace Installer
             return null;
         }
 
+        /// <summary>官方目标路径不是「同一套」的私有证据：所有 AK 皮肤都写同一个 v_rifle_ak47.mdl。</summary>
+        internal static bool IsStockAsset(string p)
+        {
+            if (string.IsNullOrEmpty(p)) return true;
+            p = p.Replace('\\', '/').ToLowerInvariant();
+            if (p.EndsWith(".mdl", StringComparison.Ordinal))
+            {
+                string n = Path.GetFileNameWithoutExtension(p);
+                return Lookup(n) != null;
+            }
+            if (!p.StartsWith("materials/", StringComparison.Ordinal)) return false;
+            if (!MatUsable(p)) return true;
+            // 官方模型材质目录里，只要路径确实带官方对象名，就不能当某一套 mod 的私有证据；
+            // materials/tpp_wing_medkit 这类独立自定义根目录不受这个规则影响。
+            return p.StartsWith("materials/models/", StringComparison.Ordinal) && Lookup(p) != null;
+        }
+
         // 通用效果贴图不能用来判断对象
         private static bool MatUsable(string p)
         {
@@ -160,12 +178,25 @@ namespace Installer
             public readonly List<string> Huds = new List<string>();
             public readonly List<string> Snds = new List<string>();
             public readonly List<string> Mats = new List<string>();
+            public readonly List<string> Assets = new List<string>();
+            private readonly HashSet<string> assetSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private bool assetOverflow;
             public bool Map, Script, Particle, HasMat;
             public int Entries;
 
             public void Feed(string p)
             {
                 Entries++;
+                p = (p ?? "").Replace('\\', '/').ToLowerInvariant();
+                // 只留归组需要的模型和材质路径；不读文件内容，也不把整张 VPK 目录塞进缓存。
+                // 超过上限就放弃内容归组并走名称兜底，绝不能拿半份路径做「相同/包含」判断。
+                if (!assetOverflow && (p.EndsWith(".mdl", StringComparison.Ordinal)
+                    || (p.StartsWith("materials/", StringComparison.Ordinal)
+                        && (p.EndsWith(".vmt", StringComparison.Ordinal) || p.EndsWith(".vtf", StringComparison.Ordinal)))))
+                {
+                    if (assetSet.Add(p)) Assets.Add(p);
+                    if (Assets.Count > 4000) { assetOverflow = true; Assets.Clear(); assetSet.Clear(); }
+                }
                 if (p.EndsWith(".mdl", StringComparison.Ordinal))
                 {
                     int s = p.LastIndexOf('/');
@@ -197,6 +228,11 @@ namespace Installer
             {
                 Result r = new Result();
                 r.Entries = Entries;
+                if (!assetOverflow)
+                {
+                    Assets.Sort(StringComparer.OrdinalIgnoreCase);
+                    r.Assets = string.Join(";", Assets.ToArray());
+                }
 
                 // 1) 模型文件名 —— 最硬的证据，换的就是它
                 List<string> found = new List<string>();
@@ -359,24 +395,14 @@ namespace Installer
             if (cache.TryGetValue(relPath, out old))
             {
                 string[] c = old.Split('\t');
-                if (c.Length >= 7 && c[1] == stamp)
+                if (c.Length >= 9 && c[1] == stamp)
                 {
-                    Result r2 = new Result();
-                    r2.Ok = true;
-                    r2.Subject = c[2];
-                    r2.Level = c[3];
-                    r2.Key = c[4];
-                    r2.Kinds = c[5];
-                    r2.Only1P = c[6] == "1";
-                    return r2;
+                    Result r2 = ReadResult(c);
+                    if (r2 != null) return r2;
                 }
             }
             Result r = AnalyzeBuffer(TreeOfArchive(container, inner));
-            try
-            {
-                cache[relPath] = relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds
-                                     + "\t" + (r.Only1P ? "1" : "0");
-            }
+            try { cache[relPath] = CacheLine(relPath, stamp, r); }
             catch { }
             return r;
         }
@@ -387,7 +413,42 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
-            get { return Path.Combine(Core.LogDir, "identify-cache-v11.tsv"); }
+            get { return Path.Combine(Core.LogDir, "identify-cache-v12.tsv"); }
+        }
+
+        private static string PackAssets(string assets)
+        {
+            try { return Convert.ToBase64String(Encoding.UTF8.GetBytes(assets ?? "")); }
+            catch { return ""; }
+        }
+
+        private static string UnpackAssets(string packed)
+        {
+            try { return packed.Length == 0 ? "" : Encoding.UTF8.GetString(Convert.FromBase64String(packed)); }
+            catch { return ""; }
+        }
+
+        private static Result ReadResult(string[] c)
+        {
+            if (c.Length < 9) return null;
+            Result r = new Result();
+            r.Subject = c[2];
+            r.Level = c[3];
+            r.Key = c[4];
+            r.Kinds = c[5];
+            r.Only1P = c[6] == "1";
+            int entries;
+            int.TryParse(c[7], out entries);
+            r.Entries = entries;
+            r.Assets = UnpackAssets(c[8]);
+            r.Ok = entries > 0;
+            return r;
+        }
+
+        private static string CacheLine(string relPath, string stamp, Result r)
+        {
+            return relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds
+                 + "\t" + (r.Only1P ? "1" : "0") + "\t" + r.Entries + "\t" + PackAssets(r.Assets);
         }
 
         private static void LoadCache()
@@ -400,7 +461,7 @@ namespace Installer
                 foreach (string line in File.ReadAllLines(CacheFile, Encoding.UTF8))
                 {
                     string[] c = line.Split('\t');
-                    if (c.Length >= 7) cache[c[0]] = line;
+                    if (c.Length >= 9) cache[c[0]] = line;
                 }
             }
             catch { }
@@ -632,24 +693,14 @@ namespace Installer
             if (cache.TryGetValue(relPath, out old))
             {
                 string[] c = old.Split('\t');
-                if (c.Length >= 7 && c[1] == stamp)
+                if (c.Length >= 9 && c[1] == stamp)
                 {
-                    Result r2 = new Result();
-                    r2.Ok = true;
-                    r2.Subject = c[2];
-                    r2.Level = c[3];
-                    r2.Key = c[4];
-                    r2.Kinds = c[5];
-                    r2.Only1P = c[6] == "1";
-                    return r2;
+                    Result r2 = ReadResult(c);
+                    if (r2 != null) return r2;
                 }
             }
             Result r = Analyze(fullPath);
-            try
-            {
-                cache[relPath] = relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds
-                                     + "\t" + (r.Only1P ? "1" : "0");
-            }
+            try { cache[relPath] = CacheLine(relPath, stamp, r); }
             catch { }
             return r;
         }

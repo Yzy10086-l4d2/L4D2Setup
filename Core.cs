@@ -31,6 +31,7 @@ namespace Installer
         public string SubjectKey = "";    // 被替换的模型名，用于同枪冲突检测
         public string Kinds = "";         // 影响面：模型,音效,HUD...
         public bool Only1P;               // 模型全是第一人称 v_，世界模型 w_ 一个没动（能和模型叠加）
+        public string AssetPaths = "";    // 包内模型/材质路径（分号分隔），只用于同套部件归组
 
         public bool IsArchive { get { return Container != null && Container.Length > 0; } }
     }

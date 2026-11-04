@@ -381,8 +381,8 @@ namespace Installer
         /// <summary>
         /// 这件东西是「叠加的扩展」还是「换本体的」。
         /// 依据是识别出来的「改了什么」，外加一条事实：包里有没有动世界模型。
-        ///   只换了第一人称手持模型（v_，世界里的 w_ 一个没动）、音效、HUD 图标 = 可以叠上去；
-        ///   模型、材质（贴图）= 换外观，一个位置只能有一套，两套会互相覆盖。
+        ///   只换第一人称模型、音效、HUD、特效、脚本 = 不和模型本体抢位置，可以作为扩展；
+        ///   完整模型、材质、地图 = 换本体，一个位置只能有一套，两套会互相覆盖。
         /// </summary>
         public static bool IsExtra(ModGroup g)
         {
@@ -396,7 +396,9 @@ namespace Installer
             if (k.IndexOf("材质", StringComparison.Ordinal) >= 0) return false;  // 贴图替换也是换外观
             if (k.IndexOf("地图", StringComparison.Ordinal) >= 0) return false;
             return k.IndexOf("音效", StringComparison.Ordinal) >= 0
-                || k.IndexOf("HUD", StringComparison.Ordinal) >= 0;
+                || k.IndexOf("HUD", StringComparison.Ordinal) >= 0
+                || k.IndexOf("特效", StringComparison.Ordinal) >= 0
+                || k.IndexOf("脚本", StringComparison.Ordinal) >= 0;
         }
 
         // 泛称补全用：关键词 → 标准位置名。长的排前面，免得 "M4" 抢走 "M4A1"。
@@ -841,6 +843,28 @@ namespace Installer
             return n;
         }
 
+        /// <summary>扩展分小类用：这件扩展改的是什么面。多面的取第一个命中的，排序稳定。</summary>
+        internal static string ExtraCat(ModGroup g)
+        {
+            if (g == null || g.Main == null) return "其他";
+            if (g.Main.Only1P) return "第一人称模型";
+            string k = (g.Main.Kinds ?? "").Trim();
+            if (k.IndexOf("音效", StringComparison.Ordinal) >= 0) return "音效";
+            if (k.IndexOf("HUD", StringComparison.Ordinal) >= 0) return "HUD图标";
+            if (k.IndexOf("特效", StringComparison.Ordinal) >= 0) return "特效";
+            if (k.IndexOf("脚本", StringComparison.Ordinal) >= 0) return "脚本";
+            return k.Length > 0 ? k.Replace(",", "·") : "其他";
+        }
+
+        /// <summary>扩展小类的固定排序，界面上从上到下按这个出。</summary>
+        private static readonly string[] ExtraCatOrder = { "第一人称模型", "音效", "HUD图标", "特效", "脚本" };
+        private static int ExtraCatRank(string cat)
+        {
+            for (int i = 0; i < ExtraCatOrder.Length; i++)
+                if (cat == ExtraCatOrder[i]) return i;
+            return ExtraCatOrder.Length;
+        }
+
         /// <summary>点扩展行：开着的关掉，关着的打开 —— 和模型不是二选一，各管各的。</summary>
         internal void ToggleExtra(ModGroup g)
         {
@@ -971,10 +995,10 @@ namespace Installer
                     li.Tag = g;
                     if (g.IsSet)
                     {
-                        // 组合装：改了什么列红字标出来，不用悬停也知道这行能挑部件
+                        // 组合装：改了什么列蓝字标出来，不用悬停也知道这行能挑部件
                         li.UseItemStyleForSubItems = false;
                         li.SubItems[1].Text = KindsOf(g) + "·组合装" + g.Parts.Count + "件";
-                        li.SubItems[1].ForeColor = Theme.Accent;
+                        li.SubItems[1].ForeColor = Theme.Info;
                         li.SubItems[1].Font = Theme.UIBold;
                         li.ToolTipText = PartsTip(g);
                     }
@@ -1007,8 +1031,31 @@ namespace Installer
                     lvExtra.Visible = true;
                     lblExtraTitle.Text = "可叠加的扩展 · " + s.Extras.Count
                                        + " 个（不换模型，点一下开 / 关，可多选）";
-                    foreach (ModGroup g in s.Extras)
+                    // 按小类排：第一人称模型 / 音效 / HUD / 特效 / 脚本，组与组之间插一行灰色标题
+                    List<ModGroup> ex = new List<ModGroup>(s.Extras);
+                    ex.Sort(delegate(ModGroup a, ModGroup b)
                     {
+                        int ra = ExtraCatRank(ExtraCat(a)), rb = ExtraCatRank(ExtraCat(b));
+                        if (ra != rb) return ra.CompareTo(rb);
+                        return string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
+                    });
+                    string lastCat = null;
+                    foreach (ModGroup g in ex)
+                    {
+                        string cat = ExtraCat(g);
+                        if (cat != lastCat)
+                        {
+                            ListViewItem head = new ListViewItem("── " + cat + " ──");
+                            head.SubItems.Add("");
+                            head.SubItems.Add("");
+                            head.ForeColor = Theme.Ink3;
+                            head.Font = Theme.UISmall;
+                            head.UseItemStyleForSubItems = false;
+                            head.Tag = "header";                 // 不是 MOD：点击进来 as ModGroup 得 null，直接返回
+                            head.StateImageIndex = -1;           // 标题行不显示圆点复选框
+                            lvExtra.Items.Add(head);
+                            lastCat = cat;
+                        }
                         bool on = mf.CountChecked(g) > 0;
                         ListViewItem li = new ListViewItem(g.Name);
                         li.SubItems.Add(KindsOf(g));
@@ -1020,7 +1067,7 @@ namespace Installer
                         {
                             li.UseItemStyleForSubItems = false;
                             li.SubItems[1].Text = KindsOf(g) + "·组合装" + g.Parts.Count + "件";
-                            li.SubItems[1].ForeColor = Theme.Accent;
+                            li.SubItems[1].ForeColor = Theme.Info;
                             li.SubItems[1].Font = Theme.UIBold;
                             li.ToolTipText = PartsTip(g);
                         }
@@ -1299,7 +1346,7 @@ namespace Installer
                     int ecnt = owner.CheckedExtras(s);
                     Color dot = cnt > 1 ? Theme.Warn
                               : cnt == 1 ? Theme.Ok
-                              : ecnt > 0 ? Theme.Accent
+                              : ecnt > 0 ? Theme.Info
                               : Color.FromArgb(210, 216, 223);
                     using (SolidBrush b = new SolidBrush(dot)) g.FillEllipse(b, bx + 17, y + RowH / 2 - 3, 6, 6);
 
@@ -1312,7 +1359,7 @@ namespace Installer
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                         | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
-                    // 「扩」角标：名字后面挂一个红底小图标，有可叠扩展的位置不用看数字就能扫出来
+                    // 「扩」角标：名字后面挂一个蓝底小图标，有可叠扩展的位置不用看数字就能扫出来
                     if (s.Extras.Count > 0) DrawTag(g, nx + nameW + 4, y);
 
                     ModGroup chosen = owner.ChosenOf(s);
@@ -1321,7 +1368,7 @@ namespace Installer
                     if (ecnt > 0) sub += "  +" + ecnt + " 扩展";
                     else if (s.Extras.Count > 0) sub += "  ·" + s.Extras.Count + " 扩展待选";
 
-                    // 右端数字：本体候选数；有扩展时「+N」单独用强调色 —— 扫一眼，带红色 +N 的就是有扩展可叠
+                    // 右端数字：本体候选数；有扩展时「+N」单独用信息蓝 —— 扫一眼，带蓝色 +N 的就是有扩展可叠
                     string plus = s.Extras.Count > 0 ? "+" + s.Extras.Count : "";
                     int pw = 0;
                     if (plus.Length > 0)
@@ -1330,7 +1377,7 @@ namespace Installer
                             new Size(80, RowH), TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
                         pw = sz.Width;
                         TextRenderer.DrawText(g, plus, Theme.UISmall,
-                            new Rectangle(W - 8 - pw, y, pw + 2, RowH), Theme.Accent,
+                            new Rectangle(W - 8 - pw, y, pw + 2, RowH), Theme.Info,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                             | TextFormatFlags.NoPrefix);
                     }
@@ -1365,12 +1412,12 @@ namespace Installer
             }
         }
 
-        /// <summary>「扩」小角标：红底白字，挂在名字后面，表示这个位置有可叠加的扩展。</summary>
+        /// <summary>「扩」小角标：蓝底白字，挂在名字后面，表示这个位置有可叠加的扩展（信息蓝，不是冲突红）。</summary>
         private static void DrawTag(Graphics g, int x, int y)
         {
             const int w = 17, h = 16;
             int iy = y + (RowH - h) / 2;
-            using (SolidBrush b = new SolidBrush(Theme.Accent))
+            using (SolidBrush b = new SolidBrush(Theme.Info))
             {
                 using (GraphicsPath p = new GraphicsPath())
                 {

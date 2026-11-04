@@ -80,6 +80,7 @@ namespace Installer
             bool addonSelf = false;
             bool dumpId = false;
             bool dumpTree = false;
+            bool recogSelf = false;
             string vpkFile = null;
 
 
@@ -115,6 +116,7 @@ namespace Installer
                 else if (string.Equals(a, "--addonself", StringComparison.OrdinalIgnoreCase)) addonSelf = true;
                 else if (string.Equals(a, "--dumpid", StringComparison.OrdinalIgnoreCase)) dumpId = true;
                 else if (string.Equals(a, "--dumptree", StringComparison.OrdinalIgnoreCase)) dumpTree = true;
+                else if (string.Equals(a, "--recogself", StringComparison.OrdinalIgnoreCase)) recogSelf = true;
                 else if (a.StartsWith("--vpk=", StringComparison.OrdinalIgnoreCase)) vpkFile = a.Substring(6).Trim('"');
 
                 else if (a.StartsWith("--game=", StringComparison.OrdinalIgnoreCase)) gameRoot = a.Substring(7).Trim('"');
@@ -124,7 +126,7 @@ namespace Installer
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
             if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf
-                && !addonSelf && !dumpId && !dumpTree && vpkFile == null)
+                && !addonSelf && !dumpId && !dumpTree && !recogSelf && vpkFile == null)
             {
                 ActivateExisting();
                 try { only.Dispose(); } catch { }
@@ -157,6 +159,12 @@ namespace Installer
                 string f = SlotIndex.DumpTree();
                 Console.WriteLine("dumptree: " + f);
                 return 0;
+            }
+            if (recogSelf)
+            {
+                int bad = Catalog.SelfTestRecognition();
+                Console.WriteLine("recogself failures = " + bad);
+                return bad == 0 ? 0 : 1;
             }
             if (tweakSelf)
             {

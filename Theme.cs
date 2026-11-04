@@ -33,6 +33,8 @@ namespace Installer
         public static readonly Color AccentDown = Color.FromArgb(135, 26, 21);
         public static readonly Color Warn = Color.FromArgb(169, 97, 0);
         public static readonly Color Ok = Color.FromArgb(46, 125, 50);
+        // 信息蓝：表示「这里有可叠加的东西」，中性提示，不用红——红容易让人误以为装冲突了。
+        public static readonly Color Info = Color.FromArgb(2, 119, 189);
 
         // 字体：一个族 + 固定角色刻度，不换身份
         public static readonly Font UI = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);

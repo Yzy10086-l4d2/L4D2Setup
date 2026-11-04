@@ -27,6 +27,7 @@ namespace Installer
         public long Size;
         public string Subject = "";      // 改了什么（取主体部件的识别结果）
         public string SubjectLevel = "";
+        public string Evidence = "";     // 归组依据：包内资源 / 名称兜底 / 单文件
 
         public bool IsSet { get { return Parts.Count > 1; } }
 
@@ -420,6 +421,7 @@ namespace Installer
                         it.SubjectKey = ir.Key;
                         it.Kinds = ir.Kinds;
                         it.Only1P = ir.Only1P;
+                        it.AssetPaths = ir.Assets;
                         RefineBySubject(it);
                         Add(it);
                     }
@@ -452,6 +454,7 @@ namespace Installer
             it.SubjectKey = ir.Key;
             it.Kinds = ir.Kinds;
             it.Only1P = ir.Only1P;
+            it.AssetPaths = ir.Assets;
             RefineBySubject(it);
             Add(it);
         }
@@ -684,6 +687,7 @@ namespace Installer
         /// <summary>把 vpk 聚成「一个 mod 一行」。</summary>
         public static void BuildGroups()
         {
+            contentFacts.Clear();
             Groups.Clear();
             GroupByKey.Clear();
             Dictionary<string, List<ModItem>> buckets = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
@@ -782,22 +786,44 @@ namespace Installer
             return i >= 0 ? p.Substring(i + 1) : p;
         }
 
-        /// <summary>同一个桶里怎么切：目录名本身像 mod 名 → 整桶一个；否则按名字像不像两两合并。</summary>
+        /// <summary>
+        /// 同一个目录/压缩包内目录里怎么切：先看包内资源关系，名字只做兜底。
+        /// 官方模型路径本身不算同套证据（所有同枪皮肤都会写它）；共享私有资源或材质命名空间才算。
+        /// </summary>
         static List<List<ModItem>> Cluster(List<ModItem> items, string bucketName)
         {
             List<List<ModItem>> res = new List<List<ModItem>>();
             if (items.Count == 0) return res;
             if (items.Count == 1) { res.Add(items); return res; }
 
-            string bn = Norm(bucketName);
-            if (bn.Length >= 3)
-                foreach (ModItem it in items)
-                    if (Similar(bn, Norm(Path.GetFileNameWithoutExtension(it.Name))))
-                    { res.Add(items); return res; }
-
             int n = items.Count;
             int[] p = new int[n];
+            bool[] contentLinked = new bool[n];
             for (int i = 0; i < n; i++) p[i] = i;
+
+            // 第一遍：只有整组资源路径完全相同的包，才直接按内容判为互斥部件。
+            // 共享一部分附件/官方模型不算：不同皮肤常会携带同一套附件资源。
+            for (int i = 0; i < n; i++)
+                for (int j = i + 1; j < n; j++)
+                    if (ContentRelation(items[i], items[j]) == 3)
+                    {
+                        Union(p, i, j);
+                        contentLinked[i] = contentLinked[j] = true;
+                    }
+
+            // 具体文件夹名是组织证据：例如一个 MOD 自己占一个文件夹，里面放主体和可选模块。
+            // 大类目录（15发连狙、MAC-10、药）不会满足「文件夹名像某个部件名」。
+            string bn = Norm(bucketName);
+            if (bn.Length >= 6)
+            {
+                bool namedFolder = false;
+                foreach (ModItem it in items)
+                    if (Similar(bn, Norm(Path.GetFileNameWithoutExtension(it.Name)))) { namedFolder = true; break; }
+                if (namedFolder && FolderCompatible(items))
+                    for (int i = 1; i < n; i++) Union(p, 0, i);
+            }
+
+            // 第二遍：名称规则仅作兼容兜底。名字已经强匹配时，个别部件识别成相邻型号不阻止归组。
             for (int i = 0; i < n; i++)
                 for (int j = i + 1; j < n; j++)
                 {
@@ -814,6 +840,117 @@ namespace Installer
             }
             foreach (KeyValuePair<int, List<ModItem>> kv in map) res.Add(kv.Value);
             return res;
+        }
+
+        /// <summary>
+        /// 归组要反复比较资源路径。大地图包可能带几千条路径，不能在两两比较里反复 Split；
+        /// 每个 vpk 只解析一次，后面所有关系判断复用这份事实。
+        /// </summary>
+        sealed class ContentFacts
+        {
+            public readonly HashSet<string> Full = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public readonly HashSet<string> Private = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public readonly HashSet<string> Scopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public bool HasModel;
+        }
+
+        static readonly Dictionary<ModItem, ContentFacts> contentFacts = new Dictionary<ModItem, ContentFacts>();
+
+        static ContentFacts FactsOf(ModItem it)
+        {
+            if (it == null) return new ContentFacts();
+            ContentFacts f;
+            if (contentFacts.TryGetValue(it, out f)) return f;
+            f = new ContentFacts();
+            string raw = it.AssetPaths ?? "";
+            foreach (string p in raw.Split(new char[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                f.Full.Add(p);
+                if (p.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase)) f.HasModel = true;
+                if (!ModIdentify.IsStockAsset(p)) f.Private.Add(p);
+            }
+            foreach (string p in f.Private)
+            {
+                if (!p.StartsWith("materials/", StringComparison.Ordinal)) continue;
+                string[] seg = p.Substring(10).Split('/');
+                if (seg.Length < 2) continue;
+                int take = 1;
+                if (seg[0] == "models") take = 2;
+                if (seg.Length >= 3 && (seg[1] == "weapons" || seg[1] == "survivors" || seg[1] == "infected")) take = 3;
+                take = Math.Min(take, seg.Length - 1);
+                f.Scopes.Add(string.Join("/", seg, 0, take));
+            }
+            contentFacts[it] = f;
+            return f;
+        }
+
+        static HashSet<string> AssetSet(ModItem it, bool privateOnly)
+        {
+            return privateOnly ? FactsOf(it).Private : FactsOf(it).Full;
+        }
+
+        static bool HasModel(ModItem it)
+        {
+            return FactsOf(it).HasModel;
+        }
+
+        static bool SameTarget(ModItem a, ModItem b)
+        {
+            if (a.Cat == CAT_MAP || b.Cat == CAT_MAP) return false;
+            if (a.Cat != b.Cat && a.Cat != CAT_MISC && b.Cat != CAT_MISC) return false;
+            string sa = (a.Subject ?? "").Trim(), sb = (b.Subject ?? "").Trim();
+            if (sa.Length > 0 && sb.Length > 0 && sa != sb) return false;
+            string ua = (a.Sub ?? "").Trim(), ub = (b.Sub ?? "").Trim();
+            if (ua.Length > 0 && ub.Length > 0 && ua != "其他" && ub != "其他" && ua != ub
+                && a.Cat != CAT_MISC && b.Cat != CAT_MISC) return false;
+            return true;
+        }
+
+        /// <summary>具体文件夹整组归并前的目标检查；识别不出来的可选模块不拿目录别名卡掉。</summary>
+        static bool FolderCompatible(List<ModItem> items)
+        {
+            for (int i = 0; i < items.Count; i++)
+                for (int j = i + 1; j < items.Count; j++)
+                {
+                    ModItem a = items[i], b = items[j];
+                    if (a.Cat == CAT_MAP || b.Cat == CAT_MAP) return false;
+                    if (a.Cat != b.Cat && a.Cat != CAT_MISC && b.Cat != CAT_MISC) return false;
+                    string sa = (a.Subject ?? "").Trim(), sb = (b.Subject ?? "").Trim();
+                    if (sa.Length == 0 || sb.Length == 0) continue;   // 一边没认出内容时，Sub 多半只是文件夹名
+                    if (sa != sb) return false;
+                    string ua = (a.Sub ?? "").Trim(), ub = (b.Sub ?? "").Trim();
+                    if (ua.Length > 0 && ub.Length > 0 && ua != "其他" && ub != "其他" && ua != ub) return false;
+                }
+            return true;
+        }
+
+        static HashSet<string> MaterialScopes(ModItem it)
+        {
+            return FactsOf(it).Scopes;
+        }
+
+        static bool SameSet(HashSet<string> a, HashSet<string> b)
+        {
+            if (a.Count == 0 || a.Count != b.Count) return false;
+            foreach (string p in a) if (!b.Contains(p)) return false;
+            return true;
+        }
+
+        static bool Overlaps(HashSet<string> a, HashSet<string> b)
+        {
+            foreach (string p in a) if (b.Contains(p)) return true;
+            return false;
+        }
+
+        /// <summary>0=无内部证据；2=同一私有材质命名空间；3=整组资源路径完全相同。</summary>
+        static int ContentRelation(ModItem a, ModItem b)
+        {
+            if (!SameTarget(a, b)) return 0;
+            HashSet<string> pa = AssetSet(a, true), pb = AssetSet(b, true);
+            if (pa.Count == 0 || pb.Count == 0) return 0;
+            HashSet<string> aa = AssetSet(a, false), ab = AssetSet(b, false);
+            if (SameSet(aa, ab)) return 3;
+            return Overlaps(MaterialScopes(a), MaterialScopes(b)) ? 2 : 0;
         }
 
         static int Find(int[] p, int x) { while (p[x] != x) { p[x] = p[p[x]]; x = p[x]; } return x; }
@@ -862,6 +999,7 @@ namespace Installer
                 it.Role = RoleOf(it.Name);
                 g.Size += it.Size;
             }
+            ApplyContentRoles(parts);
             // 主体排最前，其次必装、选配、可选
             parts.Sort(delegate(ModItem a, ModItem b)
             {
@@ -869,6 +1007,16 @@ namespace Installer
                 if (x != y) return x.CompareTo(y);
                 return string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
             });
+
+            // 分类和显示主体必须来自真正的主体，不能取决于文件枚举顺序；组 Key 保持原规则，兼容已存方案。
+            ModItem groupMain = g.Main;
+            if (groupMain != null)
+            {
+                g.Cat = groupMain.Cat;
+                g.AutoCat = g.Cat;
+                g.Sub = groupMain.Sub;
+            }
+            g.Evidence = GroupEvidence(parts);
 
             string baseName;
             if (parts.Count == 1) baseName = CleanName(parts[0].Name);
@@ -880,6 +1028,49 @@ namespace Installer
 
             Groups.Add(g);
             GroupByKey[g.Key] = g;
+        }
+
+        /// <summary>文件名随便起也能认角色：唯一带模型的是主体；内容完全相同的非模型包是互斥选配。</summary>
+        static void ApplyContentRoles(List<ModItem> parts)
+        {
+            if (parts.Count < 2) return;
+            bool namedMain = false;
+            List<ModItem> models = new List<ModItem>();
+            foreach (ModItem it in parts)
+            {
+                if (it.Role == "主体") namedMain = true;
+                if (HasModel(it)) models.Add(it);
+            }
+            if (!namedMain && models.Count == 1) models[0].Role = "主体";
+
+            for (int i = 0; i < parts.Count; i++)
+            {
+                if (HasModel(parts[i]) || parts[i].Role != "必装") continue;
+                HashSet<string> a = AssetSet(parts[i], false);
+                for (int j = 0; j < parts.Count; j++)
+                {
+                    if (i == j || HasModel(parts[j])) continue;
+                    if (SameSet(a, AssetSet(parts[j], false)) && ContentRelation(parts[i], parts[j]) == 3)
+                    { parts[i].Role = "选配"; break; }
+                }
+            }
+        }
+
+        static string GroupEvidence(List<ModItem> parts)
+        {
+            if (parts.Count <= 1) return "单文件";
+            bool exact = false, scoped = false;
+            for (int i = 0; i < parts.Count; i++)
+                for (int j = i + 1; j < parts.Count; j++)
+                {
+                    int r = ContentRelation(parts[i], parts[j]);
+                    if (r == 3) exact = true;
+                    else if (r == 2 && Similar(Norm(Path.GetFileNameWithoutExtension(parts[i].Name)),
+                                               Norm(Path.GetFileNameWithoutExtension(parts[j].Name)))) scoped = true;
+                }
+            if (exact) return "包内资源关系";
+            if (scoped) return "名称+资源命名空间";
+            return "名称/目录兜底";
         }
 
         static int RoleRank(string role)
@@ -971,11 +1162,124 @@ namespace Installer
             return list;
         }
 
+        /// <summary>内容归组确定性自测：不读真实库、不写用户配置，文件名与内部证据分开验证。</summary>
+        public static int SelfTestRecognition()
+        {
+            List<ModItem> oldItems = Core.ModList;
+            List<ModGroup> oldGroups = Groups;
+            Dictionary<string, ModGroup> oldByKey = GroupByKey;
+            int bad = 0;
+            try
+            {
+                Core.ModList = new List<ModItem>();
+                Groups = new List<ModGroup>();
+                GroupByKey = new Dictionary<string, ModGroup>(StringComparer.OrdinalIgnoreCase);
+
+                // 完全无意义的外部文件名：只有整组资源路径完全相同的两个包，直接判为互斥颜色。
+                Core.ModList.Add(TestItem("test\\colors\\a.vpk", "医疗包", "材质", "materials/tpp_wing_medkit/color/halo.vtf"));
+                Core.ModList.Add(TestItem("test\\colors\\b.vpk", "医疗包", "材质", "materials/tpp_wing_medkit/color/halo.vtf"));
+
+                // 具体文件夹 + 唯一模型 + 识别不出来的模块：按目录组织归成一套，唯一模型成为主体。
+                Core.ModList.Add(TestItem("test\\爱丽丝主题皮肤\\爱丽丝主题皮肤.vpk", "医疗包", "模型", "models/v_models/v_medkit.mdl"));
+                Core.ModList.Add(TestItem("test\\爱丽丝主题皮肤\\x7.vpk", "医疗包", "材质", "materials/tpp_wing_medkit/screen.vtf"));
+
+                // 同枪不同皮肤：共享官方模型但私有材质不同，必须各自独立。
+                Core.ModList.Add(TestItem("test\\skins\\a.vpk", "AK-47", "模型,材质",
+                    "models/v_models/v_rifle_ak47.mdl;materials/models/weapons/skin_a/body.vtf"));
+                Core.ModList.Add(TestItem("test\\skins\\b.vpk", "AK-47", "模型,材质",
+                    "models/v_models/v_rifle_ak47.mdl;materials/models/weapons/skin_b/body.vtf"));
+
+                // 只有官方模型交集、名字又无关系：证据不足，宁可不合并。
+                Core.ModList.Add(TestItem("test\\ambiguous\\a.vpk", "AK-47", "模型", "models/v_models/v_rifle_ak47.mdl"));
+                Core.ModList.Add(TestItem("test\\ambiguous\\b.vpk", "AK-47", "模型", "models/v_models/v_rifle_ak47.mdl"));
+
+                // 共享一套附件资源但主体材质不同：不是同一套，宁可拆开。
+                Core.ModList.Add(TestItem("test\\shared\\a.vpk", "AK-47", "模型,材质",
+                    "models/v_models/v_rifle_ak47.mdl;materials/models/boki/shared.vtf;materials/models/skin_a/body.vtf"));
+                Core.ModList.Add(TestItem("test\\shared\\b.vpk", "AK-47", "模型,材质",
+                    "models/v_models/v_rifle_ak47.mdl;materials/models/boki/shared.vtf;materials/models/skin_b/body.vtf"));
+
+                // 没有私有资源可读时，原有长公共名称仍能兼容旧包。
+                Core.ModList.Add(TestItem("test\\names\\【魔女之旅魔女の旅々】伊蕾娜 替换 弗朗西斯.vpk", "弗朗西斯", "模型", "models/survivors/survivor_biker.mdl"));
+                Core.ModList.Add(TestItem("test\\names\\【魔女之旅魔女の旅々】伊蕾娜 可选影藏帽子.vpk", "弗朗西斯", "模型", "models/survivors/survivor_biker.mdl"));
+
+                BuildGroups();
+                ModGroup colors = null, folderSet = null;
+                int skinGroups = 0, ambiguousGroups = 0, sharedGroups = 0, nameGroups = 0;
+                foreach (ModGroup g in Groups)
+                {
+                    string path = g.Parts[0].RelPath;
+                    if (path.StartsWith("test\\colors\\", StringComparison.OrdinalIgnoreCase)) colors = g;
+                    else if (path.StartsWith("test\\爱丽丝主题皮肤\\", StringComparison.OrdinalIgnoreCase)) folderSet = g;
+                    else if (path.StartsWith("test\\skins\\", StringComparison.OrdinalIgnoreCase)) skinGroups++;
+                    else if (path.StartsWith("test\\ambiguous\\", StringComparison.OrdinalIgnoreCase)) ambiguousGroups++;
+                    else if (path.StartsWith("test\\shared\\", StringComparison.OrdinalIgnoreCase)) sharedGroups++;
+                    else if (path.StartsWith("test\\names\\", StringComparison.OrdinalIgnoreCase)) nameGroups++;
+                }
+                bad += RecogCheck(colors != null && colors.Parts.Count == 2 && colors.Evidence == "包内资源关系", "任意文件名：整组资源相同才认出颜色部件");
+                bad += RecogCheck(colors != null && colors.Parts[0].Role == "选配" && colors.Parts[1].Role == "选配", "相同资源路径的颜色包自动成为互斥选配");
+                bad += RecogCheck(folderSet != null && folderSet.Parts.Count == 2 && folderSet.Main != null
+                    && folderSet.Main.Name == "爱丽丝主题皮肤.vpk" && folderSet.Cat == "药品" && folderSet.Sub == "医疗包", "具体文件夹中的唯一模型成为主体并继承分类");
+                bad += RecogCheck(skinGroups == 2, "同枪不同皮肤不因官方模型相同而误合并");
+                bad += RecogCheck(ambiguousGroups == 2, "证据不足时不猜、不合并");
+                bad += RecogCheck(sharedGroups == 2, "共享附件资源的不同皮肤不误合并");
+                bad += RecogCheck(nameGroups == 1, "无资源证据时保留旧名称兼容兜底");
+
+                bad += RecogCheck(ExtraOf("音效", false), "纯音效可叠加");
+                bad += RecogCheck(ExtraOf("HUD", false), "纯 HUD 可叠加");
+                bad += RecogCheck(ExtraOf("特效", false), "纯特效可叠加");
+                bad += RecogCheck(ExtraOf("脚本", false), "纯脚本可叠加");
+                bad += RecogCheck(ExtraOf("模型", true), "只改第一人称模型可叠加");
+                bad += RecogCheck(!ExtraOf("模型,音效", false), "完整模型即使带音效仍是本体");
+                bad += RecogCheck(!ExtraOf("材质", false), "材质替换不是可叠加扩展");
+                bad += RecogCheck(!ExtraOf("地图", false), "地图不是扩展");
+                bad += RecogCheck(!ExtraOf("", false), "读不出内容时不乱当扩展");
+            }
+            catch (Exception ex) { bad++; Core.Log("FAIL", "RECOGSELF 异常: " + ex.Message); }
+            finally
+            {
+                Core.ModList = oldItems;
+                Groups = oldGroups;
+                GroupByKey = oldByKey;
+            }
+            Core.Log(bad == 0 ? "OK" : "FAIL", "RECOGSELF 完成，失败 " + bad + " 项");
+            return bad;
+        }
+
+        static ModItem TestItem(string rel, string subject, string kinds, string assets)
+        {
+            ModItem it = new ModItem();
+            it.RelPath = rel;
+            it.Key = rel;
+            it.Name = Path.GetFileName(rel);
+            it.Subject = subject;
+            it.Sub = subject;
+            it.Kinds = kinds;
+            it.AssetPaths = assets;
+            if (subject == "医疗包") it.Cat = CAT_MED;
+            else if (subject == "弗朗西斯") it.Cat = CAT_CHAR;
+            else it.Cat = CAT_GUN;
+            return it;
+        }
+
+        static int RecogCheck(bool ok, string name)
+        {
+            Core.Log(ok ? "OK" : "FAIL", "RECOGSELF " + name);
+            return ok ? 0 : 1;
+        }
+
+        static bool ExtraOf(string kinds, bool only1P)
+        {
+            ModGroup g = new ModGroup();
+            g.Parts.Add(new ModItem { Kinds = kinds, Only1P = only1P, Role = "必装" });
+            return SlotIndex.IsExtra(g);
+        }
+
         /// <summary>自测用：把每个 MOD 的识别结果铺成一张表，人眼核错用。</summary>
         public static string DumpIdentify()
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("大类\t小分类\t名字\t识别结果\t键\t部件\t路径");
+            sb.AppendLine("大类\t小分类\t名字\t识别结果\t键\t部件\t路径\t归组依据");
             foreach (ModGroup g in Groups)
             {
                 ModItem m = g.Main;
@@ -985,7 +1289,8 @@ namespace Installer
                   .Append(g.Subject).Append('\t')
                   .Append(m == null ? "" : (m.SubjectKey ?? "")).Append('\t')
                   .Append(g.Parts.Count).Append('\t')
-                  .Append(m == null ? "" : m.RelPath).AppendLine();
+                  .Append(m == null ? "" : m.RelPath).Append('\t')
+                  .Append(g.Evidence).AppendLine();
             }
             string f = Path.Combine(Core.LogDir, "识别清单.tsv");
             File.WriteAllText(f, sb.ToString(), new UTF8Encoding(true));
