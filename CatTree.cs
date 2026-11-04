@@ -585,6 +585,16 @@ namespace Installer
             {
                 if (e.Button == MouseButtons.Right) SelectRow(lv, e);
             };
+            // 双击套装行 = 挑部件（医疗包那种「模型 + 基础材质 + 选一个颜色」的组合）。
+            // 单击已经套了默认部件；想换颜色只能走这里，不能让这条路只剩老页签里那条。
+            lv.DoubleClick += delegate
+            {
+                if (lv.SelectedItems.Count == 0) return;
+                ModGroup g = lv.SelectedItems[0].Tag as ModGroup;
+                if (g == null || !g.IsSet) return;
+                mf.PickPartsIn(lv);
+                FillDetail();
+            };
             lv.ContextMenuStrip = mf.BuildTreeMenu(lv);
             lv.Resize += delegate { LayoutCols(); };
             Controls.Add(lv);
@@ -959,7 +969,7 @@ namespace Installer
                     li.StateImageIndex = on ? 1 : 0;
                     if (on) li.Font = Theme.UIBold;
                     li.Tag = g;
-                    if (g.IsSet) li.ToolTipText = g.Parts.Count + " 个 vpk 组成，选它就是选默认部件";
+                    if (g.IsSet) li.ToolTipText = g.Parts.Count + " 个 vpk 组成：点一下=默认部件，双击=挑部件（材质/颜色）";
                     lv.Items.Add(li);
                 }
 
@@ -973,7 +983,8 @@ namespace Installer
 
                 lblFoot.Text = s.Items.Count == 0
                     ? "这个位置没有换模型的包，只有下面那些扩展"
-                    : s.Items.Count + " 个模型候选 · 点一个就换掉原来的";
+                    : s.Items.Count + " 个模型候选 · 点一个就换掉原来的"
+                      + (HasSet(s) ? " · 组合装双击可挑部件" : "");
 
                 // ---- 下半：可叠加的扩展 ----
                 lblExtraTitle.Visible = true;
@@ -997,7 +1008,7 @@ namespace Installer
                         li.StateImageIndex = on ? 1 : 0;
                         if (on) li.Font = Theme.UIBold;
                         li.Tag = g;
-                        if (g.IsSet) li.ToolTipText = g.Parts.Count + " 个 vpk 组成，点一下默认部件全开";
+                        if (g.IsSet) li.ToolTipText = g.Parts.Count + " 个 vpk 组成：点一下=默认部件，双击=挑部件（材质/颜色）";
                         else li.ToolTipText = "和上面的模型同时生效，互不影响";
                         lvExtra.Items.Add(li);
                     }
@@ -1041,6 +1052,13 @@ namespace Installer
             if (g != null) mf.CheckGroupDefault(g);
             mf.AfterTreePick();
             FillDetail();
+        }
+
+        /// <summary>这个位置的候选里有没有组合装（模型+材质+颜色的套装）。</summary>
+        private static bool HasSet(Slot s)
+        {
+            foreach (ModGroup g in s.Items) if (g.IsSet) return true;
+            return false;
         }
 
         /// <summary>右键菜单里的「用这个替换」：拿这一行的 Tag 去换，位置用当前选中的那个。</summary>
@@ -1148,6 +1166,8 @@ namespace Installer
         private readonly CatTree owner;
         private readonly List<TreeRow> rows = new List<TreeRow>();
         private int hover = -1;
+        private readonly ToolTip tip = new ToolTip();
+        private int tipRow = -2;
 
         public SlotTree(CatTree o)
         {
@@ -1165,6 +1185,7 @@ namespace Installer
         {
             rows.Clear();
             if (r != null) rows.AddRange(r);
+            tipRow = -2;
             Height = Math.Max(12, rows.Count * RowH + 6);
             Invalidate();
         }
@@ -1269,19 +1290,31 @@ namespace Installer
                     string sub = chosen == null ? (ecnt > 0 ? "原版" : "未选") : chosen.Name;
                     if (cnt > 1) sub = "叠了 " + cnt + " 件";
                     if (ecnt > 0) sub += "  +" + ecnt + " 扩展";
+                    else if (s.Extras.Count > 0) sub += "  ·" + s.Extras.Count + " 扩展待选";
+
+                    // 右端数字：本体候选数；有扩展时「+N」单独用强调色 —— 扫一眼，带红色 +N 的就是有扩展可叠
+                    string plus = s.Extras.Count > 0 ? "+" + s.Extras.Count : "";
+                    int pw = 0;
+                    if (plus.Length > 0)
+                    {
+                        Size sz = TextRenderer.MeasureText(g, plus, Theme.UISmall,
+                            new Size(80, RowH), TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+                        pw = sz.Width;
+                        TextRenderer.DrawText(g, plus, Theme.UISmall,
+                            new Rectangle(W - 8 - pw, y, pw + 2, RowH), Theme.Accent,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
+                            | TextFormatFlags.NoPrefix);
+                    }
+                    TextRenderer.DrawText(g, s.Items.Count.ToString(), Theme.UISmall,
+                        new Rectangle(W - 42 - pw, y, 32, RowH), Theme.Ink3,
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+
                     int subX = nx + nameW + 8;
-                    int subW = W - subX - 46;
+                    int subW = W - subX - 46 - pw;
                     if (subW > 20)
                         TextRenderer.DrawText(g, sub, Theme.UISmall, new Rectangle(subX, y, subW, RowH), Theme.Ink3,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                             | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-
-                    // 右端数字：本体候选数；有扩展时写成「5+1」
-                    string cand = s.Items.Count.ToString();
-                    if (s.Extras.Count > 0) cand += "+" + s.Extras.Count;
-                    TextRenderer.DrawText(g, cand, Theme.UISmall,
-                        new Rectangle(W - 40, y, 32, RowH), Theme.Ink3,
-                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                 }
             }
         }
@@ -1312,13 +1345,43 @@ namespace Installer
         protected override void OnMouseMove(MouseEventArgs e)
         {
             int i = IndexAt(e.Y);
-            if (i != hover) { hover = i; Invalidate(); }
+            if (i != hover) { hover = i; Invalidate(); UpdateTip(i); }
             base.OnMouseMove(e);
+        }
+
+        // 悬停说明：这行有几个本体候选、有没有可叠的扩展、有没有组合装。
+        // 右端的「+2」再显眼也得有个地方讲清它是什么意思，就放这里。
+        private void UpdateTip(int i)
+        {
+            if (i == tipRow) return;
+            tipRow = i;
+            string t = "";
+            if (i >= 0 && i < rows.Count)
+            {
+                Slot s = rows[i].Slot;
+                if (s != null)
+                {
+                    t = "本体候选 " + s.Items.Count + " 个";
+                    if (s.Extras.Count > 0)
+                    {
+                        string names = "";
+                        foreach (ModGroup g in s.Extras)
+                            names += (names.Length > 0 ? "、" : "") + g.Name;
+                        t += "，可叠扩展 " + s.Extras.Count + " 个（开火音效 / 只改第一人称模型这类，不换本体，可多开）\r\n扩展：" + names;
+                    }
+                    else t += "，没有可叠的扩展";
+                    bool hasSet = false;
+                    foreach (ModGroup g in s.Items) if (g.IsSet) { hasSet = true; break; }
+                    if (hasSet) t += "\r\n候选里有组合装：双击那行可挑部件（材质 / 颜色）";
+                }
+            }
+            if (t.Length == 0) tip.RemoveAll(); else tip.SetToolTip(this, t);
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
             if (hover != -1) { hover = -1; Invalidate(); }
+            tipRow = -2;
             base.OnMouseLeave(e);
         }
 

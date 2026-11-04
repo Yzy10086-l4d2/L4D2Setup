@@ -944,6 +944,7 @@ namespace Installer
             ContextMenuStrip cms = new ContextMenuStrip();
             cms.Font = Theme.UI;
             cms.Items.Add("用这个替换（点这一行也一样）", null, delegate { PickInTree(lv); });
+            cms.Items.Add("选择部件…（模型+材质+颜色的组合装）", null, delegate { PickPartsIn(lv); });
             cms.Items.Add(new ToolStripSeparator());
             cms.Items.Add("只装这个 MOD（不动平台/启动项）", null, delegate { InstallThisOne(lv); });
             cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
@@ -1037,7 +1038,8 @@ namespace Installer
             UpdateSchemeLabel();
             List<CatView> vs = new List<CatView>(catViews.Values);
             foreach (CatView v in vs) v.Fill();
-            // 方案树是常驻第一屏：万一扫库还没完就点进来了，树会是空的，扫完这里补一次
+            // 方案树是常驻第一屏：万一扫库还没完就点进来了，树会是空的，扫完这里补一次；
+            // 树有内容时只刷新状态点，不重建（搜索打字不至于反复重排）
             if (treeView != null && treeView.SlotCount == 0) treeView.Rebuild();
             UpdateSel();
             SyncTabs();
@@ -1450,6 +1452,7 @@ namespace Installer
                 foreach (ModItem p in f.Result) checkedKeys.Add(p.Key);
             }
             RefreshMods();
+            if (treeView != null && treeView.SlotCount > 0) treeView.Sync();   // 树上的状态点、右侧明细一起对齐
         }
 
         internal void DeleteSelectedIn(ListView lv)
