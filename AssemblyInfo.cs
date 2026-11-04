@@ -5,5 +5,5 @@
 [assembly: AssemblyProduct("网吧装机台")]
 [assembly: AssemblyCompany("L4D2 扩展平台")]
 [assembly: AssemblyCopyright("")]
-[assembly: AssemblyVersion("2.24.1.0")]
-[assembly: AssemblyFileVersion("2.24.1.0")]
+[assembly: AssemblyVersion("2.24.2.0")]
+[assembly: AssemblyFileVersion("2.24.2.0")]

@@ -409,13 +409,14 @@ namespace Installer
                 }
             }
             Result r = AnalyzeBuffer(TreeOfArchive(container, inner));
-            try { cache[relPath] = CacheLine(relPath, stamp, r); }
+            try { cache[relPath] = CacheLine(relPath, stamp, r); cacheDirty = true; }
             catch { }
             return r;
         }
 
         // ---------------- 缓存：按「相对路径 + 大小 + 修改时间」判断是否失效 ----------------
         private static Dictionary<string, string> cache = null;
+        private static bool cacheDirty = false;   // 有新结论才落盘；没变化的启动不重写 8MB 缓存
 
         private static string CacheFile
         {
@@ -707,7 +708,7 @@ namespace Installer
                 }
             }
             Result r = Analyze(fullPath);
-            try { cache[relPath] = CacheLine(relPath, stamp, r); }
+            try { cache[relPath] = CacheLine(relPath, stamp, r); cacheDirty = true; }
             catch { }
             return r;
         }
@@ -715,6 +716,8 @@ namespace Installer
         public static void SaveCache()
         {
             if (cache == null) return;
+            if (!cacheDirty) return;               // 没有新结论就不重写：省一次 8MB 落盘 + 杀软扫描
+            cacheDirty = false;
             try
             {
                 StringBuilder sb = new StringBuilder();

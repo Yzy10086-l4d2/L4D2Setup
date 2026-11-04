@@ -196,6 +196,7 @@ namespace Installer
 
         /// <summary>压缩包清单缓存：容器大小+时间没变就不重复调 Rar.exe。</summary>
         static Dictionary<string, List<ArcEntry>> _arcCache;
+        static bool _arcCacheDirty = false;       // 有新清单才落盘
         static string CachePath { get { return Path.Combine(Core.LogDir, "archive-cache-v1.tsv"); } }
 
         static void LoadArcCache()
@@ -223,6 +224,8 @@ namespace Installer
 
         static void SaveArcCache()
         {
+            if (!_arcCacheDirty) return;           // 没变化不重写
+            _arcCacheDirty = false;
             try
             {
                 StringBuilder sb = new StringBuilder();
@@ -253,7 +256,7 @@ namespace Installer
             string err;
             l = ListArchive(arcPath, out err);
             if (err != null) Core.Log("WARN", "读压缩包失败 " + Path.GetFileName(arcPath) + ": " + err);
-            if (l.Count > 0 || err == null) _arcCache[sig] = l;
+            if (l.Count > 0 || err == null) { _arcCache[sig] = l; _arcCacheDirty = true; }
             return l;
         }
 
