@@ -969,7 +969,15 @@ namespace Installer
                     li.StateImageIndex = on ? 1 : 0;
                     if (on) li.Font = Theme.UIBold;
                     li.Tag = g;
-                    if (g.IsSet) li.ToolTipText = g.Parts.Count + " 个 vpk 组成：点一下=默认部件，双击=挑部件（材质/颜色）";
+                    if (g.IsSet)
+                    {
+                        // 组合装：改了什么列红字标出来，不用悬停也知道这行能挑部件
+                        li.UseItemStyleForSubItems = false;
+                        li.SubItems[1].Text = KindsOf(g) + " ·组合装 " + g.Parts.Count + " 件";
+                        li.SubItems[1].ForeColor = Theme.Accent;
+                        li.SubItems[1].Font = Theme.UIBold;
+                        li.ToolTipText = PartsTip(g);
+                    }
                     lv.Items.Add(li);
                 }
 
@@ -1008,7 +1016,14 @@ namespace Installer
                         li.StateImageIndex = on ? 1 : 0;
                         if (on) li.Font = Theme.UIBold;
                         li.Tag = g;
-                        if (g.IsSet) li.ToolTipText = g.Parts.Count + " 个 vpk 组成：点一下=默认部件，双击=挑部件（材质/颜色）";
+                        if (g.IsSet)
+                        {
+                            li.UseItemStyleForSubItems = false;
+                            li.SubItems[1].Text = KindsOf(g) + " ·组合装 " + g.Parts.Count + " 件";
+                            li.SubItems[1].ForeColor = Theme.Accent;
+                            li.SubItems[1].Font = Theme.UIBold;
+                            li.ToolTipText = PartsTip(g);
+                        }
                         else li.ToolTipText = "和上面的模型同时生效，互不影响";
                         lvExtra.Items.Add(li);
                     }
@@ -1041,6 +1056,17 @@ namespace Installer
             string k = m.Kinds;
             if (string.IsNullOrEmpty(k)) k = m.SubjectLevel;
             return k == null ? "" : k.Replace(",", "·");
+        }
+
+        /// <summary>组合装行的悬停说明：部件一个一个念出来，外加怎么挑。</summary>
+        private static string PartsTip(ModGroup g)
+        {
+            string t = "";
+            foreach (ModItem p in g.Parts)
+                t += (t.Length > 0 ? "\r\n　+ " : "") + Catalog.CleanName(p.Name)
+                     + "（" + p.Role + "）";
+            return g.Parts.Count + " 个 vpk 组成：" + t
+                 + "\r\n点一下=装默认部件，双击=挑部件（材质 / 颜色）";
         }
 
         /// <summary>点了一个候选（null = 留原版）：清掉这个位置的旧件，再勾新件。</summary>

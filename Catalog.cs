@@ -872,13 +872,7 @@ namespace Installer
 
             string baseName;
             if (parts.Count == 1) baseName = CleanName(parts[0].Name);
-            else
-            {
-                string bn = Norm(LastSeg(Core.RelDir(parts[0].RelPath)));
-                baseName = (bn.Length > 0 && Similar(bn, Norm(Path.GetFileNameWithoutExtension(parts[0].Name))))
-                    ? CleanName(LastSeg(Core.RelDir(parts[0].RelPath)))
-                    : CleanName(parts[0].Name);
-            }
+            else baseName = SetName(parts);
             g.Name = baseName.Length > 0 ? baseName : Path.GetFileNameWithoutExtension(parts[0].Name);
 
             ModItem main = g.Main;
@@ -894,6 +888,45 @@ namespace Installer
             if (role == "必装") return 1;
             if (role == "选配") return 2;
             return 3;
+        }
+
+        /// <summary>
+        /// 组合装的显示名。文件夹名经常是「含可替换部件」这类说明文字，
+        /// 部件名里共用的那一段才是 mod 的真名（主体部件名）——用它。
+        /// 部件名没有公共段（认不出是一套）才退回文件夹名。
+        /// </summary>
+        static string SetName(List<ModItem> parts)
+        {
+            string main = CleanName(parts[0].Name);
+            if (CommonStem(parts).Length >= 4)
+            {
+                // 尾巴上的角色词（「模型主体」「主体」）是文件用途说明，不是名字
+                foreach (string w in new string[] { "模型主体", "主文件", "模型", "主体" })
+                    if (main.EndsWith(w, StringComparison.Ordinal) && main.Length > w.Length)
+                    { main = main.Substring(0, main.Length - w.Length).Trim(); break; }
+                if (main.Length > 0) return main;
+            }
+            string bn = Norm(LastSeg(Core.RelDir(parts[0].RelPath)));
+            return (bn.Length > 0 && Similar(bn, Norm(Path.GetFileNameWithoutExtension(parts[0].Name))))
+                ? CleanName(LastSeg(Core.RelDir(parts[0].RelPath)))
+                : main;
+        }
+
+        /// <summary>一套部件的文件名共用前缀（归一化后），长说明这真是一套。</summary>
+        static string CommonStem(List<ModItem> parts)
+        {
+            string stem = null;
+            foreach (ModItem it in parts)
+            {
+                string n = Norm(Path.GetFileNameWithoutExtension(it.Name));
+                if (n.Length == 0) return "";
+                if (stem == null) { stem = n; continue; }
+                int i = 0;
+                while (i < stem.Length && i < n.Length && stem[i] == n[i]) i++;
+                if (i < stem.Length) stem = stem.Substring(0, i);
+                if (stem.Length == 0) return "";
+            }
+            return stem ?? "";
         }
 
         /// <summary>部件角色：主体 / 必装 / 选配（颜色这种互斥的）/ 可选。</summary>
