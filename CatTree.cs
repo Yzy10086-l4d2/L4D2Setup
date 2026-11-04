@@ -20,6 +20,7 @@ namespace Installer
         public string Key;                       // 被替换的模型名，如 w_rifle_ak47
         public string Name;                      // 显示名：AK-47
         public string Cat;                       // 大类：枪械 / 医疗 / 人物 …
+        public string Sub = "其他";              // 小分类：步枪 / 霰弹枪 / 一代 / 医疗包 …
         public bool Manual;                      // 这个位置是人工指定出来的（可能还要并回自动的同名位置）
         public readonly List<ModGroup> Items = new List<ModGroup>();
     }
@@ -40,7 +41,7 @@ namespace Installer
                 // 人工指定过就以人工为准：大类、位置都能改
                 string cat = CatPrefs.CatOf(m, g.Cat);
                 string hand = CatPrefs.SlotOf(m).Trim();
-                string key, nm;
+                string key, nm, hint = "";
                 if (hand.Length > 0)
                 {
                     key = "slot:" + cat + "/" + hand;
@@ -51,6 +52,7 @@ namespace Installer
                     key = (m.SubjectKey ?? "").Trim();
                     nm = (m.Subject ?? "").Trim();
                     if (IsCountName(nm)) continue;                 // 「4 件」是「一个包里改了好几样」的上报格式，不是东西
+                    nm = SplitKind(nm, out hint);                  // 「霰弹枪/木喷」→ 木喷（枪种当小分类）
                     if (key.Length == 0)
                     {
                         // 人物、投掷物这类没有「模型名」，只有认出来的名字 —— 就用名字当位置
@@ -69,16 +71,19 @@ namespace Installer
                     s.Name = nm.Length > 0 ? nm : key;
                     s.Cat = cat;
                     s.Manual = hand.Length > 0;
+                    s.Sub = SubOf(cat, s.Name, key, hint, g.Sub);
                     map[mapKey] = s;
                     list.Add(s);
                 }
                 else if (Vague(s.Name) && nm.Length > 0 && !Vague(nm))
                 {
                     s.Name = nm;                               // 「步枪」这种泛称，换成更具体的名字
+                    s.Sub = SubOf(cat, s.Name, key, hint, g.Sub);
                 }
                 s.Items.Add(g);
             }
             MergeManual(list);
+            MergeSame(list);
             Disambiguate(list);
             return list;
         }
@@ -104,6 +109,149 @@ namespace Installer
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// 名字洗干净之后可能撞车：「霰弹枪/木喷」洗成「木喷」，就该和另一个「木喷」并成一个位置。
+        /// 同一个大类、同一个小分类、同一个名字 —— 并。
+        /// </summary>
+        private static void MergeSame(List<Slot> list)
+        {
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                Slot a = list[i];
+                for (int j = 0; j < i; j++)
+                {
+                    Slot b = list[j];
+                    if (b.Cat != a.Cat || b.Sub != a.Sub || b.Name != a.Name) continue;
+                    foreach (ModGroup g in a.Items) if (!b.Items.Contains(g)) b.Items.Add(g);
+                    if (a.Manual) b.Manual = true;
+                    list.RemoveAt(i);
+                    break;
+                }
+            }
+        }
+
+        // ------------------------------------------------ 小分类
+
+        /// <summary>「枪种/具体名」「人物名/泛称」这种识别残渣，拆开只留具体那一半。</summary>
+        internal static string SplitKind(string nm, out string hint)
+        {
+            hint = "";
+            if (string.IsNullOrEmpty(nm)) return "";
+            int i = nm.IndexOf('/');
+            if (i <= 0 || i >= nm.Length - 1) return nm;
+            string a = nm.Substring(0, i).Trim();
+            string b = nm.Substring(i + 1).Trim();
+            bool ka = KindWord(a), kb = KindWord(b);
+            if (ka && !kb) { hint = a; return b; }
+            if (kb && !ka) { hint = b; return a; }
+            return nm;
+        }
+
+        private static readonly string[] KindWords =
+        {
+            "步枪", "冲锋枪", "霰弹枪", "狙击枪", "手枪", "机枪", "近战", "枪械", "爆炸物",
+            "幸存者", "特感", "投掷物", "医疗包", "止痛药", "肾上腺素", "药品", "其他"
+        };
+
+        private static bool KindWord(string s)
+        {
+            foreach (string k in KindWords) if (s == k) return true;
+            return false;
+        }
+
+        /// <summary>小分类：大类下面再分一层（枪械 → 步枪 → AK-47）。</summary>
+        public static string SubOf(string cat, string name, string key, string hint, string gsub)
+        {
+            string n = name ?? "";
+            switch (cat)
+            {
+                case "枪械":
+                {
+                    if (hint != null && hint.Length > 0) return hint;   // 名字里本来就带着枪种，直接信它
+                    string k = GunKindOf(n, key);
+                    // 名字推不出来时，用识别出来的细分兜一层（人工改名之后常这样）
+                    if (k == "其他枪械" && IsGunKindName(gsub)) return gsub.Trim();
+                    return k;
+                }
+                case "人物": return CharKindOf(n);
+                case "药品": return MedKindOf(n, key);
+            }
+            string s = (gsub ?? "").Trim();
+            if (s.Length > 0 && s != "其他") return s;
+            return "其他杂项";
+        }
+
+        private static string GunKindOf(string nm, string key)
+        {
+            string s = ((nm ?? "") + " " + (key ?? "")).ToLowerInvariant();
+            // 顺序有讲究：带 rifle 的「猎枪/鸟狙」得先被狙击认走，否则会被步枪抢
+            if (HasAny(s, "awp", "scout", "military", "hunting", "sniper", "鸟狙", "猎枪", "狙击", "狙"))
+                return "狙击枪";
+            if (HasAny(s, "pump", "chrome", "spas", "autoshotgun", "shotgun", "木喷", "铁喷", "连喷", "霰弹"))
+                return "霰弹枪";
+            if (HasAny(s, "uzi", "mp5", "mac10", "mac-10", "silenced", "消音", "smg", "冲锋"))
+                return "冲锋枪";
+            if (HasAny(s, "ak47", "ak-47", "m16", "三连发", "scar", "sg552", "galil", "m4", "desert", "rifle", "步枪"))
+                return "步枪";
+            if (HasAny(s, "magnum", "pistol", "手枪", "马格南"))
+                return "手枪";
+            if (HasAny(s, "m60", "machinegun", "机枪"))
+                return "机枪";
+            if (HasAny(s, "katana", "machete", "crowbar", "fireaxe", "武士刀", "砍刀", "斧", "锤", "吉他", "球棒", "近战"))
+                return "近战";
+            if (HasAny(s, "grenade", "launcher", "榴弹"))
+                return "爆炸物";
+            return "其他枪械";
+        }
+
+        private static string CharKindOf(string nm)
+        {
+            string n = nm ?? "";
+            if (HasAny(n, "tank", "坦克", "witch", "女巫", "hunter", "smoker", "boomer", "spitter",
+                          "jockey", "charger", "特感"))
+                return "特感";
+            if (HasAny(n, "比尔", "佐伊", "路易斯", "弗朗西斯")) return "一代";
+            if (HasAny(n, "教练", "尼克", "埃利斯", "罗谢尔")) return "二代";
+            return "其他人物";
+        }
+
+        private static string MedKindOf(string nm, string key)
+        {
+            string s = ((nm ?? "") + " " + (key ?? "")).ToLowerInvariant();
+            if (HasAny(s, "medkit", "医疗包", "除颤", "defib")) return "治疗与复活";
+            if (HasAny(s, "pill", "止痛", "adrenaline", "肾上腺", "针")) return "暂时增益";
+            return "其他药品";
+        }
+
+        private static readonly string[] GunKindNames =
+        { "步枪", "冲锋枪", "霰弹枪", "狙击枪", "手枪", "机枪", "近战", "爆炸物" };
+
+        private static bool IsGunKindName(string s)
+        {
+            s = (s ?? "").Trim();
+            foreach (string k in GunKindNames) if (s == k) return true;
+            return false;
+        }
+
+        private static bool HasAny(string s, params string[] keys)        {
+            foreach (string k in keys)
+                if (s.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            return false;
+        }
+
+        private static readonly string[] SubOrder =
+        {
+            "步枪", "冲锋枪", "霰弹枪", "狙击枪", "手枪", "机枪", "近战", "爆炸物", "其他枪械",
+            "一代", "二代", "特感", "其他人物",
+            "治疗与复活", "暂时增益", "其他药品"
+        };
+
+        public static int SubRank(string sub)
+        {
+            for (int i = 0; i < SubOrder.Length; i++) if (SubOrder[i] == sub) return i;
+            return 500;
         }
 
         /// <summary>两把不同的枪可能都叫「鸟狙」，加个尾巴区分开，否则树里看着像重复项。</summary>
@@ -173,12 +321,14 @@ namespace Installer
         }
     }
 
-    /// <summary>树里的一行：分类标题，或者一个槽位。</summary>
+    /// <summary>树里的一行：大类标题、小分类标题，或者一个槽位。</summary>
     internal sealed class TreeRow
     {
         public bool IsCat;
+        public bool IsSub;       // 小分类标题：枪械 →「步枪」
         public bool IsNote;      // 「未归类」那一行：只是个说明入口
         public string Cat;
+        public string Sub;
         public Slot Slot;
     }
 
@@ -358,6 +508,8 @@ namespace Installer
             {
                 int ia = order.IndexOf(a.Cat), ib = order.IndexOf(b.Cat);
                 if (ia != ib) return ia.CompareTo(ib);
+                int sa = SlotIndex.SubRank(a.Sub), sb = SlotIndex.SubRank(b.Sub);
+                if (sa != sb) return sa.CompareTo(sb);
                 // 人工排过的位置按人工顺序；没排过的往后
                 int ra = CatPrefs.SlotRank(a.Cat, a.Name), rb = CatPrefs.SlotRank(b.Cat, b.Name);
                 if (ra != rb) return ra.CompareTo(rb);
@@ -381,13 +533,24 @@ namespace Installer
                 TreeRow h = new TreeRow();
                 h.IsCat = true; h.Cat = cat;
                 rows.Add(h);
-                if (!folded.Contains(cat))
-                    foreach (Slot s in inCat)
+                if (folded.Contains(cat)) continue;
+
+                // 小分类（枪械 → 步枪 → AK-47）。slots 已按小分类排好，这里顺着切段。
+                string lastSub = null;
+                foreach (Slot s in inCat)
+                {
+                    if (s.Sub != lastSub)
                     {
-                        TreeRow r = new TreeRow();
-                        r.Slot = s; r.Cat = cat;
-                        rows.Add(r);
+                        lastSub = s.Sub;
+                        TreeRow sh = new TreeRow();
+                        sh.IsSub = true; sh.Cat = cat; sh.Sub = s.Sub;
+                        rows.Add(sh);
                     }
+                    if (folded.Contains(SubKey(cat, s.Sub))) continue;        // 这一段整段收起
+                    TreeRow r = new TreeRow();
+                    r.Slot = s; r.Cat = cat; r.Sub = s.Sub;
+                    rows.Add(r);
+                }
             }
             if (unmatched > 0)
             {
@@ -474,6 +637,16 @@ namespace Installer
         public void SetFolded(string cat, bool on)
         {
             if (on) folded.Add(cat); else folded.Remove(cat);
+            BuildRows();
+        }
+
+        internal static string SubKey(string cat, string sub) { return cat + "\u0001" + sub; }
+
+        public bool IsSubFolded(string cat, string sub) { return folded.Contains(SubKey(cat, sub)); }
+
+        public void SetSubFolded(string cat, string sub, bool on)
+        {
+            if (on) folded.Add(SubKey(cat, sub)); else folded.Remove(SubKey(cat, sub));
             BuildRows();
         }
 
@@ -619,9 +792,11 @@ namespace Installer
         {
             int W = ClientSize.Width, H = ClientSize.Height;
             if (W <= 0 || H <= 0) return;
-            int treeW = Math.Min(404, Math.Max(240, W * 42 / 100));
+            // 三层之后每行多缩了一级，树比以前宽一点，否则物品名和「选了哪个」会挤在一起
+            int treeW = Math.Min(430, Math.Max(260, W * 46 / 100));
             if (scroll != null) scroll.SetBounds(0, 0, treeW, H);
-            if (body != null) body.Width = Math.Max(60, scroll.ClientSize.Width > 0 ? scroll.ClientSize.Width : treeW);
+            // Dock 让树体宽度自动跟着可视区走（含竖直滚动条出现/消失），不然右边「n 个」会被裁掉
+            if (body != null && body.Dock != DockStyle.Top) body.Dock = DockStyle.Top;
 
             int x = treeW + 1;
             int rightW = Math.Max(120, W - x);
@@ -646,7 +821,7 @@ namespace Installer
     }
 
     // ============================================================
-    //  树体：自绘，两级（分类 / 槽位）
+    //  树体：自绘，三层（大类 / 小分类 / 槽位）
     // ============================================================
     internal sealed class SlotTree : Control
     {
@@ -699,10 +874,32 @@ namespace Installer
                         TextRenderer.DrawText(g, r.Cat, Theme.UIBold, new Rectangle(23, y, W - 70, RowH), Theme.Ink,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                         int n = 0;
-                        foreach (TreeRow x in rows) if (!x.IsCat && !x.IsNote && x.Cat == r.Cat) n++;
+                        foreach (TreeRow x in rows)
+                            if (!x.IsCat && !x.IsSub && !x.IsNote && x.Cat == r.Cat) n++;
                         string num = r.Cat == "未归类" ? owner.Unmatched + " 个" : n + " 个";
                         TextRenderer.DrawText(g, num, Theme.UISmall, new Rectangle(W - 62, y, 50, RowH), Theme.Ink3,
                             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                        continue;
+                    }
+
+                    if (r.IsSub)
+                    {
+                        bool open = !owner.IsSubFolded(r.Cat, r.Sub);
+                        if (i == hover) g.FillRectangle(hovBg, 0, y, W, RowH);
+                        g.DrawLine(branch, 17, y, 17, y + RowH);
+                        g.DrawLine(branch, 17, y + RowH / 2, 26, y + RowH / 2);
+                        DrawTri(g, 32, y + RowH / 2, open);
+                        TextRenderer.DrawText(g, r.Sub, Theme.UIBold, new Rectangle(44, y, W - 92, RowH), Theme.Ink2,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
+                            | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                        int k = 0;
+                        foreach (TreeRow x in rows)
+                            if (!x.IsCat && !x.IsSub && !x.IsNote && x.Cat == r.Cat && x.Sub == r.Sub) k++;
+                        string num = k + " 个";
+                        TextRenderer.DrawText(g, num, Theme.UISmall, new Rectangle(W - 62, y, 50, RowH), Theme.Ink3,
+                            TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                        // 往下连一小段，免得和位置行的竖线断开
+                        if (open && k > 0) g.DrawLine(branch, 39, y + RowH / 2, 39, y + RowH);
                         continue;
                     }
 
@@ -724,9 +921,10 @@ namespace Installer
                     else if (i == hover) g.FillRectangle(hovBg, 0, y, W, RowH);
                     if (sel) using (SolidBrush b = new SolidBrush(Theme.Accent)) g.FillRectangle(b, 0, y + 3, 2, RowH - 6);
 
-                    // 分支线：竖线 + 一根横线
-                    bool nextSame = (i + 1 < rows.Count) && !rows[i + 1].IsCat && rows[i + 1].Cat == r.Cat;
-                    int bx = 17;
+                    // 分支线：竖线 + 一根横线（位置层缩进到小分类下面）
+                    bool nextSame = (i + 1 < rows.Count) && !rows[i + 1].IsCat && !rows[i + 1].IsSub
+                                    && rows[i + 1].Cat == r.Cat && rows[i + 1].Sub == r.Sub;
+                    int bx = 39;
                     g.DrawLine(branch, bx, y, bx, y + (nextSame ? RowH : RowH / 2 + 1));
                     g.DrawLine(branch, bx, y + RowH / 2, bx + 9, y + RowH / 2);
 
@@ -735,9 +933,11 @@ namespace Installer
                     Color dot = cnt == 0 ? Color.FromArgb(210, 216, 223) : (cnt > 1 ? Theme.Warn : Theme.Ok);
                     using (SolidBrush b = new SolidBrush(dot)) g.FillEllipse(b, bx + 17, y + RowH / 2 - 3, 6, 6);
 
-                    int nx = bx + 32;
-                    int nameW = 92;
-                    TextRenderer.DrawText(g, s.Name, sel ? Theme.UIBold : Theme.UI,
+                    int nx = bx + 30;
+                    int nameW = 86;
+                    // 「步枪」小分类下又有个位置叫「步枪」= 认不出具体型号的那一堆，改个说法免得看着像重复
+                    string showName = s.Name == s.Sub ? "未分型号" : s.Name;
+                    TextRenderer.DrawText(g, showName, sel ? Theme.UIBold : Theme.UI,
                         new Rectangle(nx, y, nameW, RowH), sel ? Theme.Ink : Theme.Ink,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                         | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
@@ -805,6 +1005,10 @@ namespace Installer
             {
                 owner.SetFolded(r.Cat, !owner.IsFolded(r.Cat));
             }
+            else if (r.IsSub)
+            {
+                owner.SetSubFolded(r.Cat, r.Sub, !owner.IsSubFolded(r.Cat, r.Sub));
+            }
             else if (r.IsNote)
             {
                 owner.SelectUnmatched();
@@ -852,6 +1056,8 @@ namespace Installer
             // 分类分布
             System.Collections.Generic.Dictionary<string, int> byCat =
                 new System.Collections.Generic.Dictionary<string, int>(StringComparer.Ordinal);
+            System.Collections.Generic.Dictionary<string, int> bySub =
+                new System.Collections.Generic.Dictionary<string, int>(StringComparer.Ordinal);
             for (int i = 0; i < slots; i++)
             {
                 Slot s = treeView.SlotAt(i);
@@ -859,11 +1065,19 @@ namespace Installer
                 int n;
                 byCat.TryGetValue(s.Cat, out n);
                 byCat[s.Cat] = n + 1;
-                if (i < 12) Core.Log("INFO", "TREE  " + s.Cat + " / " + s.Name + "  候选 " + s.Items.Count
+                string sk = s.Cat + " \u0001 " + s.Sub;
+                bySub.TryGetValue(sk, out n);
+                bySub[sk] = n + 1;
+                Core.Log("INFO", "TREE  " + s.Cat + " / " + s.Sub + " / " + s.Name + "  候选 " + s.Items.Count
                                             + "  已选 " + (treeView.HasChecked(s) ? "是" : "否"));
             }
             foreach (KeyValuePair<string, int> kv in byCat)
                 Core.Log("INFO", "TREE 分类 " + kv.Key + " = " + kv.Value + " 个位置");
+            foreach (KeyValuePair<string, int> kv in bySub)
+            {
+                string[] pp = kv.Key.Split('\u0001');
+                Core.Log("INFO", "TREE 小分类 " + pp[0].Trim() + " → " + pp[1].Trim() + " = " + kv.Value + " 个位置");
+            }
 
             // 覆盖诊断：每类有多少个 mod 认得出来
             foreach (string c in Catalog.Cats)
@@ -914,7 +1128,7 @@ namespace Installer
             Core.Log("INFO", "TREE 点「留原版」：勾选数 " + n2 + " → " + n3);
             if (n3 != n2 - treeView.SlotAt(idx).Items.Count && n3 >= n2) Core.Log("FAIL", "TREE 留原版没清掉");
 
-            // 折叠 / 展开
+            // 折叠 / 展开：大类一层、小分类一层都要能收
             int rowsBefore = treeView.RowCount;
             treeView.SetFolded("枪械", true);
             Application.DoEvents();
@@ -924,6 +1138,35 @@ namespace Installer
             treeView.SetFolded("枪械", false);
             Application.DoEvents();
             Core.Log("INFO", "TREE 展开回去：行数 " + treeView.RowCount);
+
+            string cat1 = null, sub1 = null;
+            for (int i = 0; i < treeView.SlotCount; i++)
+            {
+                Slot s1 = treeView.SlotAt(i);
+                if (s1 == null) continue;
+                if (cat1 == null) { cat1 = s1.Cat; sub1 = s1.Sub; }
+                if (s1.Cat == cat1 && s1.Sub == sub1) continue;
+                break;
+            }
+            if (cat1 != null && sub1 != null)
+            {
+                int r0 = treeView.RowCount;
+                int inSub = 0;
+                for (int i = 0; i < treeView.SlotCount; i++)
+                {
+                    Slot s1 = treeView.SlotAt(i);
+                    if (s1 != null && s1.Cat == cat1 && s1.Sub == sub1) inSub++;
+                }
+                treeView.SetSubFolded(cat1, sub1, true);
+                Application.DoEvents();
+                int r1 = treeView.RowCount;
+                Core.Log("INFO", "TREE 折叠小分类「" + cat1 + " / " + sub1 + "」（" + inSub + " 个位置）：行数 "
+                                + r0 + " → " + r1);
+                if (r1 >= r0) Core.Log("FAIL", "TREE 小分类折叠没生效");
+                treeView.SetSubFolded(cat1, sub1, false);
+                Application.DoEvents();
+                if (treeView.RowCount != r0) Core.Log("FAIL", "TREE 小分类展开后行数对不上");
+            }
 
             // 未归类入口
             treeView.SelectUnmatched();
