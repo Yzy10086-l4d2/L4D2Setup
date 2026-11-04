@@ -423,14 +423,16 @@ namespace Installer
             ShowInTaskbar = false;
 
             lblHead = new Label();
-            lblHead.SetBounds(12, 10, 640, 34);
+            lblHead.SetBounds(12, 10, 640, 44);
             lblHead.Font = Theme.UISmall;
             lblHead.ForeColor = Theme.Ink2;
-            lblHead.Text = "调好的参数存在 U 盘上，换台机器装完直接把这一套推过去，不用再一项项设置。\r\n涉及两个文件：left4dead2\\cfg\\autoexec.cfg（L4N 按键/网络/亮度）和 skeeto_setting.ini（Skeeto 面板设置）。";
+            lblHead.Text = "这个窗口管的是 U 盘上的参数存档（一个文件夹一套，位置在下面写着）。\r\n"
+                + "「从这台机器存」= 把游戏目录里调好的两个文件抄进 U 盘；「套用到本机」= 反过来推回游戏目录。\r\n"
+                + "存档位置：" + Tweaks.Root;
             Controls.Add(lblHead);
 
             lb = new ListBox();
-            lb.SetBounds(12, 50, 200, 300);
+            lb.SetBounds(12, 58, 200, 292);
             lb.BorderStyle = BorderStyle.FixedSingle;
             lb.BackColor = Theme.Surface;
             lb.ForeColor = Theme.Ink;
@@ -440,7 +442,7 @@ namespace Installer
             Controls.Add(lb);
 
             txtPreview = new TextBox();
-            txtPreview.SetBounds(224, 50, 428, 300);
+            txtPreview.SetBounds(224, 58, 428, 292);
             txtPreview.Multiline = true;
             txtPreview.ReadOnly = true;
             txtPreview.ScrollBars = ScrollBars.Vertical;
@@ -451,30 +453,32 @@ namespace Installer
             txtPreview.Font = Theme.UISmall;
             Controls.Add(txtPreview);
 
-            btnSave = new FlatButton(); btnSave.Text = "存当前配置为…"; btnSave.SetBounds(12, 362, 130, Theme.H);
+            btnSave = new FlatButton(); btnSave.Text = "把本机参数存进U盘"; btnSave.SetBounds(12, 362, 152, Theme.H);
             btnSave.Click += delegate { DoSave(); }; Controls.Add(btnSave);
 
-            btnApply = new FlatButton(); btnApply.Text = "套用到本机"; btnApply.Primary = true; btnApply.SetBounds(150, 362, 108, Theme.H);
+            btnApply = new FlatButton(); btnApply.Text = "套用到本机"; btnApply.Primary = true; btnApply.SetBounds(170, 362, 108, Theme.H);
             btnApply.Click += delegate { DoApply(); }; Controls.Add(btnApply);
 
-            btnRestore = new FlatButton(); btnRestore.Text = "还原本机原配置"; btnRestore.SetBounds(266, 362, 128, Theme.H);
+            btnRestore = new FlatButton(); btnRestore.Text = "还原本机参数"; btnRestore.SetBounds(284, 362, 104, Theme.H);
             btnRestore.Click += delegate { DoRestore(); }; Controls.Add(btnRestore);
 
-            btnDel = new FlatButton(); btnDel.Text = "删除存档"; btnDel.SetBounds(402, 362, 88, Theme.H);
+            btnDel = new FlatButton(); btnDel.Text = "删除存档"; btnDel.SetBounds(394, 362, 88, Theme.H);
             btnDel.Click += delegate { DoDelete(); }; Controls.Add(btnDel);
 
-            FlatButton btnOpen = new FlatButton(); btnOpen.Text = "打开文件夹"; btnOpen.SetBounds(498, 362, 92, Theme.H);
+            FlatButton btnOpen = new FlatButton(); btnOpen.Text = "打开文件夹"; btnOpen.SetBounds(488, 362, 92, Theme.H);
             btnOpen.Click += delegate { try { Directory.CreateDirectory(Tweaks.Root); System.Diagnostics.Process.Start("explorer.exe", Tweaks.Root); } catch { } }; Controls.Add(btnOpen);
 
-            FlatButton btnClose = new FlatButton(); btnClose.Text = "关闭"; btnClose.SetBounds(598, 362, 54, Theme.H);
+            FlatButton btnClose = new FlatButton(); btnClose.Text = "关闭"; btnClose.SetBounds(586, 362, 54, Theme.H);
             btnClose.DialogResult = DialogResult.Cancel; Controls.Add(btnClose);
             CancelButton = btnClose;
 
             Label tip = new Label();
-            tip.SetBounds(12, 400, 640, 40);
+            tip.SetBounds(12, 396, 640, 52);
             tip.Font = Theme.UISmall;
             tip.ForeColor = Theme.Ink3;
-            tip.Text = "「还原本机原配置」只回滚这两个参数文件（用装机时留的 .装之前 备份），不动平台、不动 MOD。\r\n「删除存档」是把 U 盘上那套目录整个删掉，不留副本；同名再存一次时，旧的那份才会自动改名留一份 .bak-时间戳。";
+            tip.Text = "左边列表 = U 盘上的存档文件夹（" + Tweaks.Root + "）。\r\n"
+                + "「还原本机参数」只回滚游戏目录里那两个参数文件（用装机时留的 .装之前 备份），不动平台、不动 MOD。\r\n"
+                + "「删除存档」是把 U 盘上那套文件夹整个删掉；同名再存一次时，旧的那份会自动改名留一份 .bak-时间戳。";
             Controls.Add(tip);
 
             Reload(current);
@@ -487,7 +491,7 @@ namespace Installer
             foreach (string n in Tweaks.List()) lb.Items.Add(n);
             if (lb.Items.Count == 0)
             {
-                txtPreview.Text = "U 盘上还没有参数存档。\r\n\r\n先把游戏装好、参数调成你想要的样子，\r\n再点下面的「存当前配置为…」存一套。\r\n之后换机器装机时勾上「套用参数配置」就会自动写进去。";
+                txtPreview.Text = "U 盘上还没有参数存档。\r\n\r\n先把游戏装好、参数调成你想要的样子，\r\n再点下面的「把本机参数存进U盘」，\r\n就会在\r\n" + Tweaks.Root + "\r\n下面建一个文件夹存起来。\r\n之后换机器装机时勾上「写参数配置」就会自动写进去。";
                 Selected(null);
                 return;
             }
@@ -528,13 +532,20 @@ namespace Installer
             }
             string def = Sel();
             if (def == null || def.Length == 0) def = "机器-" + Environment.MachineName;
-            string name = PromptForm.Ask("给这套参数起个名字（例：网吧标准 / 竞技 / 我的）\r\n同名会覆盖（旧的那份自动留 .bak）", "保存参数配置", def);
+            string name = PromptForm.Ask(
+                "会把这台机器游戏目录里的两份参数抄进 U 盘：\r\n"
+                + "  left4dead2\\cfg\\autoexec.cfg（L4N 按键 / 网络 / 亮度）\r\n"
+                + "  skeeto_setting.ini（Skeeto 面板设置）\r\n\r\n"
+                + "给这套起个名字，U 盘存档里会建一个同名文件夹：\r\n"
+                + Tweaks.Root + "\\<名字>\r\n"
+                + "（同名再存一次，旧的那套自动留 .bak，不会丢）",
+                "把本机参数存进 U 盘", def);
             if (string.IsNullOrEmpty(name)) return;
             List<string> lines;
             string err = Tweaks.Capture(gameRoot, name.Trim(), out lines);
             if (err != null) { MessageBox.Show(err, "没存成"); return; }
             Reload(name.Trim());
-            MessageBox.Show("已保存到：\r\n" + Tweaks.DirOf(name.Trim()) + "\r\n\r\n" + string.Join("\r\n", lines.ToArray()), "存好了");
+            MessageBox.Show("已存进 U 盘：\r\n" + Tweaks.DirOf(name.Trim()) + "\r\n\r\n" + string.Join("\r\n", lines.ToArray()), "存好了");
         }
 
         private void DoApply()
