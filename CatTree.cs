@@ -910,6 +910,8 @@ namespace Installer
         internal int UnmatchedRows { get { return lv.Items.Count; } }
         /// <summary>自测用：「指定位置…」手动入口是否可见。</summary>
         internal bool UnmatchedButtonVisible { get { return btnCat != null && btnCat.Visible; } }
+
+        internal List<ModGroup> UnmatchedGroups { get { return unmatchedGroups; } }
         internal int RowCount { get { return body == null ? 0 : body.RowCount; } }
         internal int SlotCount { get { return slots.Count; } }
         internal int SlotCheckedCount
@@ -1740,6 +1742,17 @@ namespace Installer
                 Core.Log("FAIL", "TREE 未归类列表行数 " + treeView.UnmatchedRows + " 和计数 " + treeView.Unmatched + " 对不上");
             if (!treeView.UnmatchedButtonVisible)
                 Core.Log("FAIL", "TREE 未归类页没有「指定位置…」手动入口");
+            // 名单跟着日志走：未归类数一波动，直接看日志就知道是哪几组
+            {
+                List<string> names = new List<string>();
+                foreach (ModGroup g in treeView.UnmatchedGroups)
+                {
+                    ModItem mm = g.Main;
+                    names.Add((mm == null ? g.Name : mm.Name) + "(" + (mm == null ? "?" : (mm.Subject == "" ? "无主体" : mm.Subject)) + ")");
+                    if (names.Count >= 30) break;
+                }
+                Core.Log("INFO", "TREE 未归类名单: " + string.Join("、", names.ToArray()));
+            }
 
             // 扩展（音效 / 只改第一人称模型 / HUD）是叠上去的：自己能开关，换模型时不该被一起关掉
             int exIdx = -1;

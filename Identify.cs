@@ -62,6 +62,7 @@ namespace Installer
             // ---- 投掷物
             {"vomitjar",         "胆汁"},
             {"vomit_jar",        "胆汁"},
+            {"bile_flask",       "胆汁"},        // 官方胆汁模型名（来源：NekoVpk TaggedAssets, MIT）
             {"molotov",          "燃烧瓶"},
             {"pipebomb",         "土制炸弹"},
             {"grenade_launcher", "榴弹发射器"},
@@ -104,14 +105,34 @@ namespace Installer
             {"pistol",           "手枪"},
             {"melee",            "近战武器"},
 
-            // ---- 近战具体型号
+            // ---- 近战具体型号（14 种全；来源：NekoVpk TaggedAssets, MIT）
             {"katana",           "武士刀"},
             {"machete",          "砍刀"},
             {"crowbar",          "撬棍"},
             {"fireaxe",          "消防斧"},
+            {"frying_pan",       "平底锅"},      // 官方模型名 frying_pan；fryingpan 是非常规模型名，兜在底下
             {"fryingpan",        "平底锅"},
+            {"chainsaw",         "电锯"},
+            {"cricket_bat",      "板球拍"},
+            {"golfclub",         "高尔夫球杆"},
+            {"tonfa",            "警棍"},
+            {"shovel",           "铁锹"},
+            {"pitchfork",        "干草叉"},
+            {"electric_guitar",  "电吉他"},
+            {"knife",            "小刀"},        // 官方 v_knife_t
+            {"v_bat",            "棒球棍"},      // 官方 v_bat/w_bat；裸 "bat" 会误伤，必须带前缀
+            {"w_bat",            "棒球棍"},
 
-            // ---- 其余杂项
+            // ---- 其余杂项（道具/弹药包；来源：NekoVpk TaggedAssets, MIT）
+            {"explosive_ammopack",   "爆破弹药包"},
+            {"incendiary_ammopack",  "燃烧弹药包"},
+            {"laser_sights",     "激光瞄准"},
+            {"oxygentank",       "氧气瓶"},
+            {"propanecanister",  "煤气罐"},
+            {"explosive_box",    "烟花盒"},
+            {"barrel_fuel",      "燃料桶"},
+            {"gnome",            "地精"},
+            {"cola",             "可乐"},
             {"concrete_spawnchunk", "石头"},
             {"ammo",             "弹药"},
             {"gascan",           "油桶"},
@@ -442,7 +463,7 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
-            get { return Path.Combine(Core.LogDir, "identify-cache-v14.tsv"); }
+            get { return Path.Combine(Core.LogDir, "identify-cache-v15.tsv"); }
         }
 
         private static string PackAssets(string assets)
@@ -535,7 +556,7 @@ namespace Installer
 
         private static readonly string[,] ThrowKeys = new string[,]
         {
-            {"vomitjar","胆汁"},{"vomit_jar","胆汁"},
+            {"vomitjar","胆汁"},{"vomit_jar","胆汁"},{"bile_flask","胆汁"},
             {"molotov","燃烧瓶"},{"pipebomb","土制炸弹"},{"grenade","投掷物"}
         };
 
