@@ -907,11 +907,97 @@ namespace Installer
 
         internal int Unmatched { get { return unmatched; } }
         /// <summary>自测用：未归类页列表当前列了几行（先 SelectUnmatched 再读）。</summary>
-        internal int UnmatchedRows { get { return lv.Items.Count; } }
+        internal int UnmatchedRows
+        {
+            get
+            {
+                int n = 0;
+                foreach (ListViewItem li in lv.Items)
+                    if (li.Tag is ModGroup) n++;      // 「同类包」伙头行不算
+                return n;
+            }
+        }
         /// <summary>自测用：「指定位置…」手动入口是否可见。</summary>
         internal bool UnmatchedButtonVisible { get { return btnCat != null && btnCat.Visible; } }
 
         internal List<ModGroup> UnmatchedGroups { get { return unmatchedGroups; } }
+
+        // ---------------- 同类圈伙（AI 聚类的落地用法） ----------------
+        // 不给聚类起名、不拿它认槽位（实验证明那只有 75% 准、答不出"替换目标"）。
+        // 它干一件查表干不了的事：把"内容确实像"的包（库一份+游戏一份的重复、
+        // 同款不同名的变体）在未归类页圈成一伙，提示"挑一个装就行"。
+        // 相似度 = 包内路径 token 集合的 Jaccard 系数，阈值取自聚类实验（0.6 时同伙纯度 93%）。
+        private const double ClusterThreshold = 0.6;
+
+        private static HashSet<string> ClusterTokens(ModItem m)
+        {
+            HashSet<string> t = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (m == null || string.IsNullOrEmpty(m.AssetPaths)) return t;
+            foreach (string p in m.AssetPaths.Split(';'))
+            {
+                if (p.Length == 0) continue;
+                string[] parts = p.Split('/');
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    string seg = parts[i];
+                    if (seg.Length == 0) continue;
+                    int dot = seg.LastIndexOf('.');
+                    if (dot > 0)
+                    {
+                        t.Add("ext:" + seg.Substring(dot + 1));
+                        string stem = seg.Substring(0, dot);
+                        if (stem.StartsWith("v_", StringComparison.OrdinalIgnoreCase)
+                            || stem.StartsWith("w_", StringComparison.OrdinalIgnoreCase))
+                            stem = stem.Substring(2);
+                        t.Add("name:" + stem);
+                    }
+                    else t.Add("dir:" + seg);
+                }
+                t.Add("top:" + parts[0]);
+            }
+            return t;
+        }
+
+        private static double Jaccard(HashSet<string> a, HashSet<string> b)
+        {
+            if (a.Count == 0 || b.Count == 0) return 0;
+            int inter = 0;
+            foreach (string s in a) if (b.Contains(s)) inter++;
+            return (double)inter / (a.Count + b.Count - inter);
+        }
+
+        /// <summary>把未归类的组按内容相似度圈伙：返回「伙 -> 成员」，只含有 2 个及以上成员的伙。</summary>
+        internal static Dictionary<ModGroup, List<ModGroup>> ClusterUnmatched(List<ModGroup> groups, out int clustered)
+        {
+            clustered = 0;
+            Dictionary<ModGroup, List<ModGroup>> result = new Dictionary<ModGroup, List<ModGroup>>();
+            int n = groups.Count;
+            if (n < 2) return result;
+            List<HashSet<string>> tok = new List<HashSet<string>>(n);
+            for (int i = 0; i < n; i++) tok.Add(ClusterTokens(groups[i].Main));
+            int[] parent = new int[n];
+            for (int i = 0; i < n; i++) parent[i] = i;
+            System.Func<int, int> find = null;
+            find = delegate(int x) { while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+            for (int i = 0; i < n; i++)
+                for (int j = i + 1; j < n; j++)
+                    if (Jaccard(tok[i], tok[j]) >= ClusterThreshold)
+                    { int pi = find(i), pj = find(j); if (pi != pj) parent[pi] = pj; }
+            Dictionary<int, List<ModGroup>> byRoot = new Dictionary<int, List<ModGroup>>();
+            for (int i = 0; i < n; i++)
+            {
+                int r = find(i);
+                if (!byRoot.ContainsKey(r)) byRoot[r] = new List<ModGroup>();
+                byRoot[r].Add(groups[i]);
+            }
+            foreach (List<ModGroup> members in byRoot.Values)
+            {
+                if (members.Count < 2) continue;
+                clustered += members.Count;
+                foreach (ModGroup m in members) result[m] = members;
+            }
+            return result;
+        }
         internal int RowCount { get { return body == null ? 0 : body.RowCount; } }
         internal int SlotCount { get { return slots.Count; } }
         internal int SlotCheckedCount
@@ -1125,25 +1211,29 @@ namespace Installer
             try
             {
                 lv.Items.Clear();
+                // 内容相似的圈成一伙、排在相邻位置，伙与伙之间不穿插；单干的保持原顺序跟在后面
+                int clustered;
+                Dictionary<ModGroup, List<ModGroup>> clan = ClusterUnmatched(unmatchedGroups, out clustered);
+                HashSet<ModGroup> emitted = new HashSet<ModGroup>();
                 foreach (ModGroup g in unmatchedGroups)
                 {
-                    bool on = mf.CountChecked(g) > 0;
-                    ListViewItem li = new ListViewItem(g.Name);
-                    li.SubItems.Add(KindsOf(g));
-                    li.SubItems.Add(Core.Human(g.Size));
-                    li.StateImageIndex = on ? 1 : 0;
-                    if (on) li.Font = Theme.UIBold;
-                    li.Tag = g;
-                    if (g.IsSet)
+                    if (emitted.Contains(g)) continue;
+                    List<ModGroup> members;
+                    bool inClan = clan.TryGetValue(g, out members);
+                    if (inClan)
                     {
-                        li.UseItemStyleForSubItems = false;
-                        li.SubItems[1].Text = KindsOf(g) + "·组合装" + g.Parts.Count + "件";
-                        li.SubItems[1].ForeColor = Theme.Info;
-                        li.SubItems[1].Font = Theme.UIBold;
-                        li.ToolTipText = PartsTip(g);
+                        ListViewItem head = new ListViewItem("同类包 " + members.Count + " 个 · 内容高度相似，挑一个装就行");
+                        head.Tag = null;
+                        head.ForeColor = Theme.Ink3;
+                        head.Font = Theme.UIBold;
+                        lv.Items.Add(head);
                     }
-                    else li.ToolTipText = "双击这行（或点右下角「指定位置…」），告诉程序它算哪一类、替换什么";
-                    lv.Items.Add(li);
+                    foreach (ModGroup mg in inClan ? members : new List<ModGroup> { g })
+                    {
+                        if (emitted.Contains(mg)) continue;
+                        emitted.Add(mg);
+                        AddUnmatchedRow(mg, inClan);
+                    }
                 }
             }
             finally { lv.EndUpdate(); }
@@ -1151,6 +1241,28 @@ namespace Installer
             if (btnCat != null) btnCat.Visible = true;
             LayoutSelf();
             LayoutCols();
+        }
+
+        /// <summary>未归类页的一行。<paramref name="inClan"/>=true 表示上面还有「同类包」伙头，名字前加 └。</summary>
+        private void AddUnmatchedRow(ModGroup g, bool inClan)
+        {
+            bool on = mf.CountChecked(g) > 0;
+            ListViewItem li = new ListViewItem((inClan ? "└ " : "") + g.Name);
+            li.SubItems.Add(KindsOf(g));
+            li.SubItems.Add(Core.Human(g.Size));
+            li.StateImageIndex = on ? 1 : 0;
+            if (on) li.Font = Theme.UIBold;
+            li.Tag = g;
+            if (g.IsSet)
+            {
+                li.UseItemStyleForSubItems = false;
+                li.SubItems[1].Text = KindsOf(g) + "·组合装" + g.Parts.Count + "件";
+                li.SubItems[1].ForeColor = Theme.Info;
+                li.SubItems[1].Font = Theme.UIBold;
+                li.ToolTipText = PartsTip(g);
+            }
+            else li.ToolTipText = "双击这行（或点右下角「指定位置…」），告诉程序它算哪一类、替换什么";
+            lv.Items.Add(li);
         }
 
         private static string KindsOf(ModGroup g)
@@ -1752,6 +1864,11 @@ namespace Installer
                     if (names.Count >= 30) break;
                 }
                 Core.Log("INFO", "TREE 未归类名单: " + string.Join("、", names.ToArray()));
+                int clu;
+                Dictionary<ModGroup, List<ModGroup>> clans = CatTree.ClusterUnmatched(treeView.UnmatchedGroups, out clu);
+                HashSet<List<ModGroup>> clanSet = new HashSet<List<ModGroup>>();
+                foreach (List<ModGroup> mm2 in clans.Values) clanSet.Add(mm2);
+                Core.Log("INFO", "TREE 未归类圈伙: " + (clu == 0 ? "没有相似包" : clu + " 个包圈成 " + clanSet.Count + " 伙"));
             }
 
             // 扩展（音效 / 只改第一人称模型 / HUD）是叠上去的：自己能开关，换模型时不该被一起关掉
