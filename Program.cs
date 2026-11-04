@@ -60,6 +60,7 @@ namespace Installer
             string uiCat = null;
             bool uiScheme = false;
             bool uiProfile = false;
+            bool uiSync = false;
             string uiParts = null;
             string uiTweaks = null;
             bool uiLaunch = false;
@@ -82,6 +83,7 @@ namespace Installer
                 else if (a.StartsWith("--uicat=", StringComparison.OrdinalIgnoreCase)) uiCat = a.Substring(8);
                 else if (string.Equals(a, "--uischeme", StringComparison.OrdinalIgnoreCase)) uiScheme = true;
                 else if (string.Equals(a, "--uiprofile", StringComparison.OrdinalIgnoreCase)) uiProfile = true;
+                else if (string.Equals(a, "--uisync", StringComparison.OrdinalIgnoreCase)) uiSync = true;
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
                 else if (string.Equals(a, "--launch", StringComparison.OrdinalIgnoreCase)) uiLaunch = true;
@@ -204,6 +206,7 @@ namespace Installer
                     if (uiLaunch) { f.UiTestLaunch(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDup) { f.UiTestDup(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiScheme) { f.UiTestSchemeOnly(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiSync) { f.UiTestSync(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiProfile) { f.UiTestProfileForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeep != null) { f.UiTestFilter(uiDeep); System.Windows.Forms.Application.DoEvents(); f.UiTestDeep(); System.Windows.Forms.Application.DoEvents(); }

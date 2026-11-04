@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 rem ============================================================
 rem  Build the installer exe with the C# compiler shipped with
 rem  Windows. No SDK, no NuGet, no network. Keep this pure ASCII.
@@ -21,7 +21,7 @@ if exist "%~dp0app.ico" set "ICONARG=/win32icon:%~dp0app.ico"
   /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll ^
   /reference:System.Windows.Forms.dll ^
   /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll ^
-  "%~dp0AssemblyInfo.cs" "%~dp0Theme.cs" "%~dp0Program.cs" "%~dp0Core.cs" "%~dp0Launch.cs" "%~dp0Dup.cs" "%~dp0Catalog.cs" "%~dp0Parts.cs" "%~dp0Tweaks.cs" "%~dp0Work.cs" "%~dp0Mods.cs" "%~dp0Identify.cs" "%~dp0SelfTest.cs" "%~dp0Ui.cs"
+  "%~dp0AssemblyInfo.cs" "%~dp0Theme.cs" "%~dp0Program.cs" "%~dp0Core.cs" "%~dp0Launch.cs" "%~dp0Dup.cs" "%~dp0Catalog.cs" "%~dp0Parts.cs" "%~dp0Tweaks.cs" "%~dp0Work.cs" "%~dp0Mods.cs" "%~dp0Identify.cs" "%~dp0SelfTest.cs" "%~dp0CatWindow.cs" "%~dp0Ui.cs"
 if errorlevel 1 (
   echo.
   echo [X] Build failed.
