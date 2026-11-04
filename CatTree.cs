@@ -10,8 +10,8 @@ namespace Installer
     //  方案树（A 版）
     //  左边按「能替换的东西」列成横向树：枪械 → AK-47 / M16 …
     //  右边是这件东西的候选 MOD，单选。
-    //  规则：一个位置只留一个 MOD，选新的就把同位置原来的取消。
-    //  不区分「模型 / 音效 / 视角」—— 那件事交给用户自己判断。
+    //  规则：一个位置只留一个本体，选新的就把同位置原来的取消；
+    //        只改第一人称模型 / 音效 / HUD 这类不换本体的，单独一栏，各管各的开关。
     // ============================================================
 
     /// <summary>一个「能替换的东西」：AK-47 / 医疗包 / 教练 …</summary>
@@ -22,7 +22,10 @@ namespace Installer
         public string Cat;                       // 大类：枪械 / 医疗 / 人物 …
         public string Sub = "其他";              // 小分类：步枪 / 霰弹枪 / 一代 / 医疗包 …
         public bool Manual;                      // 这个位置是人工指定出来的（可能还要并回自动的同名位置）
+        // 换本体的：一个位置只能有一个（同一把枪两套模型会打架）
         public readonly List<ModGroup> Items = new List<ModGroup>();
+        // 叠加的扩展：开火音效 / 只改第一人称模型 / HUD 图标 —— 不换本体，可以和上面的同时装
+        public readonly List<ModGroup> Extras = new List<ModGroup>();
     }
 
     /// <summary>把 MOD 库按「改的是什么」聚成槽位。认不出改什么的，不进树。</summary>
@@ -110,7 +113,7 @@ namespace Installer
                     s.Name = nm;                               // 「步枪」这种泛称，换成更具体的名字
                     s.Sub = SubOf(cat, s.Name, key, hint, g.Sub);
                 }
-                s.Items.Add(g);
+                if (IsExtra(g)) s.Extras.Add(g); else s.Items.Add(g);
             }
             MergeManual(list);
             MergeSame(list);
@@ -135,6 +138,7 @@ namespace Installer
                     if (b.Cat != a.Cat || b.Name != a.Name) continue;
                     if (b.Manual) continue;                   // 两个都是人工的：key 相同，不会发生
                     foreach (ModGroup g in a.Items) if (!b.Items.Contains(g)) b.Items.Add(g);
+                    foreach (ModGroup g in a.Extras) if (!b.Extras.Contains(g)) b.Extras.Add(g);
                     list.RemoveAt(i);
                     break;
                 }
@@ -155,6 +159,7 @@ namespace Installer
                     Slot b = list[j];
                     if (b.Cat != a.Cat || b.Sub != a.Sub || b.Name != a.Name) continue;
                     foreach (ModGroup g in a.Items) if (!b.Items.Contains(g)) b.Items.Add(g);
+                    foreach (ModGroup g in a.Extras) if (!b.Extras.Contains(g)) b.Extras.Add(g);
                     if (a.Manual) b.Manual = true;
                     list.RemoveAt(i);
                     break;
@@ -216,7 +221,7 @@ namespace Installer
             return "其他杂项";
         }
 
-        private static string GunKindOf(string nm, string key)
+        internal static string GunKindOf(string nm, string key)
         {
             string s = ((nm ?? "") + " " + (key ?? "")).ToLowerInvariant();
             // 顺序有讲究：带 rifle 的「15发木狙/鸟狙」得先被狙击认走，否则会被步枪抢
@@ -364,13 +369,34 @@ namespace Installer
             return true;
         }
 
-        private static bool Vague(string s)
+        internal static bool Vague(string s)
         {
             return s == "步枪" || s == "冲锋枪" || s == "霰弹枪" || s == "投掷物"
                 || s == "手枪" || s == "机枪" || s == "狙击枪" || s == "特殊武器"
                 || s == "爆炸物" || s == "其他枪械" || s == "其他枪"
                 || s == "幸存者" || s == "人物" || s == "近战" || s == "近战武器"
                 || s == "其他" || s.Length == 0;
+        }
+
+        /// <summary>
+        /// 这件东西是「叠加的扩展」还是「换本体的」。
+        /// 依据是识别出来的「改了什么」，外加一条事实：包里有没有动世界模型。
+        ///   只换了第一人称手持模型（v_，世界里的 w_ 一个没动）、音效、HUD 图标 = 可以叠上去；
+        ///   模型、材质（贴图）= 换外观，一个位置只能有一套，两套会互相覆盖。
+        /// </summary>
+        public static bool IsExtra(ModGroup g)
+        {
+            if (g == null) return false;
+            ModItem m = g.Main;
+            if (m == null) return false;
+            if (m.Only1P) return true;                                         // 只动了第一人称，和整套模型不抢
+            string k = (m.Kinds ?? "").Trim();
+            if (k.Length == 0) return false;                                   // 什么都读不出来：当本体，别乱叠
+            if (k.IndexOf("模型", StringComparison.Ordinal) >= 0) return false;
+            if (k.IndexOf("材质", StringComparison.Ordinal) >= 0) return false;  // 贴图替换也是换外观
+            if (k.IndexOf("地图", StringComparison.Ordinal) >= 0) return false;
+            return k.IndexOf("音效", StringComparison.Ordinal) >= 0
+                || k.IndexOf("HUD", StringComparison.Ordinal) >= 0;
         }
 
         // 泛称补全用：关键词 → 标准位置名。长的排前面，免得 "M4" 抢走 "M4A1"。
@@ -473,7 +499,9 @@ namespace Installer
                 foreach (Slot s in inCat)
                 {
                     if (showSub && s.Sub != lastSub) { sb.AppendLine("  〈" + s.Sub + "〉"); lastSub = s.Sub; }
-                    sb.AppendLine("    " + s.Name + "  (" + s.Items.Count + " 个)" + (s.Manual ? " [人工]" : ""));
+                    sb.AppendLine("    " + s.Name + "  (" + s.Items.Count + " 个"
+                        + (s.Extras.Count > 0 ? " + 扩展 " + s.Extras.Count : "") + ")"
+                        + (s.Manual ? " [人工]" : ""));
                 }
             }
             string f = System.IO.Path.Combine(Core.LogDir, "方案树.txt");
@@ -513,7 +541,9 @@ namespace Installer
         private readonly Panel scroll;
         private readonly SlotTree body;
         private readonly ListView lv;
+        private readonly ListView lvExtra;                 // 下半：可叠加的扩展
         private readonly Label lblTitle, lblCur, lblFoot;
+        private readonly Label lblExtraTitle;
         private readonly FlatButton btnPick;
 
         private List<Slot> slots = new List<Slot>();
@@ -542,26 +572,8 @@ namespace Installer
             body.BackColor = Theme.SurfaceAlt;
             scroll.Controls.Add(body);
 
-            // ---- 右：候选 ----
-            lv = new ListView();
-            lv.View = View.Details;
-            lv.FullRowSelect = true;
-            lv.MultiSelect = false;
-            lv.BorderStyle = BorderStyle.None;
-            lv.BackColor = Theme.Surface;
-            lv.ForeColor = Theme.Ink;
-            lv.Font = Theme.UI;
-            lv.HeaderStyle = ColumnHeaderStyle.Nonclickable;
-            lv.ShowItemToolTips = true;
-            lv.HideSelection = false;
-            ImageList pad = new ImageList();
-            pad.ImageSize = new Size(1, 24);
-            pad.ColorDepth = ColorDepth.Depth32Bit;
-            lv.SmallImageList = pad;
-            lv.StateImageList = Dots();
-            lv.Columns.Add("MOD", 380);
-            lv.Columns.Add("改了什么", 100);
-            lv.Columns.Add("大小", 74).TextAlign = HorizontalAlignment.Right;
+            // ---- 右上：换本体的候选 ----
+            lv = NewCandList("MOD");
             lv.MouseClick += delegate(object s, MouseEventArgs e)
             {
                 if (e.Button != MouseButtons.Left) return;      // 右键只是弹菜单，别顺手换掉 MOD
@@ -571,16 +583,23 @@ namespace Installer
             };
             lv.MouseDown += delegate(object s, MouseEventArgs e)
             {
-                if (e.Button != MouseButtons.Right) return;
-                ListViewItem hit = lv.GetItemAt(e.X, e.Y);
-                if (hit == null || hit.Selected) return;
-                lv.SelectedItems.Clear();
-                hit.Selected = true;
-                hit.Focused = true;
+                if (e.Button == MouseButtons.Right) SelectRow(lv, e);
             };
             lv.ContextMenuStrip = mf.BuildTreeMenu(lv);
             lv.Resize += delegate { LayoutCols(); };
             Controls.Add(lv);
+
+            // ---- 右下：可叠加的扩展（开火音效 / 只改第一人称模型 / HUD）----
+            lvExtra = NewCandList("扩展");
+            lvExtra.MouseClick += delegate(object s, MouseEventArgs e)
+            {
+                if (e.Button != MouseButtons.Left) return;
+                ListViewItem li = lvExtra.GetItemAt(e.X, e.Y);
+                if (li == null) return;
+                ToggleExtra(li.Tag as ModGroup);
+            };
+            lvExtra.Resize += delegate { LayoutCols(); };
+            Controls.Add(lvExtra);
 
             lblTitle = new Label();
             lblTitle.Font = Theme.UIBold;
@@ -603,6 +622,14 @@ namespace Installer
             lblFoot.AutoEllipsis = true;
             Controls.Add(lblFoot);
 
+            lblExtraTitle = new Label();
+            lblExtraTitle.Font = Theme.UISmall;
+            lblExtraTitle.ForeColor = Theme.Ink3;
+            lblExtraTitle.BackColor = Color.Transparent;
+            lblExtraTitle.AutoEllipsis = true;
+            lblExtraTitle.Visible = false;
+            Controls.Add(lblExtraTitle);
+
             lblHint = new Label();
             lblHint.Font = Theme.UI;
             lblHint.ForeColor = Theme.Ink3;
@@ -619,6 +646,40 @@ namespace Installer
 
             Resize += delegate { LayoutSelf(); };
             LayoutSelf();
+        }
+
+        /// <summary>候选列表的共同外观：三列、圆点状态、不显示表头焦点。</summary>
+        private ListView NewCandList(string firstCol)
+        {
+            ListView v = new ListView();
+            v.View = View.Details;
+            v.FullRowSelect = true;
+            v.MultiSelect = false;
+            v.BorderStyle = BorderStyle.None;
+            v.BackColor = Theme.Surface;
+            v.ForeColor = Theme.Ink;
+            v.Font = Theme.UI;
+            v.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+            v.ShowItemToolTips = true;
+            v.HideSelection = false;
+            ImageList pad = new ImageList();
+            pad.ImageSize = new Size(1, 24);
+            pad.ColorDepth = ColorDepth.Depth32Bit;
+            v.SmallImageList = pad;
+            v.StateImageList = Dots();
+            v.Columns.Add(firstCol, 380);
+            v.Columns.Add("改了什么", 100);
+            v.Columns.Add("大小", 74).TextAlign = HorizontalAlignment.Right;
+            return v;
+        }
+
+        private static void SelectRow(ListView v, MouseEventArgs e)
+        {
+            ListViewItem hit = v.GetItemAt(e.X, e.Y);
+            if (hit == null || hit.Selected) return;
+            v.SelectedItems.Clear();
+            hit.Selected = true;
+            hit.Focused = true;
         }
 
         private static ImageList Dots()
@@ -656,7 +717,7 @@ namespace Installer
             slots = SlotIndex.Build();
             SortSlots();
             int inTree = 0;
-            foreach (Slot s0 in slots) inTree += s0.Items.Count;
+            foreach (Slot s0 in slots) inTree += s0.Items.Count + s0.Extras.Count;
             // 地图和喷漆本来就不该占位置，别把它们算成「认不出」
             int eligible = 0;
             foreach (ModGroup g in Catalog.Groups)
@@ -762,6 +823,24 @@ namespace Installer
             return n;
         }
 
+        /// <summary>这个位置勾了几个可叠加的扩展（音效 / 只改第一人称模型 / HUD），可以和模型同时生效。</summary>
+        internal int CheckedExtras(Slot s)
+        {
+            int n = 0;
+            foreach (ModGroup g in s.Extras) if (mf.CountChecked(g) > 0) n++;
+            return n;
+        }
+
+        /// <summary>点扩展行：开着的关掉，关着的打开 —— 和模型不是二选一，各管各的。</summary>
+        internal void ToggleExtra(ModGroup g)
+        {
+            if (g == null || Current == null) return;
+            if (mf.CountChecked(g) > 0) mf.UncheckGroup(g);
+            else mf.CheckGroupDefault(g);
+            mf.AfterTreePick();
+            FillDetail();
+        }
+
         /// <summary>这个位置当前用了哪个 MOD（多件时取第一件）。</summary>
         internal ModGroup ChosenOf(Slot s)
         {
@@ -846,24 +925,30 @@ namespace Installer
             lv.Visible = true; lblHint.Visible = false;
             Slot s = Current;
             lv.BeginUpdate();
+            lvExtra.BeginUpdate();
             try
             {
                 lv.Items.Clear();
+                lvExtra.Items.Clear();
                 if (s == null)
                 {
                     lblTitle.Text = "选一个位置";
                     lblCur.Text = "左边点一个武器 / 药品 / 人物，这里列它的 MOD";
+                    lblExtraTitle.Visible = false;
+                    lvExtra.Visible = false;
                     return;
                 }
                 int n = CheckedGroups(s);
+                int ne = CheckedExtras(s);
                 lblTitle.Text = s.Name;
-                if (n == 0) lblCur.Text = "还没选 · 游戏里还是原版";
+                if (n == 0 && ne == 0) lblCur.Text = "还没选 · 游戏里还是原版";
                 else if (n == 1)
                 {
                     ModGroup c = ChosenOf(s);
-                    lblCur.Text = "当前：" + (c == null ? "" : c.Name);
+                    lblCur.Text = "当前：" + (c == null ? "" : c.Name) + (ne > 0 ? "　+ " + ne + " 个扩展" : "");
                 }
-                else lblCur.Text = "这个位置叠了 " + n + " 件（音效/视角/材质，自己确认会不会打架）";
+                else if (n > 1) lblCur.Text = "这个位置叠了 " + n + " 件（自己确认会不会打架）";
+                else lblCur.Text = "模型还是原版 · 只装了 " + ne + " 个扩展";
 
                 foreach (ModGroup g in s.Items)
                 {
@@ -878,7 +963,7 @@ namespace Installer
                     lv.Items.Add(li);
                 }
 
-                ListViewItem none = new ListViewItem("留原版（这个位置不装 MOD）");
+                ListViewItem none = new ListViewItem("留原版（不换模型）");
                 none.SubItems.Add("");
                 none.SubItems.Add("—");
                 none.ForeColor = Theme.Ink3;
@@ -886,9 +971,40 @@ namespace Installer
                 none.Tag = null;
                 lv.Items.Add(none);
 
-                lblFoot.Text = s.Items.Count + " 个候选 · 点一个就换掉原来的";
+                lblFoot.Text = s.Items.Count == 0
+                    ? "这个位置没有换模型的包，只有下面那些扩展"
+                    : s.Items.Count + " 个模型候选 · 点一个就换掉原来的";
+
+                // ---- 下半：可叠加的扩展 ----
+                lblExtraTitle.Visible = true;
+                if (s.Extras.Count == 0)
+                {
+                    lvExtra.Visible = false;
+                    lblExtraTitle.Text = "可叠加的扩展：这个位置还没有"
+                                        + "（开火音效 / 只改第一人称模型 / HUD 图标，有就会出现在下面）";
+                }
+                else
+                {
+                    lvExtra.Visible = true;
+                    lblExtraTitle.Text = "可叠加的扩展 · " + s.Extras.Count
+                                       + " 个（不换模型，点一下开 / 关，可多选）";
+                    foreach (ModGroup g in s.Extras)
+                    {
+                        bool on = mf.CountChecked(g) > 0;
+                        ListViewItem li = new ListViewItem(g.Name);
+                        li.SubItems.Add(KindsOf(g));
+                        li.SubItems.Add(Core.Human(g.Size));
+                        li.StateImageIndex = on ? 1 : 0;
+                        if (on) li.Font = Theme.UIBold;
+                        li.Tag = g;
+                        if (g.IsSet) li.ToolTipText = g.Parts.Count + " 个 vpk 组成，点一下默认部件全开";
+                        else li.ToolTipText = "和上面的模型同时生效，互不影响";
+                        lvExtra.Items.Add(li);
+                    }
+                }
             }
-            finally { lv.EndUpdate(); }
+            finally { lv.EndUpdate(); lvExtra.EndUpdate(); }
+            LayoutSelf();
             LayoutCols();
         }
 
@@ -981,8 +1097,26 @@ namespace Installer
             int rightW = Math.Max(120, W - x);
             if (lblTitle != null) lblTitle.SetBounds(x + 16, 12, Math.Max(60, rightW - 32 - 100), 22);
             if (lblCur != null) lblCur.SetBounds(x + 16, 34, Math.Max(60, rightW - 32), 18);
-            if (lv != null) lv.SetBounds(x + 4, 60, rightW - 8, Math.Max(60, H - 60 - 42));
             if (lblHint != null) lblHint.SetBounds(x + 16, 66, Math.Max(80, rightW - 32), Math.Max(60, H - 120));
+
+            // 右半分上下：上半换本体（单选），下半可叠加的扩展（多选）。
+            // 没有扩展时下半只留一行说明，上半占满 —— 空列表摆在那儿只是浪费地方。
+            int top = 60, bottom = H - 42;
+            int avail = Math.Max(120, bottom - top);
+            const int gap = 26;                                   // 中间那行小标题占的高度
+            bool hasEx = lvExtra != null && lvExtra.Visible;
+            int mainH = hasEx ? Math.Max(110, avail * 56 / 100) : Math.Max(110, avail - gap);
+            int exTop = top + mainH + gap;
+            int exH = Math.Max(0, bottom - exTop);
+            if (lv != null) lv.SetBounds(x + 4, top, rightW - 8, mainH);
+            if (lblExtraTitle != null)
+                lblExtraTitle.SetBounds(x + 16, Math.Max(top + 8, exTop - 20), Math.Max(80, rightW - 32), 18);
+            if (lvExtra != null)
+            {
+                if (exH >= 40) lvExtra.SetBounds(x + 4, exTop, rightW - 8, exH);
+                else lvExtra.Visible = false;
+            }
+
             if (btnPick != null) btnPick.SetBounds(x + 16, H - 34, 76, Theme.H);
             if (lblFoot != null) lblFoot.SetBounds(x + 16, H - 30, Math.Max(60, rightW - 32), 18);
             LayoutCols();
@@ -990,12 +1124,18 @@ namespace Installer
 
         private void LayoutCols()
         {
-            if (lv == null || lv.Columns.Count < 3) return;
-            int w = lv.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8;
+            Cols(lv);
+            Cols(lvExtra);
+        }
+
+        private static void Cols(ListView v)
+        {
+            if (v == null || v.Columns.Count < 3) return;
+            int w = v.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8;
             const int kindW = 100, sizeW = 74;
-            lv.Columns[0].Width = Math.Max(160, w - kindW - sizeW);
-            lv.Columns[1].Width = kindW;
-            lv.Columns[2].Width = sizeW;
+            v.Columns[0].Width = Math.Max(160, w - kindW - sizeW);
+            v.Columns[1].Width = kindW;
+            v.Columns[2].Width = sizeW;
         }
     }
 
@@ -1107,9 +1247,13 @@ namespace Installer
                     g.DrawLine(branch, bx, y, bx, y + (nextSame ? RowH : RowH / 2 + 1));
                     g.DrawLine(branch, bx, y + RowH / 2, bx + 9, y + RowH / 2);
 
-                    // 状态点
+                    // 状态点：绿=选了本体，橙=叠了好几件本体，蓝=只有扩展（音效/只改第一人称模型），灰=空
                     int cnt = owner.CheckedGroups(s);
-                    Color dot = cnt == 0 ? Color.FromArgb(210, 216, 223) : (cnt > 1 ? Theme.Warn : Theme.Ok);
+                    int ecnt = owner.CheckedExtras(s);
+                    Color dot = cnt > 1 ? Theme.Warn
+                              : cnt == 1 ? Theme.Ok
+                              : ecnt > 0 ? Theme.Accent
+                              : Color.FromArgb(210, 216, 223);
                     using (SolidBrush b = new SolidBrush(dot)) g.FillEllipse(b, bx + 17, y + RowH / 2 - 3, 6, 6);
 
                     int nx = bx + 30;
@@ -1122,18 +1266,21 @@ namespace Installer
                         | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
                     ModGroup chosen = owner.ChosenOf(s);
-                    string sub = chosen == null ? "未选" : chosen.Name;
+                    string sub = chosen == null ? (ecnt > 0 ? "原版" : "未选") : chosen.Name;
                     if (cnt > 1) sub = "叠了 " + cnt + " 件";
-                    Color subInk = chosen == null ? Theme.Ink3 : Theme.Ink3;
+                    if (ecnt > 0) sub += "  +" + ecnt + " 扩展";
                     int subX = nx + nameW + 8;
-                    int subW = W - subX - 34;
+                    int subW = W - subX - 46;
                     if (subW > 20)
-                        TextRenderer.DrawText(g, sub, Theme.UISmall, new Rectangle(subX, y, subW, RowH), subInk,
+                        TextRenderer.DrawText(g, sub, Theme.UISmall, new Rectangle(subX, y, subW, RowH), Theme.Ink3,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                             | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
-                    TextRenderer.DrawText(g, s.Items.Count.ToString(), Theme.UISmall,
-                        new Rectangle(W - 30, y, 22, RowH), Theme.Ink3,
+                    // 右端数字：本体候选数；有扩展时写成「5+1」
+                    string cand = s.Items.Count.ToString();
+                    if (s.Extras.Count > 0) cand += "+" + s.Extras.Count;
+                    TextRenderer.DrawText(g, cand, Theme.UISmall,
+                        new Rectangle(W - 40, y, 32, RowH), Theme.Ink3,
                         TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                 }
             }
@@ -1248,6 +1395,7 @@ namespace Installer
                 bySub.TryGetValue(sk, out n);
                 bySub[sk] = n + 1;
                 Core.Log("INFO", "TREE  " + s.Cat + " / " + s.Sub + " / " + s.Name + "  候选 " + s.Items.Count
+                                            + (s.Extras.Count > 0 ? "  扩展 " + ExtrasText(s) : "")
                                             + "  已选 " + (treeView.HasChecked(s) ? "是" : "否"));
             }
             foreach (KeyValuePair<string, int> kv in byCat)
@@ -1352,6 +1500,45 @@ namespace Installer
             Application.DoEvents();
             Core.Log("INFO", "TREE 未归类 " + treeView.Unmatched + " 个（这些不进树，但照常能勾）");
 
+            // 扩展（音效 / 只改第一人称模型 / HUD）是叠上去的：自己能开关，换模型时不该被一起关掉
+            int exIdx = -1;
+            for (int i = 0; i < slots; i++)
+            {
+                Slot sx = treeView.SlotAt(i);
+                if (sx != null && sx.Extras.Count > 0 && sx.Items.Count > 1) { exIdx = i; break; }
+            }
+            if (exIdx < 0) Core.Log("INFO", "TREE 没有「有扩展且有多个模型」的位置，跳过扩展测试");
+            else
+            {
+                Slot sx = treeView.SlotAt(exIdx);
+                ModGroup eg = sx.Extras[0];
+                treeView.SelectSlot(sx.Key);
+                Application.DoEvents();
+                if (CountChecked(eg) == 0) { treeView.ToggleExtra(eg); Application.DoEvents(); }
+                int on0 = CountChecked(eg);                         // 先确保是开着的
+                treeView.ToggleExtra(eg);
+                Application.DoEvents();
+                int off1 = CountChecked(eg);
+                treeView.ToggleExtra(eg);                           // 再开回来
+                Application.DoEvents();
+                int on1 = CountChecked(eg);
+                Core.Log("INFO", "TREE 扩展「" + eg.Name + "」开关：" + on0 + " → " + off1 + " → " + on1);
+                if (off1 != 0 || on1 != on0) Core.Log("FAIL", "TREE 扩展开关不对");
+
+                treeView.ChooseAt(exIdx, 0);                        // 换一个模型
+                Application.DoEvents();
+                int kept = CountChecked(eg);
+                Core.Log("INFO", "TREE 换模型后扩展「" + eg.Name + "」勾选：" + on1 + " → " + kept
+                                + "（必须不变）");
+                if (kept != on1) Core.Log("FAIL", "TREE 换模型把扩展一起关了");
+
+                treeView.ChooseAt(exIdx, -1);                       // 点「留原版」
+                Application.DoEvents();
+                int kept2 = CountChecked(eg);
+                Core.Log("INFO", "TREE 留原版后扩展还在：" + kept2 + "（必须不变）");
+                if (kept2 != on1) Core.Log("FAIL", "TREE 留原版把扩展一起关了");
+            }
+
             // 原样放回：按备份逐条还原，不是「再点一下」—— 点一下只会换成另一个候选
             checkedKeys.Clear();
             foreach (string k in backup) checkedKeys.Add(k);
@@ -1361,8 +1548,16 @@ namespace Installer
             int n4 = TotalCheckedParts();
             Core.Log("INFO", "TREE 还原后勾选数 " + n4 + "（原 " + n0 + "）");
             if (n4 != n0) Core.Log("FAIL", "TREE 还原后勾选数对不上 " + n0 + " → " + n4);
-            Slot first = treeView.SlotAt(0);
-            if (first != null) treeView.SelectSlot(first.Key);   // 截图停在正常状态
+
+            // 截图停在「有扩展」的位置上，这样右半边的上下两栏都能看清
+            Slot shot = null;
+            for (int i = 0; i < slots; i++)
+            {
+                Slot sx = treeView.SlotAt(i);
+                if (sx != null && sx.Extras.Count > 0 && sx.Items.Count > 0) { shot = sx; break; }
+            }
+            if (shot == null) shot = treeView.SlotAt(0);
+            if (shot != null) treeView.SelectSlot(shot.Key);
         }
 
         /// <summary>把勾选恢复成某个方案的样子并存盘（自测把方案改坏时用来救回来）。</summary>
@@ -1375,8 +1570,15 @@ namespace Installer
             Core.Log("INFO", "FIX 已按方案「" + name + "」恢复勾选，共 " + checkedKeys.Count + " 个文件");
         }
 
-        private int TotalCheckedParts()
+        /// <summary>自测日志用：把一个位置的扩展名字串起来。</summary>
+        private static string ExtrasText(Slot s)
         {
+            string t = "";
+            foreach (ModGroup g in s.Extras) t += (t.Length > 0 ? "、" : "") + g.Name;
+            return t;
+        }
+
+        private int TotalCheckedParts()        {
             int n = 0;
             foreach (ModGroup g in Catalog.Groups) n += CountChecked(g);
             return n;

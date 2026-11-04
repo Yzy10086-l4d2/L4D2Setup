@@ -17,6 +17,7 @@ namespace Installer
             public string Level = "";         // 依据强度：模型 / HUD图标 / 音效 / 材质
             public string Key = "";           // 被替换的模型名，如 "v_rifle"（用于同枪冲突检测）
             public string Kinds = "";         // 影响面：模型,音效,HUD图标,地图...
+            public bool Only1P = false;       // 模型全是第一人称 v_，世界模型没动
             public int Entries = 0;
             public bool Ok = false;
         }
@@ -197,17 +198,6 @@ namespace Installer
                 Result r = new Result();
                 r.Entries = Entries;
 
-                List<string> kinds = new List<string>();
-                if (Map) kinds.Add("地图");
-                if (Mdls.Count > 0) kinds.Add("模型");
-                if (Huds.Count > 0) kinds.Add("HUD");
-                if (Snds.Count > 0) kinds.Add("音效");
-                if (Particle) kinds.Add("特效");
-                if (Script) kinds.Add("脚本");
-                if (kinds.Count == 0 && HasMat) kinds.Add("材质");
-                r.Kinds = string.Join(",", kinds.ToArray());
-                r.Ok = Entries > 0;
-
                 // 1) 模型文件名 —— 最硬的证据，换的就是它
                 List<string> found = new List<string>();
                 foreach (string m in Mdls)
@@ -220,6 +210,28 @@ namespace Installer
                         if (r.Level.Length == 0) r.Level = "模型";
                     }
                 }
+
+                // 模型全是 v_（第一人称手持）、一个 w_（世界模型）都没有 = 只改了你看枪的那只手，
+                // 世界里的枪还是原版。这条事实单独记在 Only1P 上，不塞进 Kinds ——
+                // 「改了什么」要照实说，模型就是模型；能不能叠是另一件事。
+                // 必须「全是 v_」：人物、地图包里也常夹一两个 v_ 模型，漏一个 w_ 就不算。
+                bool viewOnly = Mdls.Count > 0 && found.Count > 0;
+                if (viewOnly)
+                    foreach (string m in Mdls)
+                        if (!m.StartsWith("v_", StringComparison.OrdinalIgnoreCase)) { viewOnly = false; break; }
+                r.Only1P = viewOnly;
+
+                List<string> kinds = new List<string>();
+                if (Map) kinds.Add("地图");
+                if (Mdls.Count > 0) kinds.Add("模型");
+                if (Huds.Count > 0) kinds.Add("HUD");
+                if (Snds.Count > 0) kinds.Add("音效");
+                if (Particle) kinds.Add("特效");
+                if (Script) kinds.Add("脚本");
+                if (kinds.Count == 0 && HasMat) kinds.Add("材质");
+                r.Kinds = string.Join(",", kinds.ToArray());
+                r.Ok = Entries > 0;
+
                 // 2) HUD 图标名 —— 必须指名道姓才换得掉
                 if (found.Count == 0)
                 {
@@ -347,7 +359,7 @@ namespace Installer
             if (cache.TryGetValue(relPath, out old))
             {
                 string[] c = old.Split('\t');
-                if (c.Length >= 6 && c[1] == stamp)
+                if (c.Length >= 7 && c[1] == stamp)
                 {
                     Result r2 = new Result();
                     r2.Ok = true;
@@ -355,13 +367,15 @@ namespace Installer
                     r2.Level = c[3];
                     r2.Key = c[4];
                     r2.Kinds = c[5];
+                    r2.Only1P = c[6] == "1";
                     return r2;
                 }
             }
             Result r = AnalyzeBuffer(TreeOfArchive(container, inner));
             try
             {
-                cache[relPath] = relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds;
+                cache[relPath] = relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds
+                                     + "\t" + (r.Only1P ? "1" : "0");
             }
             catch { }
             return r;
@@ -373,7 +387,7 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
-            get { return Path.Combine(Core.LogDir, "identify-cache-v8.tsv"); }
+            get { return Path.Combine(Core.LogDir, "identify-cache-v11.tsv"); }
         }
 
         private static void LoadCache()
@@ -386,7 +400,7 @@ namespace Installer
                 foreach (string line in File.ReadAllLines(CacheFile, Encoding.UTF8))
                 {
                     string[] c = line.Split('\t');
-                    if (c.Length >= 6) cache[c[0]] = line;
+                    if (c.Length >= 7) cache[c[0]] = line;
                 }
             }
             catch { }
@@ -618,7 +632,7 @@ namespace Installer
             if (cache.TryGetValue(relPath, out old))
             {
                 string[] c = old.Split('\t');
-                if (c.Length >= 6 && c[1] == stamp)
+                if (c.Length >= 7 && c[1] == stamp)
                 {
                     Result r2 = new Result();
                     r2.Ok = true;
@@ -626,13 +640,15 @@ namespace Installer
                     r2.Level = c[3];
                     r2.Key = c[4];
                     r2.Kinds = c[5];
+                    r2.Only1P = c[6] == "1";
                     return r2;
                 }
             }
             Result r = Analyze(fullPath);
             try
             {
-                cache[relPath] = relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds;
+                cache[relPath] = relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds
+                                     + "\t" + (r.Only1P ? "1" : "0");
             }
             catch { }
             return r;

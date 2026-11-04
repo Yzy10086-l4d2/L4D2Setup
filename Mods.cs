@@ -414,12 +414,15 @@ namespace Installer
 
             // 同一把枪被多个 MOD 替换 —— 最容易装错的一类，而且文件重叠检查抓不到：
             // 一个改 v_rifle、另一个改 w_rifle_m16a2，文件名完全不同，抢的却是同一把枪。
+            // 换整套模型的、只换第一人称的分开记账：只换第一人称是叠在模型上的，两类之间不算冲突。
             Dictionary<string, List<ModItem>> bySubject = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
             foreach (ModItem m in sel)
             {
-                if (m.Subject.Length == 0 || m.SubjectLevel != "模型") continue;
-                if (!bySubject.ContainsKey(m.Subject)) bySubject[m.Subject] = new List<ModItem>();
-                bySubject[m.Subject].Add(m);
+                if (m.Subject.Length == 0) continue;
+                if (m.SubjectLevel != "模型") continue;
+                string k = (m.Only1P ? "1P" : "ALL") + "\u0001" + m.Subject;
+                if (!bySubject.ContainsKey(k)) bySubject[k] = new List<ModItem>();
+                bySubject[k].Add(m);
             }
             foreach (KeyValuePair<string, List<ModItem>> kv in bySubject)
             {
@@ -431,7 +434,10 @@ namespace Installer
                     if (nm.Length > 20) nm = nm.Substring(0, 19) + "…";
                     names.Add(nm);
                 }
-                msgs.Add(kv.Value.Count + " 个 MOD 都在换 " + kv.Key + "：" + string.Join("、", names.ToArray()) + "（同时装只有一个会生效）");
+                string[] kp = kv.Key.Split('\u0001');
+                string act = kp[0] == "1P" ? "都在改第一人称模型" : "都在换";
+                msgs.Add(kv.Value.Count + " 个 MOD " + act + " " + kp[1] + "："
+                         + string.Join("、", names.ToArray()) + "（同时装只有一个会生效）");
             }
 
             const int Cap = 1500000;                  // 最多跟踪 150 万个不同路径

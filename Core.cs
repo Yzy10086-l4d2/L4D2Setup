@@ -30,6 +30,7 @@ namespace Installer
         public string SubjectLevel = "";  // 依据：模型 / HUD图标 / 音效 / 材质
         public string SubjectKey = "";    // 被替换的模型名，用于同枪冲突检测
         public string Kinds = "";         // 影响面：模型,音效,HUD...
+        public bool Only1P;               // 模型全是第一人称 v_，世界模型 w_ 一个没动（能和模型叠加）
 
         public bool IsArchive { get { return Container != null && Container.Length > 0; } }
     }

@@ -419,6 +419,8 @@ namespace Installer
                         it.SubjectLevel = ir.Level;
                         it.SubjectKey = ir.Key;
                         it.Kinds = ir.Kinds;
+                        it.Only1P = ir.Only1P;
+                        RefineBySubject(it);
                         Add(it);
                     }
                 }
@@ -449,7 +451,25 @@ namespace Installer
             it.SubjectLevel = ir.Level;
             it.SubjectKey = ir.Key;
             it.Kinds = ir.Kinds;
+            it.Only1P = ir.Only1P;
+            RefineBySubject(it);
             Add(it);
+        }
+
+        /// <summary>
+        /// 识别完才知道改的是哪把枪 —— 扫描时 Classify 先跑、识别后跑，所以这里补一刀：
+        /// 「改视角 / 火光 / 杂项」目录里如果指名道姓改的是一把具体武器（UZI 开火音效、
+        /// AK 第一人称视角），就挂到那把枪下面，在方案树里当可叠加的扩展。
+        /// 认不出具体型号的（手电、通用火光、血液）仍旧留在杂项。
+        /// </summary>
+        static void RefineBySubject(ModItem it)
+        {
+            if (it.Cat != CAT_MISC) return;
+            string gun = SpecificWeapon(it);
+            if (gun.Length == 0) return;
+            it.Cat = CAT_GUN;
+            it.Sub = SlotIndex.GunKindOf(gun, it.SubjectKey ?? "");
+            it.Category = it.Cat;
         }
 
         static void Add(ModItem it)
@@ -589,6 +609,20 @@ namespace Installer
             }
 
             GuessBySubject(it);
+        }
+
+        /// <summary>
+        /// 识别结果是不是「指名道姓的一把枪」。泛称（手枪 / 步枪 / 冲锋枪）和「4 件」这种都不算 ——
+        /// 那种挂到具体武器下面反而错位，留在杂项更老实。
+        /// </summary>
+        private static string SpecificWeapon(ModItem it)
+        {
+            string s = (it.Subject ?? "").Trim();
+            if (s.Length == 0 || s.IndexOf('/') >= 0) return "";
+            if (SlotIndex.Vague(s)) return "";
+            string kind = SlotIndex.GunKindOf(s, it.SubjectKey ?? "");
+            if (kind.Length == 0 || kind == "其他枪械") return "";
+            return s;
         }
 
         // 路径里没有可用信息时，退回看识别结果
