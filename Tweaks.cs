@@ -49,6 +49,10 @@ namespace Installer
                 {
                     string n = Path.GetFileName(d);
                     if (n.StartsWith(".")) continue;
+                    // 旧版「删除」其实是改名成 .删除-时间戳、「覆盖」会留 .bak-时间戳：
+                    // 这些历史目录里同样有 autoexec.cfg，不过滤的话会被当成一套存档列出来
+                    if (n.IndexOf(".删除-", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                    if (n.IndexOf(".bak-", StringComparison.OrdinalIgnoreCase) >= 0) continue;
                     if (File.Exists(Path.Combine(d, AutoexecName)) || File.Exists(Path.Combine(d, SkeetoName)))
                         names.Add(n);
                 }
@@ -243,12 +247,21 @@ namespace Installer
             {
                 string dir = DirOf(name);
                 if (!Directory.Exists(dir)) { err = "没有这个存档"; return false; }
-                string bak = dir + ".删除-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                Directory.Move(dir, bak);
-                Core.Log("OK", "参数存档「" + name + "」已移走（" + Path.GetFileName(bak) + "，没真删）");
+                // 真删。U 盘上从别的机器拷来的文件可能带只读属性，先清掉再删
+                foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
+                }
+                Directory.Delete(dir, true);
+                Core.Log("OK", "参数存档「" + name + "」已删除（" + dir + "）");
                 return true;
             }
-            catch (Exception ex) { err = ex.Message; return false; }
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "删除参数存档「" + name + "」失败: " + ex.Message);
+                err = "删不掉：" + ex.Message + "\r\n（多半是文件被别的程序开着，或 U 盘写保护）";
+                return false;
+            }
         }
 
         // ------------------------------------------------------------ 自测
@@ -305,10 +318,11 @@ namespace Installer
                 if (!File.Exists(cfg + ".还原前")) { Core.Log("FAIL", "TWEAKSELF 还原前没留底"); bad++; }
                 if (RestorableCount(game) != 2) { Core.Log("FAIL", "TWEAKSELF RestorableCount 不对"); bad++; }
 
-                // 删除
+                // 删除：必须是真删（目录没了），不是改个名留在原地
                 string derr;
                 if (!Delete("自测套", out derr)) { Core.Log("FAIL", "TWEAKSELF 删除失败: " + derr); bad++; }
                 if (Exists("自测套")) { Core.Log("FAIL", "TWEAKSELF 删除后还能列出"); bad++; }
+                if (Directory.Exists(DirOf("自测套"))) { Core.Log("FAIL", "TWEAKSELF 删除后目录还在：" + DirOf("自测套")); bad++; }
 
                 Core.Log(bad == 0 ? "OK" : "FAIL", "TWEAKSELF " + (bad == 0 ? "参数保存/套用/还原 全部正常" : (bad + " 项不对")));
             }
@@ -460,7 +474,7 @@ namespace Installer
             tip.SetBounds(12, 400, 640, 40);
             tip.Font = Theme.UISmall;
             tip.ForeColor = Theme.Ink3;
-            tip.Text = "「还原本机原配置」只回滚这两个参数文件（用装机时留的 .装之前 备份），不动平台、不动 MOD。\r\n装箱台不会改 U 盘上别的机器的存档；旧存档被覆盖前会自动改名留一份 .bak-时间戳。";
+            tip.Text = "「还原本机原配置」只回滚这两个参数文件（用装机时留的 .装之前 备份），不动平台、不动 MOD。\r\n「删除存档」是把 U 盘上那套目录整个删掉，不留副本；同名再存一次时，旧的那份才会自动改名留一份 .bak-时间戳。";
             Controls.Add(tip);
 
             Reload(current);
@@ -559,7 +573,9 @@ namespace Installer
         {
             string name = Sel();
             if (name == null) return;
-            if (MessageBox.Show("把存档「" + name + "」移走？\r\n（改名成 .删除-时间戳 留在原地，没真删）", "删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            string dir = Tweaks.DirOf(name);
+            if (MessageBox.Show("彻底删掉存档「" + name + "」？\r\n\r\n会删掉 U 盘上的整个目录（autoexec.cfg + skeeto_setting.ini）：\r\n" + dir
+                + "\r\n\r\n删了没法恢复。", "删除参数存档", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             string err;
             if (!Tweaks.Delete(name, out err)) { MessageBox.Show(err); return; }
             Reload(null);

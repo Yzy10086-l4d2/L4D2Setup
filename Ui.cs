@@ -43,6 +43,7 @@ namespace Installer
         private List<ModGroup> shown = new List<ModGroup>();
         private List<string> conflictMsgs = new List<string>();
         private bool bulk;                       // 批量勾选时先别逐项刷新
+        private bool applying;                   // 正在回填配置：这时的勾选变化不要触发联动
         private bool refreshing;                 // 正在重建列表：这时的勾选状态是「照着现有勾选画的」，不许反过来改 checkedKeys
         private int logLines;                    // 日志行数，超了就截断，避免文本框越用越慢
         private readonly System.Windows.Forms.Timer searchTimer = new System.Windows.Forms.Timer();
@@ -188,11 +189,25 @@ namespace Installer
             // ---- 左栏上：装什么 ----
             Section gp = new Section();
             gp.Caption = "装什么"; gp.SetBounds(Theme.M, 56, leftW, 222); Controls.Add(gp);
-            chkL4N = AddChk(gp, "L4N 平台（必装，其余都依赖它）", 12, 28, true, false);
-            tips.SetToolTip(chkL4N, "L4N 是底座，Skeeto / MQCam 都要靠它加载，所以固定勾上不给取消。\r\n装过一次之后再装会自动跳过（除非在下面选「覆盖重装」）。");
+            chkL4N = AddChk(gp, "L4N 平台（只有 MQCam 相机要用它）", 12, 28, true, true);
+            tips.SetToolTip(chkL4N, "L4N 不是强依赖：不装它照样能装 Skeeto / dxvk / MOD。\r\n只有 MQCam 相机要跑在它的 neko 框架里 —— 勾 MQCam 时会自动把 L4N 带上，取消 L4N 会把 MQCam 一起取消。\r\n装过一次之后再装会自动跳过（除非在下面选「覆盖重装」）。");
             chkSkeeto = AddChk(gp, "Skeeto 增强框架（命中反馈 / 准星 / HUD）", 12, 52, true, true);
             chkAsset = AddChk(gp, "Skeeto 素材包 177 MB", 12, 76, true, true);
             chkMqcam = AddChk(gp, "MQCam 相机（F2 / F3 / F4 视角）", 12, 100, true, true);
+            tips.SetToolTip(chkMqcam, "相机模组要跑在 L4N 的 neko 框架里：勾它会自动把上面的 L4N 一起勾上。");
+            // L4N 和 MQCam 的依赖只在这两格之间：勾相机 → 带上平台；去掉平台 → 相机也跟着去掉
+            chkMqcam.CheckedChanged += delegate
+            {
+                if (applying || !chkMqcam.Checked || chkL4N.Checked) return;
+                chkL4N.Checked = true;
+                Log("MQCam 相机要用 L4N 的 neko 框架，已自动勾上 L4N");
+            };
+            chkL4N.CheckedChanged += delegate
+            {
+                if (applying || chkL4N.Checked || !chkMqcam.Checked) return;
+                chkMqcam.Checked = false;
+                Log("不装 L4N 的话 MQCam 也跑不起来，已把 MQCam 一起取消（要相机就两个都勾）");
+            };
             chkDxvk = AddChk(gp, "dxvk 防闪退（d3d9.dll）", 12, 124, true, true);
             chkLaunch = AddChk(gp, "写 Steam 启动项", 12, 148, true, true);
             chkCfg = AddChk(gp, "写参数配置（L4N 按键 + Skeeto 设置）", 12, 172, true, true);
@@ -384,12 +399,18 @@ namespace Installer
 
         private void ApplyConfig()
         {
-            chkL4N.Checked = Core.Cfg.L4N;
-            chkDxvk.Checked = Core.Cfg.Dxvk;
-            chkSkeeto.Checked = Core.Cfg.Skeeto;
-            chkAsset.Checked = Core.Cfg.AssetPack;
-            chkMqcam.Checked = Core.Cfg.Mqcam;
-            chkLaunch.Checked = Core.Cfg.Launch;
+            // 回填配置时别触发「勾相机自动勾平台」这类联动，否则会把存下来的组合改掉
+            applying = true;
+            try
+            {
+                chkL4N.Checked = Core.Cfg.L4N;
+                chkDxvk.Checked = Core.Cfg.Dxvk;
+                chkSkeeto.Checked = Core.Cfg.Skeeto;
+                chkAsset.Checked = Core.Cfg.AssetPack;
+                chkMqcam.Checked = Core.Cfg.Mqcam;
+                chkLaunch.Checked = Core.Cfg.Launch;
+            }
+            finally { applying = false; }
             txtLaunch.Text = Core.Cfg.LaunchOptions;
             // 第一次发现有参数存档就默认勾上 —— 用户存过参数，摆明了就是下次装机要自动写进去
             bool firstTimeTweak = Core.Cfg.TweakSet.Length == 0 && Tweaks.List().Count > 0;
@@ -694,6 +715,20 @@ namespace Installer
                 }
                 Core.Log("INFO", "PROFILE 方案数=" + ProfileStore.ListProfiles().Count + " 列表行=" + f.DebugRows());
             }
+        }
+
+        /// <summary>自测用：L4N 与 MQCam 的勾选联动（只有相机依赖平台，其他都不依赖）。</summary>
+        internal void UiTestDeps()
+        {
+            chkMqcam.Checked = false; chkL4N.Checked = false;
+            Core.Log("INFO", "DEPS 起点：L4N=" + chkL4N.Checked + " MQCam=" + chkMqcam.Checked);
+            chkMqcam.Checked = true;
+            Core.Log("INFO", "DEPS 勾 MQCam 后：L4N=" + chkL4N.Checked + "（应为 True）MQCam=" + chkMqcam.Checked);
+            chkL4N.Checked = false;
+            Core.Log("INFO", "DEPS 取消 L4N 后：MQCam=" + chkMqcam.Checked + "（应为 False）");
+            chkL4N.Checked = false; chkMqcam.Checked = false;
+            chkSkeeto.Checked = true; chkDxvk.Checked = true;
+            Core.Log("INFO", "DEPS 只装 Skeeto/dxvk、不装 L4N：L4N=" + chkL4N.Checked + " MQCam=" + chkMqcam.Checked + "（应为 False/False，L4N 不该被逼着勾上）");
         }
 
         /// <summary>自测用：展开一个套装、勾其中一个 vpk，验证「只装单件」这条路。</summary>
@@ -1965,6 +2000,12 @@ namespace Installer
             bool wantSkeeto = chkSkeeto.Checked;
             bool wantAsset = chkAsset.Checked;
             bool wantMqcam = chkMqcam.Checked;
+            // 唯一真依赖：MQCam 跑在 L4N 的 neko 框架里。别的（Skeeto / dxvk / MOD）都不需要 L4N
+            if (wantMqcam && !wantL4N)
+            {
+                wantL4N = true;
+                Core.Log("WARN", "MQCam 要用 L4N 的 neko 框架，这次把 L4N 一起装上");
+            }
             bool wantLaunch = chkLaunch.Checked;
             bool wantCfg = chkCfg.Checked;
             string launchVal = LaunchArgs.ForWrite(txtLaunch.Text);
@@ -1998,6 +2039,7 @@ namespace Installer
             catch { }
             Work.Overwrite = !rdSkip.Checked;          // 所有 Install* 都读这个开关
             Core.Cfg.GameRoot = root;
+            Core.Cfg.L4N = wantL4N;
             Core.Cfg.Dxvk = wantDxvk;
             Core.Cfg.Skeeto = wantSkeeto;
             Core.Cfg.AssetPack = wantAsset;
