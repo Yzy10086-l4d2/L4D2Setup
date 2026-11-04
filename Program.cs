@@ -61,6 +61,7 @@ namespace Installer
             bool uiScheme = false;
             bool uiProfile = false;
             bool uiSync = false;
+            bool uiExpand = false;
             string uiParts = null;
             string uiTweaks = null;
             bool uiLaunch = false;
@@ -84,6 +85,7 @@ namespace Installer
                 else if (string.Equals(a, "--uischeme", StringComparison.OrdinalIgnoreCase)) uiScheme = true;
                 else if (string.Equals(a, "--uiprofile", StringComparison.OrdinalIgnoreCase)) uiProfile = true;
                 else if (string.Equals(a, "--uisync", StringComparison.OrdinalIgnoreCase)) uiSync = true;
+                else if (string.Equals(a, "--uiexpand", StringComparison.OrdinalIgnoreCase)) uiExpand = true;
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
                 else if (string.Equals(a, "--launch", StringComparison.OrdinalIgnoreCase)) uiLaunch = true;
@@ -185,8 +187,10 @@ namespace Installer
                 Application.SetCompatibleTextRenderingDefault(false);
                 using (MainForm f = new MainForm(gameRoot))
                 {
+                    // --uitsize=0x0 表示不强制尺寸，按窗口自己的初始大小截（用来核对默认值）
                     string[] wh = uiSize.Split('x');
-                    f.ClientSize = new System.Drawing.Size(int.Parse(wh[0]), int.Parse(wh[1]));
+                    if (int.Parse(wh[0]) > 0 && int.Parse(wh[1]) > 0)
+                        f.ClientSize = new System.Drawing.Size(int.Parse(wh[0]), int.Parse(wh[1]));
                     f.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
                     f.Location = new System.Drawing.Point(-4000, -4000);
                     f.Show();
@@ -207,6 +211,7 @@ namespace Installer
                     if (uiDup) { f.UiTestDup(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiScheme) { f.UiTestSchemeOnly(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSync) { f.UiTestSync(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiExpand) { f.UiTestExpand(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiProfile) { f.UiTestProfileForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeep != null) { f.UiTestFilter(uiDeep); System.Windows.Forms.Application.DoEvents(); f.UiTestDeep(); System.Windows.Forms.Application.DoEvents(); }

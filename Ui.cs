@@ -24,8 +24,10 @@ namespace Installer
         private Dictionary<string, string> modTags;
         private Button btnManage;
         private TextBox txtSearch;
-        private Button btnAll, btnNone, btnSaveProfile, btnApplyProfile;
-        private Panel tileHost;                  // 六个大类磁贴的容器
+        private Button btnSaveProfile, btnApplyProfile;
+        private Panel tileHost;                  // 总览：六个大类磁贴
+        private Panel viewHost;                  // 某个大类的列表就嵌在这里，和磁贴同一块矩形二选一
+        private CatTabs tabs;                    // 顶部页签条
         private Label lblSel, lblStatus, lblConflict;
         // 方案标记：当前下拉里那套方案包含哪些文件，用来在列表里一眼看出「这条属不属于方案」
         private Label lblScheme;
@@ -36,6 +38,8 @@ namespace Installer
         private ProgressBar bar;
         private TextBox txtLog;
         private readonly HashSet<string> checkedKeys = new HashSet<string>();
+        // 展开了哪些套装（按 ModGroup.Key）：展开后每个 vpk 单独一行，可以只勾其中一个
+        private readonly HashSet<string> expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private List<ModGroup> shown = new List<ModGroup>();
         private List<string> conflictMsgs = new List<string>();
         private bool bulk;                       // 批量勾选时先别逐项刷新
@@ -64,7 +68,11 @@ namespace Installer
             // 版本只写在 AssemblyInfo 里，标题跟着走，省得两处对不上
             Version ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             Text = "网吧装机台  v" + ver.Major + "." + ver.Minor;
-            ClientSize = new Size(940, 700);
+            // 一开始就开够大：右栏要放下六块磁贴和一整张类列表，940 宽时列挤得没地方
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            int w0 = Math.Min(1440, Math.Max(1120, wa.Width - 100));
+            int h0 = Math.Min(940, Math.Max(740, wa.Height - 80));
+            ClientSize = new Size(Math.Min(w0, wa.Width - 20), Math.Min(h0, wa.Height - 20));
             Font = Theme.UI;
             DoubleBuffered = true;
             StartPosition = FormStartPosition.CenterScreen;
@@ -165,6 +173,7 @@ namespace Installer
             tips.ReshowDelay = 100;
 
             int W = ClientSize.Width;
+            int CH = ClientSize.Height;                        // 布局按实际客户区算，别再写死 700 时代的坐标
             int leftW = 396;
             int rightX = Theme.M + leftW + Theme.G;
             int rightW = W - Theme.M - rightX;
@@ -231,11 +240,11 @@ namespace Installer
 
             // ---- 左栏下：日志 ----
             Section gl = new Section();
-            gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, 146); Controls.Add(gl);
+            gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, CH - 438 - 116); Controls.Add(gl);
             FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68 - 6 - 52, 1, 68, 20); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
             FlatButton btnEnv = new FlatButton(); btnEnv.Text = "环境"; btnEnv.SetBounds(leftW - 12 - 52, 1, 52, 20); btnEnv.Font = Theme.UISmall; btnEnv.Click += delegate { ShowEnv(); }; gl.Controls.Add(btnEnv);
             txtLog = new TextBox();
-            txtLog.SetBounds(12, 30, leftW - 24, 104);
+            txtLog.SetBounds(12, 30, leftW - 24, Math.Max(60, CH - 438 - 116 - 34));   // 日志框撑满卡片
             txtLog.Multiline = true; txtLog.ScrollBars = ScrollBars.Both; txtLog.WordWrap = false; txtLog.ReadOnly = true;
             txtLog.BorderStyle = BorderStyle.None;
             txtLog.BackColor = Theme.Surface;
@@ -244,10 +253,11 @@ namespace Installer
             gl.Controls.Add(txtLog);
 
             // ---- 右栏：MOD 库 ----
-            // 不再是一张长列表：每个大类一块磁贴，磁贴上直接写「方案内几个、是哪一个」，
-            // 点开才是这一类自己的窗口（挑部件、看大小、按细分筛都在那里面）。
+            // 三样东西叠在同一块区域里，靠顶部页签切换：总览（六块磁贴）/ 任意一个大类的列表。
+            // 不另开窗口，勾选、搜索、方案下拉始终在视线里，关窗口把进程留在后台这种事也不会再发生。
+            int modH = CH - 56 - 116;                        // 到下方按钮行为止，中间全给 MOD 库
             Section gm = new Section();
-            gm.Caption = "MOD 库（U 盘的 vpk + 压缩包）"; gm.SetBounds(rightX, 56, rightW, 528); Controls.Add(gm);
+            gm.Caption = "MOD 库（U 盘的 vpk + 压缩包）"; gm.SetBounds(rightX, 56, rightW, modH); Controls.Add(gm);
 
             Label l8 = new Label(); l8.Text = "方案"; l8.SetBounds(12, 34, 34, 20); Theme.Dress(l8); gm.Controls.Add(l8);
             cboProfile = new ComboBox(); cboProfile.SetBounds(50, 30, 204, 24); cboProfile.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboProfile); gm.Controls.Add(cboProfile);
@@ -258,9 +268,9 @@ namespace Installer
 
             Label l9 = new Label(); l9.Text = "搜"; l9.SetBounds(12, 66, 24, 20); Theme.Dress(l9); gm.Controls.Add(l9);
             txtSearch = new TextBox(); txtSearch.SetBounds(50, 62, rightW - 62, 24); Theme.Dress(txtSearch); txtSearch.TextChanged += delegate { searchTimer.Stop(); searchTimer.Start(); }; gm.Controls.Add(txtSearch);
-            tips.SetToolTip(txtSearch, "按名字或标签过滤。停止输入 250 ms 自动筛，磁贴上的数字和已开的窗口一起跟着变。");
+            tips.SetToolTip(txtSearch, "按名字或标签过滤。停止输入 250 ms 自动筛，磁贴、页签和当前这一类的列表一起跟着变。");
 
-            // 方案分布：一行说完这套在各类里放了几个 —— 不开窗也知道配置比例
+            // 方案分布：一行说完这套在各类里放了几个
             lblScheme = new Label();
             lblScheme.SetBounds(12, 92, rightW - 24, 18);
             lblScheme.Font = Theme.UISmall;
@@ -269,22 +279,45 @@ namespace Installer
             lblScheme.Text = "";
             gm.Controls.Add(lblScheme);
 
+            // 页签：总览 + 六个大类，每格右侧写着「方案内 / 本类总数」
+            tabs = new CatTabs(this);
+            tabs.SetBounds(12, 114, rightW - 24, 32);
+            tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            gm.Controls.Add(tabs);
+
+            int cw = rightW - 24;
+            int ch = modH - 152 - 74;
+
             tileHost = new Panel();
-            tileHost.SetBounds(12, 114, rightW - 24, 338);
+            tileHost.SetBounds(12, 152, cw, ch);
             tileHost.BackColor = Theme.Bg;
             tileHost.SizeChanged += delegate { LayoutTiles(); };
+            tileHost.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             gm.Controls.Add(tileHost);
             foreach (string c in Catalog.Cats)
             {
                 CatTile t = new CatTile(c);
-                t.Click += delegate { OpenCatWindow(t.Cat); };
+                t.Click += delegate { ShowCatView(t.Cat); };
                 catTiles[c] = t;
                 tileHost.Controls.Add(t);
             }
 
-            lblSel = new Label(); lblSel.SetBounds(12, 462, rightW - 24, 18); lblSel.Text = "已选 0 个"; lblSel.Font = Theme.UISmall; Theme.Dress(lblSel); gm.Controls.Add(lblSel);
+            // 类列表就放在同一块矩形里，切换时只换可见性
+            viewHost = new Panel();
+            viewHost.SetBounds(12, 152, cw, ch);
+            viewHost.BackColor = Theme.Surface;
+            viewHost.Visible = false;
+            viewHost.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            viewHost.SizeChanged += delegate
+            {
+                foreach (CatView v in catViews.Values)
+                    v.SetBounds(0, 0, viewHost.ClientSize.Width, viewHost.ClientSize.Height);
+            };
+            gm.Controls.Add(viewHost);
+
+            lblSel = new Label(); lblSel.SetBounds(12, modH - 64, rightW - 24, 18); lblSel.Text = "已选 0 个"; lblSel.Font = Theme.UISmall; Theme.Dress(lblSel); gm.Controls.Add(lblSel);
             lblConflict = new Label();
-            lblConflict.SetBounds(12, 486, rightW - 24, 36);
+            lblConflict.SetBounds(12, modH - 40, rightW - 24, 34);
             lblConflict.Text = "";
             lblConflict.Font = Theme.UISmall;
             lblConflict.BackColor = Color.Transparent;
@@ -296,25 +329,27 @@ namespace Installer
             // ---- 底部动作区：主操作只有一个 ----
             btnInstall = new FlatButton(); btnInstall.Text = "开始装"; btnInstall.Primary = true;
             btnInstall.Font = new Font(Theme.UI, FontStyle.Bold);
-            btnInstall.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112, 596, 112, Theme.HP);
+            btnInstall.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112, CH - 104, 112, Theme.HP);
             btnInstall.Click += delegate { DoInstall(); }; Controls.Add(btnInstall);
             btnSwitch = new FlatButton(); btnSwitch.Text = "已装 MOD 开关";
-            btnSwitch.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116, 596, 116, Theme.HP);
+            btnSwitch.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116, CH - 104, 116, Theme.HP);
             btnSwitch.Click += delegate { DoSwitch(); }; Controls.Add(btnSwitch);
             btnRestore = new FlatButton(); btnRestore.Text = "一键还原";
-            btnRestore.SetBounds(W - Theme.M - 104 - 8 - 96, 596, 96, Theme.HP);
+            btnRestore.SetBounds(W - Theme.M - 104 - 8 - 96, CH - 104, 96, Theme.HP);
             btnRestore.Click += delegate { DoRestore(); }; Controls.Add(btnRestore);
             btnOpen = new FlatButton(); btnOpen.Text = "打开游戏目录";
-            btnOpen.SetBounds(W - Theme.M - 104, 596, 104, Theme.HP);
+            btnOpen.SetBounds(W - Theme.M - 104, CH - 104, 104, Theme.HP);
             btnOpen.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", txtGame.Text); } catch { } }; Controls.Add(btnOpen);
 
-            bar = new ProgressBar(); bar.SetBounds(Theme.M, 644, 440, 12); Controls.Add(bar);
-            lblStatus = new Label(); lblStatus.SetBounds(Theme.M, 664, W - 2 * Theme.M, 20); lblStatus.Text = "就绪";
+            bar = new ProgressBar(); bar.SetBounds(Theme.M, CH - 56, 440, 12); Controls.Add(bar);
+            lblStatus = new Label(); lblStatus.SetBounds(Theme.M, CH - 36, W - 2 * Theme.M, 20); lblStatus.Text = "就绪";
             lblStatus.ForeColor = Theme.Ink2; lblStatus.BackColor = Color.Transparent; Controls.Add(lblStatus);
 
             // 随窗口缩放：左右拉伸的跟着走，底部按钮贴右下
             gMod = gm; gLog = gl; gPlat = gp;
-            MinimumSize = new Size(1000, 700);
+            // 最小尺寸也守着屏幕：网吧小屏上不能出现「窗口比桌面还宽」
+            Rectangle wmin = Screen.PrimaryScreen.WorkingArea;
+            MinimumSize = new Size(Math.Min(1120, wmin.Width - 20), Math.Min(740, wmin.Height - 20));
             txtGame.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             btnBrowse.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnFind.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -322,7 +357,6 @@ namespace Installer
             gOpt.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             gl.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
             gm.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            tileHost.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             lblSel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             lblConflict.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
@@ -336,8 +370,6 @@ namespace Installer
             searchTimer.Interval = 250;
             searchTimer.Tick += delegate(object s2, EventArgs e2) { searchTimer.Stop(); RefreshMods(); };
             Resize += delegate { ApplyResponsive(); };
-            // 主窗口一关，散落的类窗口跟着关；否则它们会把进程留在后台
-            FormClosing += delegate { CloseAllCatWindows(); };
             ApplyResponsive();
         }
 
@@ -599,11 +631,11 @@ namespace Installer
         internal void UiTestCat(string s)
         {
             foreach (string c in Catalog.Cats)
-                if (c == s) { OpenCatWindow(c); Core.Log("INFO", "UICA T 打开类窗口: " + c); return; }
+                if (c == s) { ShowCatView(c); Core.Log("INFO", "UICA T 切到类视图: " + c); return; }
             CatChoice hit = null;
             foreach (CatChoice c in CatChoices()) if (c.Text.Trim() == s || c.Cat == s) { hit = c; break; }
             if (hit == null) { Core.Log("WARN", "UICA T 没找到分类: " + s); return; }
-            OpenCatWindow(hit.Cat);
+            ShowCatView(hit.Cat);
         }
 
         /// <summary>自测用：把搜索框设成某个词，用来验证筛选与空态。</summary>
@@ -616,20 +648,24 @@ namespace Installer
         /// <summary>自测用：开两个类窗口，勾一行，看勾选数、另一个窗口的方案列、磁贴数字是不是一起变。</summary>
         internal void UiTestSync()
         {
-            OpenCatWindow(Catalog.CAT_GUN);
-            OpenCatWindow(Catalog.CAT_MAP);
-            CatWindow a, b;
-            catWins.TryGetValue(Catalog.CAT_GUN, out a);
-            catWins.TryGetValue(Catalog.CAT_MAP, out b);
-            if (a == null || b == null) { Core.Log("WARN", "SYNC 两个窗口没开起来"); return; }
+            // 单窗口下不再有「两个窗口互相看不见」的问题，改验：切类、勾选、页签数字、磁贴数字是否一致
+            ShowCatView(Catalog.CAT_GUN);
             int before = checkedKeys.Count;
+            CatView a;
+            catViews.TryGetValue(Catalog.CAT_GUN, out a);
+            if (a == null) { Core.Log("WARN", "SYNC 枪械视图没建起来"); return; }
+            int gunOnBefore = TileOn(Catalog.CAT_GUN);
             string n = a.ToggleFirst();
-            Core.Log("INFO", "SYNC 勾选「" + n + "」：勾选数 " + before + " -> " + checkedKeys.Count
-                + "；另一窗口首行方案列 = " + b.FirstMark());
+            Core.Log("INFO", "SYNC 枪械窗口勾「" + n + "」：勾选数 " + before + " -> " + checkedKeys.Count
+                + "；磁贴枪械已选 " + gunOnBefore + " -> " + TileOn(Catalog.CAT_GUN)
+                + "；首行方案列 = " + a.FirstMark());
             a.ToggleFirst();
-            Core.Log("INFO", "SYNC 取消后勾选数 " + checkedKeys.Count + "；磁贴枪械已选 = " + TileOn(Catalog.CAT_GUN));
-            a.Shot(System.IO.Path.Combine(Core.LogDir, "uitest_cat_a.png"));
-            b.Shot(System.IO.Path.Combine(Core.LogDir, "uitest_cat_b.png"));
+            ShowCatView(Catalog.CAT_MAP);
+            Core.Log("INFO", "SYNC 取消后勾选数 " + checkedKeys.Count + "；切到地图类："
+                + "标题=" + gMod.Caption + " 页签当前=" + (tabCur.Length == 0 ? "总览" : tabCur));
+            ShowCatView(Catalog.CAT_GUN);
+            Core.Log("INFO", "SYNC 切回枪械：磁贴枪械已选 = " + TileOn(Catalog.CAT_GUN)
+                + "；勾选数 = " + checkedKeys.Count);
         }
 
         private int TileOn(string cat)
@@ -660,6 +696,47 @@ namespace Installer
             }
         }
 
+        /// <summary>自测用：展开一个套装、勾其中一个 vpk，验证「只装单件」这条路。</summary>
+        internal void UiTestExpand()
+        {
+            ModGroup target = null;
+            // 优先挑枪械里的套装：那一类行数少，展开后子件全在可视区，截图能看清
+            foreach (ModGroup g in Catalog.Groups)
+                if (g.IsSet && g.Cat == Catalog.CAT_GUN && (target == null || g.Parts.Count > target.Parts.Count)) target = g;
+            if (target == null)
+                foreach (ModGroup g in Catalog.Groups)
+                    if (g.IsSet && (target == null || g.Parts.Count > target.Parts.Count)) target = g;
+            if (target == null) { Core.Log("WARN", "EXPAND 库里没有多 vpk 套装"); return; }
+            ShowCatView(target.Cat);
+            Application.DoEvents();
+            CatView v;
+            if (!catViews.TryGetValue(target.Cat, out v)) { Core.Log("WARN", "EXPAND 类视图没建起来"); return; }
+
+            int before = checkedKeys.Count;
+            int filesBefore = Selected().Count;
+            ToggleExpand(target);
+            Application.DoEvents();
+            Core.Log("INFO", "EXPAND 展开「" + target.Name + "」零件 " + target.Parts.Count + " 件，列表行数=" + v.DebugRows());
+            string first = v.ToggleFirstPart(target);
+            Core.Log("INFO", "EXPAND 勾单件「" + first + "」：MOD 勾选 " + before + " -> " + checkedKeys.Count
+                + "，文件 " + filesBefore + " -> " + Selected().Count
+                + "，组行=" + v.GroupText(target) + "，首行方案列=" + v.FirstMark());
+            try { v.Shot(Path.Combine(Core.LogDir, "uiexpand.png")); }
+            catch (Exception ex) { Core.Log("WARN", "EXPAND 截图失败 " + ex.Message); }
+            // 再勾一次整组：验证子件行会跟着组行走（默认部件是几件就勾几行）
+            v.CheckGroupRow(target, false);
+            v.CheckGroupRow(target, true);
+            Core.Log("INFO", "EXPAND 勾整组后：勾选 " + checkedKeys.Count + " 个文件，组行=" + v.GroupText(target)
+                + "，子件行勾着 " + v.PartCheckedRows(target) + "/" + target.Parts.Count);
+            v.CheckGroupRow(target, false);
+            Core.Log("INFO", "EXPAND 取消整组后：勾选 " + checkedKeys.Count + " 个文件，组行=" + v.GroupText(target)
+                + "，子件行勾着 " + v.PartCheckedRows(target) + "/" + target.Parts.Count);
+            // 收起来，顺便验证收起后子件行真的没了
+            ToggleExpand(target);
+            Application.DoEvents();
+            Core.Log("INFO", "EXPAND 收起后列表行数=" + v.DebugRows());
+        }
+
         /// <summary>自测用：切到「只看方案内」，同时把方案标记的统计打到日志里。</summary>
         internal void UiTestSchemeOnly()
         {
@@ -673,20 +750,22 @@ namespace Installer
                 if (n > bestN) { bestN = n; best = c; }
             }
             if (best == null) { Core.Log("WARN", "SCHEME 没有可看的方案内容"); return; }
-            OpenCatWindow(best);
-            CatWindow w;
-            if (!catWins.TryGetValue(best, out w)) return;
+            ShowCatView(best);
+            CatView w;
+            if (!catViews.TryGetValue(best, out w)) return;
             w.SetOnlyScheme(true);
             w.RefreshChecks();
             Core.Log("INFO", "SCHEME 方案=" + schemeName + " 方案文件=" + schemeKeys.Count
                 + " 类=" + best + " " + w.Stats());
-            w.Shot(System.IO.Path.Combine(Core.LogDir, "uitest_cat.png"));
         }
 
         /// <summary>自测用：全选当前可见项并跑深度冲突检查，结果写日志。</summary>
         internal void UiTestDeep()
         {
-            foreach (CatWindow w in catWins.Values) w.CheckAll(true);
+            // 全库全选（默认部件），再跑深度冲突检查
+            foreach (ModGroup g in Catalog.Groups)
+                foreach (ModItem p in Catalog.DefaultParts(g)) checkedKeys.Add(p.Key);
+            SyncCatViews();
             List<ModItem> sel = Selected();
             Core.Log("INFO", "DEEP 选中 " + sel.Count + " 个，开始深度检查");
             System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
@@ -697,10 +776,36 @@ namespace Installer
 
         internal string SearchText { get { return txtSearch == null ? "" : txtSearch.Text.Trim(); } }
 
+        internal void ClearSearchIfAny()
+        {
+            if (txtSearch != null && txtSearch.Text.Length > 0) txtSearch.Text = "";   // 会触发一次重新筛选
+        }
+
+        /// <summary>行首的展开标记：套装才给三角，单 vpk 的行前面留空。</summary>
+        internal string GroupRowText(ModGroup g, int sel)
+        {
+            if (!g.IsSet) return g.Name;
+            return (expanded.Contains(g.Key) ? "▼ " : "▶ ") + g.Name + "（" + (sel > 0 ? sel : 0) + "/" + g.Parts.Count + "）";
+        }
+
+        internal string GroupRowText(ModGroup g) { return GroupRowText(g, CountChecked(g)); }
+
+        internal bool IsExpanded(ModGroup g) { return g != null && expanded.Contains(g.Key); }
+
+        /// <summary>双击套装行：就地展开/收起子件，不弹窗、不重建整张表。</summary>
+        internal void ToggleExpand(ModGroup g)
+        {
+            if (g == null || !g.IsSet) return;
+            if (!expanded.Remove(g.Key)) expanded.Add(g.Key);
+            CatView v;
+            if (catViews.TryGetValue(g.Cat, out v)) v.SyncGroup(g);
+        }
+
         /// <summary>把一条套装渲染成一行：类窗口和方案窗口共用同一套配色规则。</summary>
         internal ListViewItem MakeRow(ModGroup g)
         {
-            ListViewItem li = new ListViewItem(RowName(g, 0));
+            int sel = CountChecked(g);
+            ListViewItem li = new ListViewItem(GroupRowText(g, sel));
             Color mk;
             li.SubItems.Add(SchemeMark(g, out mk));           // 方案：方案内 / 已取消 / 新增
             li.SubItems[1].ForeColor = mk;
@@ -711,31 +816,65 @@ namespace Installer
             li.SubItems.Add(WhereText(g));
             li.SubItems[4].ForeColor = CatInk(g.Cat);
             li.Tag = g;
-            int sel = CountChecked(g);
             li.Checked = sel > 0;
-            li.Text = RowName(g, sel);
             if (g.IsSet) li.ToolTipText = PartsTip(g);
+            return li;
+        }
+
+        /// <summary>展开后挂在套装下面的一个 vpk：勾这行只装这一个文件。</summary>
+        internal ListViewItem MakePartRow(ModGroup g, ModItem p)
+        {
+            ListViewItem li = new ListViewItem("      └ " + p.Name);
+            li.SubItems.Add("");
+            li.SubItems.Add(p.Subject.Length > 0 ? p.Subject : "—");
+            li.SubItems.Add(Core.Human(p.Size));
+            li.SubItems.Add(p.Role + " · 单件");
+            li.SubItems[4].ForeColor = Theme.Ink3;
+            li.Tag = p;
+            li.ForeColor = Theme.Ink3;
+            li.Checked = checkedKeys.Contains(p.Key);
+            li.ToolTipText = "这一个 vpk：" + p.Name + "\r\n勾上 = 只装它（" + p.Role + "）";
             return li;
         }
 
         /// <summary>任何窗口里勾了一行，都走这里：先改 checkedKeys，再把所有窗口和磁贴同步一遍。</summary>
         internal void OnRowChecked(ListView lv, ItemCheckedEventArgs e)
         {
+            if (refreshing) return;
+
+            // 展开出来的单件行：勾哪个就装哪个，不动同套装的其他 vpk
+            ModItem part = e.Item.Tag as ModItem;
+            if (part != null)
+            {
+                // 刷新列表时 ListView 会把勾选状态再补发一遍；状态本来就一致就放过，否则会死循环
+                if (e.Item.Checked == checkedKeys.Contains(part.Key)) return;
+                if (e.Item.Checked) checkedKeys.Add(part.Key);
+                else checkedKeys.Remove(part.Key);
+
+                if (bulk) return;
+                // 组行的「已选 2/5」和子行勾状态统一由 SyncCatViews → RefreshChecks 更新
+                SyncCatViews();
+                UpdateSchemeLabel();
+                UpdateSel();
+                SyncTileStates();
+                return;
+            }
+
             ModGroup g = e.Item.Tag as ModGroup;
-            if (g == null || refreshing) return;
+            if (g == null) return;
             // 刷新列表时 ListView 会把每一行的勾选状态再补发一遍消息；那时 checkedKeys 本来就是对的，
             // 认了就变成「同步一次 → 又补发 → 再同步」的死循环，所以状态一致就直接放过
             if (e.Item.Checked == (CountChecked(g) > 0)) return;
             if (e.Item.Checked)
             {
-                // 勾这一行 = 装默认部件（主体 + 必装 + 第一个选配）；想挑就双击
+                // 勾这一行 = 装默认部件（主体 + 必装 + 第一个选配）；想挑就双击展开
                 foreach (ModItem p in Catalog.DefaultParts(g)) checkedKeys.Add(p.Key);
             }
             else
             {
                 foreach (ModItem p in g.Parts) checkedKeys.Remove(p.Key);
             }
-            if (g.IsSet) e.Item.Text = RowName(g, CountChecked(g));
+            if (g.IsSet) e.Item.Text = GroupRowText(g);
             Color c;
             e.Item.SubItems[1].Text = SchemeMark(g, out c);
             e.Item.SubItems[1].ForeColor = c;
@@ -751,7 +890,8 @@ namespace Installer
         {
             ContextMenuStrip cms = new ContextMenuStrip();
             cms.Font = Theme.UI;
-            cms.Items.Add("选择部件…", null, delegate { PickPartsIn(lv); });
+            cms.Items.Add("展开 / 收起这套的 vpk（双击也行）", null, delegate { ToggleExpandIn(lv); });
+            cms.Items.Add("选择部件…（老弹窗）", null, delegate { PickPartsIn(lv); });
             cms.Items.Add("删除所选 → U 盘 _回收的MOD", null, delegate { DeleteSelectedIn(lv); });
             cms.Items.Add("重命名所选", null, delegate { RenameSelectedIn(lv); });
             cms.Items.Add("设置标签…", null, delegate { SetTagsIn(lv); });
@@ -763,6 +903,14 @@ namespace Installer
             return cms;
         }
 
+        internal void ToggleExpandIn(ListView lv)
+        {
+            ModGroup g = FirstSelectedGroup(lv);
+            if (g == null) { MessageBox.Show("先选中一个套装行。"); return; }
+            if (!g.IsSet) { MessageBox.Show("这个 MOD 只有一个 vpk，没有可展开的部件。"); return; }
+            ToggleExpand(g);
+        }
+
         internal void ManageProfiles()
         {
             using (ProfileManageForm f = new ProfileManageForm(this)) f.ShowDialog(this);
@@ -770,12 +918,16 @@ namespace Installer
             RefreshMods();
         }
 
-        /// <summary>按名字重建磁贴数字；已经开着的类窗口一起重排。</summary>
+        /// <summary>搜索或方案变了：磁贴、页签、已经建好的类视图一起重排。</summary>
         private void RefreshMods()
         {
             SyncTileStates();
-            foreach (CatWindow w in catWins.Values) w.Fill();
+            UpdateSchemeLabel();
+            List<CatView> vs = new List<CatView>(catViews.Values);
+            foreach (CatView v in vs) v.Fill();
             UpdateSel();
+            SyncTabs();
+            UpdateModCaption();
         }
 
         // 一行说清这套方案在各类里放了几个
@@ -890,7 +1042,7 @@ namespace Installer
         private static string PartsTip(ModGroup g)
         {
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            sb.Append("这套由 ").Append(g.Parts.Count).Append(" 个 vpk 组成（双击可选部件）：");
+            sb.Append("这套由 ").Append(g.Parts.Count).Append(" 个 vpk 组成（双击这一行展开，可以只勾其中一个）：");
             foreach (ModItem p in g.Parts) sb.Append("\r\n· [").Append(p.Role).Append("] ").Append(p.Name);
             return sb.ToString();
         }
@@ -901,6 +1053,9 @@ namespace Installer
             foreach (ModItem p in g.Parts) if (checkedKeys.Contains(p.Key)) n++;
             return n;
         }
+
+        // 展开出来的单件行要照这个判断自己该不该打勾
+        internal bool IsChecked(string key) { return key != null && checkedKeys.Contains(key); }
 
         private bool MatchGroup(ModGroup g, string kw)
         {
@@ -1059,14 +1214,14 @@ namespace Installer
             }
         }
 
-        /// <summary>在对应的类窗口里选中那一行；窗口没开就先开。</summary>
+        /// <summary>在对应的类视图里选中那一行；顺便切过去。</summary>
         private void RevealModRow(ModItem it)
         {
             ModGroup g;
             if (!Catalog.GroupByKey.TryGetValue(it.GroupKey, out g)) { Core.Log("WARN", "定位不到这一行：" + it.Name); return; }
-            OpenCatWindow(g.Cat);
-            CatWindow w;
-            if (catWins.TryGetValue(g.Cat, out w)) w.RevealItem(it, g);
+            if (tabCur != g.Cat) ShowCatView(g.Cat);
+            CatView v;
+            if (catViews.TryGetValue(g.Cat, out v)) v.RevealItem(it, g);
         }
 
         private void BrowseGame()
@@ -1092,19 +1247,30 @@ namespace Installer
 
         private List<ModItem> CheckedOrSelected(ListView lv)
         {
+            // 展开出来的单件行和套装行会指向同一个 vpk，用 Key 去重，别删两遍
             List<ModItem> list = new List<ModItem>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             bool useChecked = lv.CheckedItems.Count > 0;
             System.Collections.IEnumerable rows = useChecked ? (System.Collections.IEnumerable)lv.CheckedItems
                                                              : (System.Collections.IEnumerable)lv.SelectedItems;
             foreach (ListViewItem li in rows)
             {
+                ModItem single = li.Tag as ModItem;
+                if (single != null)
+                {
+                    if (seen.Add(single.Key)) list.Add(single);
+                    continue;
+                }
                 ModGroup g = li.Tag as ModGroup;
                 if (g == null) continue;
                 if (useChecked)
                 {
-                    foreach (ModItem p in g.Parts) if (checkedKeys.Contains(p.Key)) list.Add(p);
+                    foreach (ModItem p in g.Parts) if (checkedKeys.Contains(p.Key) && seen.Add(p.Key)) list.Add(p);
                 }
-                else list.AddRange(Catalog.DefaultParts(g));
+                else
+                {
+                    foreach (ModItem p in Catalog.DefaultParts(g)) if (seen.Add(p.Key)) list.Add(p);
+                }
             }
             return list;
         }
@@ -1115,12 +1281,17 @@ namespace Installer
             return lv.SelectedItems[0].Tag as ModGroup;
         }
 
-        // 双击一行：套装 → 挑部件；单个 vpk → 看详情
+        // 双击一行：套装 → 就地展开看每个 vpk；单件行 → 直接切勾选
         internal void OpenRowAt(ListView lv)
         {
-            ModGroup g = FirstSelectedGroup(lv);
+            if (lv.SelectedItems.Count == 0) return;
+            ListViewItem li = lv.SelectedItems[0];
+            ModItem p = li.Tag as ModItem;
+            if (p != null) { li.Checked = !li.Checked; return; }
+            ModGroup g = li.Tag as ModGroup;
             if (g == null) return;
-            if (g.IsSet) PickParts(g); else ShowModInfo(g);
+            if (g.IsSet) { ToggleExpand(g); return; }
+            ShowModInfo(g);
         }
 
         internal void PickPartsIn(ListView lv)
@@ -1494,7 +1665,7 @@ namespace Installer
             CatTile t0;
             sb.AppendLine("MOD 磁贴  : " + catTiles.Count + " 块"
                 + (catTiles.TryGetValue(Catalog.Cats[0], out t0) ? "，" + t0.Width + " x " + t0.Height : ""));
-            sb.AppendLine("类窗口    : 已开 " + catWins.Count + " 个");
+            sb.AppendLine("类视图    : 已建 " + catViews.Count + " 个，当前显示「" + (tabCur.Length == 0 ? "总览" : tabCur) + "」");
             sb.AppendLine("日志分组  : " + gLog.Width + " x " + gLog.Height);
             sb.AppendLine("日志框    : " + txtLog.Width + " x " + txtLog.Height);
             sb.AppendLine("进度条    : " + bar.Left + "," + bar.Top + " " + bar.Width + " x " + bar.Height);
@@ -1539,7 +1710,9 @@ namespace Installer
 
             gMod.Left = rightX;
             gMod.Width = rightW;
+            tabs.Width = rightW - 24;
             tileHost.Width = rightW - 24;
+            viewHost.Width = rightW - 24;
             LayoutTiles();
             lblSel.Width = rightW - 24;
             lblConflict.Width = rightW - 24;
@@ -1570,7 +1743,9 @@ namespace Installer
             int w = tileHost.ClientSize.Width;
             int h = tileHost.ClientSize.Height;
             if (w <= 0 || h <= 0) return;
-            const int gap = 10, cols = 2;
+            // 窄窗口两列三行，宽了改三列两行 —— 磁贴越接近正方形，里面能塞的名字越多
+            int gap = 10;
+            int cols = w >= 760 ? 3 : 2;
             int rows = (Catalog.Cats.Length + cols - 1) / cols;
             int tw = Math.Max(120, (w - gap) / cols);
             int th = Math.Max(88, (h - (rows - 1) * gap) / rows);
