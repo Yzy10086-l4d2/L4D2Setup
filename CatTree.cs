@@ -20,6 +20,7 @@ namespace Installer
         public string Key;                       // 被替换的模型名，如 w_rifle_ak47
         public string Name;                      // 显示名：AK-47
         public string Cat;                       // 大类：枪械 / 医疗 / 人物 …
+        public bool Manual;                      // 这个位置是人工指定出来的（可能还要并回自动的同名位置）
         public readonly List<ModGroup> Items = new List<ModGroup>();
     }
 
@@ -36,14 +37,26 @@ namespace Installer
                 if (m == null) continue;
                 // 地图能叠好几张、喷漆不占位置 —— 这两种没有「只能一个」的说法，不进树
                 if (g.Cat == "地图" || g.Cat == "喷漆") continue;
-                string key = (m.SubjectKey ?? "").Trim();
-                string nm = (m.Subject ?? "").Trim();
-                if (IsCountName(nm)) continue;                 // 「4 件」是「一个包里改了好几样」的上报格式，不是东西
-                if (key.Length == 0)
+                // 人工指定过就以人工为准：大类、位置都能改
+                string cat = CatPrefs.CatOf(m, g.Cat);
+                string hand = CatPrefs.SlotOf(m).Trim();
+                string key, nm;
+                if (hand.Length > 0)
                 {
-                    // 人物、投掷物这类没有「模型名」，只有认出来的名字 —— 就用名字当位置
-                    if (nm.Length == 0) continue;              // 名字都认不出：不进树
-                    key = "sub:" + nm;
+                    key = "slot:" + cat + "/" + hand;
+                    nm = hand;
+                }
+                else
+                {
+                    key = (m.SubjectKey ?? "").Trim();
+                    nm = (m.Subject ?? "").Trim();
+                    if (IsCountName(nm)) continue;                 // 「4 件」是「一个包里改了好几样」的上报格式，不是东西
+                    if (key.Length == 0)
+                    {
+                        // 人物、投掷物这类没有「模型名」，只有认出来的名字 —— 就用名字当位置
+                        if (nm.Length == 0) continue;              // 名字都认不出：不进树
+                        key = "sub:" + nm;
+                    }
                 }
                 Slot s;
                 if (!map.TryGetValue(key, out s))
@@ -51,7 +64,8 @@ namespace Installer
                     s = new Slot();
                     s.Key = key;
                     s.Name = nm.Length > 0 ? nm : key;
-                    s.Cat = g.Cat;
+                    s.Cat = cat;
+                    s.Manual = hand.Length > 0;
                     map[key] = s;
                     list.Add(s);
                 }
@@ -61,8 +75,32 @@ namespace Installer
                 }
                 s.Items.Add(g);
             }
+            MergeManual(list);
             Disambiguate(list);
             return list;
+        }
+
+        /// <summary>
+        /// 人工写的位置名如果和自动认出来的位置同名（同一个大类），并成一行 ——
+        /// 否则「AK-47」会分成人工一个、自动一个，看着像两个位置。
+        /// </summary>
+        private static void MergeManual(List<Slot> list)
+        {
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                Slot a = list[i];
+                if (!a.Manual) continue;
+                for (int j = 0; j < list.Count; j++)
+                {
+                    if (j == i) continue;
+                    Slot b = list[j];
+                    if (b.Cat != a.Cat || b.Name != a.Name) continue;
+                    if (b.Manual) continue;                   // 两个都是人工的：key 相同，不会发生
+                    foreach (ModGroup g in a.Items) if (!b.Items.Contains(g)) b.Items.Add(g);
+                    list.RemoveAt(i);
+                    break;
+                }
+            }
         }
 
         /// <summary>两把不同的枪可能都叫「鸟狙」，加个尾巴区分开，否则树里看着像重复项。</summary>
@@ -71,14 +109,15 @@ namespace Installer
             Dictionary<string, int> freq = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (Slot s in list)
             {
+                string k = s.Cat + "\u0001" + s.Name;      // 不同大类下同名不算重复
                 int n;
-                freq.TryGetValue(s.Name, out n);
-                freq[s.Name] = n + 1;
+                freq.TryGetValue(k, out n);
+                freq[k] = n + 1;
             }
             foreach (Slot s in list)
             {
                 int n;
-                if (!freq.TryGetValue(s.Name, out n) || n < 2) continue;
+                if (!freq.TryGetValue(s.Cat + "\u0001" + s.Name, out n) || n < 2) continue;
                 s.Name = s.Name + " · " + Tag(s.Key);
             }
         }
@@ -107,14 +146,13 @@ namespace Installer
                 || s == "幸存者" || s == "近战" || s == "其他" || s.Length == 0;
         }
 
-        /// <summary>大类按 Catalog.Cats 的顺序排，类内方案内的排前面。</summary>
+        /// <summary>大类按「人工排过的顺序」排，没排过的按 Catalog.Cats 跟在后面。</summary>
         public static List<string> CatOrder(List<Slot> slots)
         {
-            // 先放最常用的四类，地图/喷漆排在后面（现在其实不进树了）
-            string[] prefer = { "枪械", "人物", "药品", "杂项" };
             List<string> order = new List<string>();
-            foreach (string c in prefer) order.Add(c);
-            foreach (string c in Catalog.Cats) if (!order.Contains(c)) order.Add(c);
+            foreach (string c in CatPrefs.Cats()) order.Add(c);       // 默认枪械/人物/药品/杂项 + 用户新建的
+            foreach (string c in Catalog.Cats)
+                if (c != "地图" && c != "喷漆" && !order.Contains(c)) order.Add(c);
             foreach (Slot s in slots) if (!order.Contains(s.Cat)) order.Add(s.Cat);
             return order;
         }
@@ -189,10 +227,21 @@ namespace Installer
             lv.Columns.Add("大小", 74).TextAlign = HorizontalAlignment.Right;
             lv.MouseClick += delegate(object s, MouseEventArgs e)
             {
+                if (e.Button != MouseButtons.Left) return;      // 右键只是弹菜单，别顺手换掉 MOD
                 ListViewItem li = lv.GetItemAt(e.X, e.Y);
                 if (li == null) return;
                 Choose(li.Tag as ModGroup);
             };
+            lv.MouseDown += delegate(object s, MouseEventArgs e)
+            {
+                if (e.Button != MouseButtons.Right) return;
+                ListViewItem hit = lv.GetItemAt(e.X, e.Y);
+                if (hit == null || hit.Selected) return;
+                lv.SelectedItems.Clear();
+                hit.Selected = true;
+                hit.Focused = true;
+            };
+            lv.ContextMenuStrip = mf.BuildTreeMenu(lv);
             lv.Resize += delegate { LayoutCols(); };
             Controls.Add(lv);
 
@@ -277,6 +326,12 @@ namespace Installer
                 if (g.Cat != "地图" && g.Cat != "喷漆") eligible++;
             unmatched = Math.Max(0, eligible - inTree);
             BuildRows();
+            if (selKey.Length > 0 && selKey != "#unmatched")
+            {
+                bool ok = false;
+                foreach (Slot s in slots) if (s.Key == selKey) { ok = true; break; }
+                if (!ok) selKey = "";                       // 分类一改，原来那个位置可能没了
+            }
             if (selKey.Length == 0 && slots.Count > 0) selKey = slots[0].Key;
             FillDetail();
         }
@@ -288,6 +343,9 @@ namespace Installer
             {
                 int ia = order.IndexOf(a.Cat), ib = order.IndexOf(b.Cat);
                 if (ia != ib) return ia.CompareTo(ib);
+                // 人工排过的位置按人工顺序；没排过的往后
+                int ra = CatPrefs.SlotRank(a.Cat, a.Name), rb = CatPrefs.SlotRank(b.Cat, b.Name);
+                if (ra != rb) return ra.CompareTo(rb);
                 bool x = HasChecked(a), y = HasChecked(b);
                 if (x != y) return x ? -1 : 1;
                 int c = string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
@@ -478,7 +536,8 @@ namespace Installer
             lblHint.Text = "它们的 vpk 里没有能和枪械/人物对上的模型名，程序没法判断该占哪个位置，\n"
                          + "所以在这里不参与「一个位置一个」。\n\n"
                          + "不影响装机：在「分类」页里照常勾选，装的时候一模一样。\n"
-                         + "如果想让它们进树，右键那一行 →「设置它替换什么」，手工指定一次就会记住。";
+                         + "要让它们进树：到「分类」页对那一行右键 →「设置 MOD 分类…」，\n"
+                         + "指定一次「算哪一类 + 替换什么」就记住了，下次自动排进来。";
         }
 
         private static string KindsOf(ModGroup g)
@@ -499,6 +558,23 @@ namespace Installer
             if (g != null) mf.CheckGroupDefault(g);
             mf.AfterTreePick();
             FillDetail();
+        }
+
+        /// <summary>右键菜单里的「用这个替换」：拿这一行的 Tag 去换，位置用当前选中的那个。</summary>
+        internal void PickRow(ListViewItem li)
+        {
+            if (li == null) return;
+            Choose(li.Tag as ModGroup);
+        }
+
+        /// <summary>自测用：方案树右边那张表的右键菜单，一路念出来。</summary>
+        internal string TreeMenuText()
+        {
+            if (lv.ContextMenuStrip == null) return "（没有菜单）";
+            string all = "";
+            foreach (ToolStripItem it in lv.ContextMenuStrip.Items)
+                all += (it is ToolStripSeparator ? " | " : it.Text + " · ");
+            return all;
         }
 
         /// <summary>自测用：直接选某个槽位里的第 i 个候选。</summary>
@@ -930,9 +1006,15 @@ namespace Installer
             Core.Log("INFO", "MENU 单项=" + hasOne + " 批量项=" + hasBatch + "，重命名项文案="
                 + MenuTextOf(cms, "重命名"));
 
+            // 设置标签 → 设置 MOD 分类（点开是独立窗口，能选分类也能新建）
+            Core.Log(MenuTextOf(cms, "设置 MOD 分类") == "（没有）" ? "FAIL" : "OK",
+                "MENU 分类项文案=" + MenuTextOf(cms, "设置 MOD 分类"));
+            if (MenuTextOf(cms, "设置标签") != "（没有）") Core.Log("FAIL", "MENU 还留着「设置标签」");
+
             lv.SelectedItems.Clear();
             ShowTree();
             Application.DoEvents();
+            Core.Log("INFO", "TREEMENU " + (treeView == null ? "（没有树）" : treeView.TreeMenuText()));
         }
 
         private static string MenuTextOf(ContextMenuStrip cms, string keyword)
@@ -940,6 +1022,95 @@ namespace Installer
             foreach (ToolStripItem it in cms.Items)
                 if (it.Text != null && it.Text.IndexOf(keyword, StringComparison.Ordinal) >= 0) return it.Text;
             return "（没有）";
+        }
+
+        /// <summary>自测：「设置 MOD 分类」这条路走一遍 —— 人工归类要真的进树，测完原样还原。</summary>
+        internal void UiTestSetCat()
+        {
+            ShowTree();
+            Application.DoEvents();
+            if (treeView == null) { Core.Log("FAIL", "SETCAT 没有树"); return; }
+
+            // 分类是持久化的：先留底，自测结束原样写回，不能给用户留一个「测试分类」
+            string f = CatPrefs.FileOf();
+            string backup = System.IO.File.Exists(f) ? System.IO.File.ReadAllText(f) : null;
+            int before = treeView.SlotCount;
+            Core.Log("INFO", "SETCAT 起始槽位 " + before + " 个，分类顺序 " + string.Join(" / ", CatPrefs.Cats().ToArray()));
+
+            List<Slot> now = SlotIndex.Build();
+            ModGroup miss = null, known = null;
+            foreach (ModGroup g in Catalog.Groups)
+            {
+                if (g.Cat == "地图" || g.Cat == "喷漆" || g.Main == null) continue;
+                bool inTree = false;
+                foreach (Slot s in now) if (s.Items.Contains(g)) { inTree = true; break; }
+                if (!inTree) { if (miss == null) miss = g; }
+                else if (known == null && (g.Main.Subject ?? "").Trim().Length > 0) known = g;
+            }
+            if (miss != null) Core.Log("INFO", "SETCAT 未归类样本：" + miss.Name);
+            if (known == null) { Core.Log("FAIL", "SETCAT 找不到已知位置的样本"); return; }
+
+            ModGroup t1 = miss != null ? miss : known;
+            CatPrefs.Assign(t1, "测试分类", "测试位置");
+            treeView.Rebuild();
+            bool inSlot = false, catOk = false;
+            foreach (Slot s in SlotIndex.Build())
+                if (s.Name == "测试位置" && s.Items.Contains(t1)) { inSlot = true; catOk = s.Cat == "测试分类"; }
+            Core.Log(inSlot && catOk ? "OK" : "FAIL", "SETCAT 全人工：" + t1.Name + " → 测试分类 / 测试位置，进树=" + inSlot + " 归类=" + catOk);
+
+            List<string> order = CatPrefs.Cats();
+            Core.Log(order[order.Count - 1] == "测试分类" ? "OK" : "FAIL",
+                "SETCAT 新建分类排在末尾：" + string.Join(" / ", order.ToArray()));
+            Core.Log(treeView.SlotCount > before ? "OK" : "FAIL",
+                "SETCAT 槽位数 " + before + " → " + treeView.SlotCount + "（未归类的进来了）");
+
+            string autoName = (known.Main.Subject ?? "").Trim();
+            CatPrefs.Assign(known, "测试分类", "");
+            treeView.Rebuild();
+            bool moved = false;
+            foreach (Slot s in SlotIndex.Build())
+                if (s.Name == autoName && s.Items.Contains(known)) moved = s.Cat == "测试分类";
+            Core.Log(moved ? "OK" : "FAIL", "SETCAT 只改归类：" + known.Name + " → 测试分类（位置仍是 " + autoName + "）");
+
+            CatPrefs.Reset(t1);
+            CatPrefs.Reset(known);
+            treeView.Rebuild();
+            bool gone = true;
+            foreach (Slot s in SlotIndex.Build()) if (s.Name == "测试位置") { gone = false; break; }
+            Core.Log(gone ? "OK" : "FAIL", "SETCAT 恢复自动后「测试位置」已消失");
+            Core.Log(treeView.SlotCount == before ? "OK" : "FAIL",
+                "SETCAT 槽位数回到 " + treeView.SlotCount + "（原 " + before + "）");
+
+            if (backup == null) { try { System.IO.File.Delete(f); } catch { } }
+            else System.IO.File.WriteAllText(f, backup, new System.Text.UTF8Encoding(true));
+            CatPrefs.Reload();
+            treeView.Rebuild();
+            Core.Log(CatPrefs.Cats().Contains("测试分类") ? "FAIL" : "OK",
+                "SETCAT 配置已还原：" + string.Join(" / ", CatPrefs.Cats().ToArray()));
+        }
+
+        /// <summary>自测：把「设置 MOD 分类」窗口拉起来截一张，人眼过一遍排版。</summary>
+        internal void UiTestCatForm()
+        {
+            ModGroup g = null;
+            foreach (ModGroup x in Catalog.Groups)
+                if (x.Cat != "地图" && x.Cat != "喷漆" && x.Main != null) { g = x; break; }
+            if (g == null) { Core.Log("FAIL", "CATFORM 没有样本"); return; }
+            using (ModCatForm f = new ModCatForm(g))
+            {
+                f.Show();
+                Application.DoEvents();
+                f.PerformLayout();
+                Application.DoEvents();
+                using (System.Drawing.Bitmap bmp = new System.Drawing.Bitmap(f.Width, f.Height))
+                {
+                    f.DrawToBitmap(bmp, new System.Drawing.Rectangle(0, 0, f.Width, f.Height));
+                    bmp.Save(System.IO.Path.Combine(Core.LogDir, "modcat.png"),
+                             System.Drawing.Imaging.ImageFormat.Png);
+                }
+                Core.Log("INFO", "CATFORM " + g.Name + "（" + g.Cat + "）截图已存 modcat.png");
+                f.Close();
+            }
         }
     }
 }

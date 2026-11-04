@@ -938,7 +938,7 @@ namespace Installer
             cms.Items.Add(new ToolStripSeparator());
 
             cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
-            cms.Items.Add("设置标签…", null, delegate { SetTagsIn(lv); });
+            cms.Items.Add("设置 MOD 分类…", null, delegate { SetModCatIn(lv); });
             cms.Items.Add(checkedRows > 0
                 ? "删除勾中的 " + checkedRows + " 行 → U 盘 _回收的MOD"
                 : "删除这个 MOD → U 盘 _回收的MOD", null, delegate { DeleteSelectedIn(lv); });
@@ -949,6 +949,47 @@ namespace Installer
             cms.Items.Add("清理同名重复（每个名字留第一个）", null, delegate { CleanDupMods(); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
             return cms;
+        }
+
+        /// <summary>
+        /// 方案树右边那张候选表用的菜单：只留对「一个位置挑一个 MOD」有用的事。
+        /// 导入、清重复、展开这些是分类页的活，不往这儿塞。
+        /// </summary>
+        internal ContextMenuStrip BuildTreeMenu(ListView lv)
+        {
+            ContextMenuStrip cms = new ContextMenuStrip();
+            cms.Font = Theme.UI;
+            cms.Items.Add("用这个替换（点这一行也一样）", null, delegate { PickInTree(lv); });
+            cms.Items.Add(new ToolStripSeparator());
+            cms.Items.Add("只装这个 MOD（不动平台/启动项）", null, delegate { InstallThisOne(lv); });
+            cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
+            cms.Items.Add(new ToolStripSeparator());
+            cms.Items.Add("设置 MOD 分类…（算哪一类 / 替换什么）", null, delegate { SetModCatIn(lv); });
+            cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
+            return cms;
+        }
+
+        /// <summary>方案树里的「用这个替换」：交给树自己去换，位置和勾选都按树的规则走。</summary>
+        private void PickInTree(ListView lv)
+        {
+            ListViewItem li = RowTarget(lv);
+            if (li == null) { MessageBox.Show("先右键点一行。"); return; }
+            if (treeView == null) return;
+            treeView.PickRow(li);
+        }
+
+        /// <summary>设置这个 MOD 在方案树里算哪一类、替换什么。磁贴的页签不动。</summary>
+        internal void SetModCatIn(ListView lv)
+        {
+            ModGroup g = FirstSelectedGroup(lv);
+            if (g == null) { MessageBox.Show("先选中一个 MOD。"); return; }
+            using (ModCatForm f = new ModCatForm(g))
+            {
+                if (f.ShowDialog(this) != DialogResult.OK) return;
+                Core.Log("OK", "分类已保存: " + g.Name + " → " + f.ResultCat
+                    + (f.ResultSlot.Length > 0 ? " / " + f.ResultSlot : ""));
+            }
+            if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
         }
 
         /// <summary>右键点中的那一行。右键时已经把它选中了，所以取第一行选中项。</summary>
@@ -976,7 +1017,7 @@ namespace Installer
         }
 
         /// <summary>只装右键点的那一行，别的什么都不动。</summary>
-        private void InstallThisOne(ListView lv)
+        internal void InstallThisOne(ListView lv)
         {
             ListViewItem li = RowTarget(lv);
             if (li == null) { MessageBox.Show("先在列表里右键点一行。"); return; }

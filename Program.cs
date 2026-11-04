@@ -65,6 +65,8 @@ namespace Installer
             bool uiDeps = false;
             bool uiTree = false;
             bool uiMenu = false;
+            bool uiSetCat = false;
+            bool uiCatForm = false;
             string uiFix = null;
             string uiParts = null;
             string uiTweaks = null;
@@ -93,6 +95,8 @@ namespace Installer
                 else if (string.Equals(a, "--uideps", StringComparison.OrdinalIgnoreCase)) uiDeps = true;
                 else if (string.Equals(a, "--uitree", StringComparison.OrdinalIgnoreCase)) uiTree = true;
                 else if (string.Equals(a, "--uimenu", StringComparison.OrdinalIgnoreCase)) uiMenu = true;
+                else if (string.Equals(a, "--uisetcat", StringComparison.OrdinalIgnoreCase)) uiSetCat = true;
+                else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
                 else if (a.StartsWith("--uifix=", StringComparison.OrdinalIgnoreCase)) uiFix = a.Substring(8).Trim('"');
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
@@ -223,6 +227,8 @@ namespace Installer
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiTree) { f.UiTestTree(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiMenu) { f.UiTestMenu(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiSetCat) { f.UiTestSetCat(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiCatForm) { f.UiTestCatForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFix != null) { f.UiFixProfile(uiFix); System.Windows.Forms.Application.DoEvents(); }
                     if (uiProfile) { f.UiTestProfileForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
