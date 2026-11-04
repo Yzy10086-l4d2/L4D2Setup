@@ -685,8 +685,9 @@ namespace Installer
         // ---------------------------------------------------------------- 套装
 
         /// <summary>把 vpk 聚成「一个 mod 一行」。</summary>
-        public static void BuildGroups()
+        public static System.Diagnostics.Stopwatch BuildGroups()
         {
+            System.Diagnostics.Stopwatch swg = System.Diagnostics.Stopwatch.StartNew();
             contentFacts.Clear();
             Groups.Clear();
             GroupByKey.Clear();
@@ -699,12 +700,16 @@ namespace Installer
                 if (!buckets.ContainsKey(key)) { buckets[key] = new List<ModItem>(); names[key] = name; }
                 buckets[key].Add(it);
             }
+            long tBuckets = swg.ElapsedMilliseconds;
             foreach (KeyValuePair<string, List<ModItem>> kv in buckets)
                 foreach (List<ModItem> c in Cluster(kv.Value, names[kv.Key]))
                     MakeGroup(c);
 
+            long tCluster = swg.ElapsedMilliseconds;
             ApplyCatsCore();                       // 人工归过类的，先按人工的算
             SortGroups();
+            Core.Log("INFO", "归组分相: 分桶 " + tBuckets + " ms, 聚组 " + (tCluster - tBuckets) + " ms, 收尾 " + (swg.ElapsedMilliseconds - tCluster) + " ms");
+            return swg;
         }
 
         /// <summary>

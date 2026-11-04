@@ -25,6 +25,7 @@ namespace Installer
         private TextBox txtSearch;
         private Button btnSaveProfile, btnApplyProfile;
         private Panel viewHost;                  // 方案树 / 某一类的列表都嵌在这里，切换时只换可见性
+        private Label lblLoading;                // 启动读取期间的提示，读完第一屏就撤
         private CatTree treeView;                // 方案树：按「能替换的东西」看，一个位置只留一个 MOD
         private CatTabs tabs;                    // 顶部页签条
         private Label lblSel, lblStatus, lblConflict;
@@ -316,6 +317,17 @@ namespace Installer
                     v.SetBounds(0, 0, viewHost.ClientSize.Width, viewHost.ClientSize.Height);
             };
             gm.Controls.Add(viewHost);
+
+            // 启动读取提示：扫库没完成前树区是空的，不放这句用户会以为程序坏了
+            lblLoading = new Label();
+            lblLoading.Dock = DockStyle.Fill;
+            lblLoading.BackColor = Theme.Surface;
+            lblLoading.Font = Theme.UIBold;
+            lblLoading.ForeColor = Theme.Ink2;
+            lblLoading.TextAlign = ContentAlignment.MiddleCenter;
+            lblLoading.Text = "正在读取 U 盘上的 MOD 库…\r\n第一次启动或刚更新完可能要等几秒，别急着关";
+            viewHost.Controls.Add(lblLoading);
+            lblLoading.BringToFront();
 
             lblSel = new Label(); lblSel.SetBounds(12, modH - 64, rightW - 24, 18); lblSel.Text = "已选 0 个"; lblSel.Font = Theme.UISmall; Theme.Dress(lblSel); gm.Controls.Add(lblSel);
             lblConflict = new Label();

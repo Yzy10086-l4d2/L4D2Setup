@@ -380,8 +380,10 @@ namespace Installer
         {
             try
             {
+                System.Diagnostics.Stopwatch swg = System.Diagnostics.Stopwatch.StartNew();
                 Catalog.ScanMods();
                 Catalog.BuildGroups();
+                Log("INFO", "归组计时: 扫库后归组 " + swg.ElapsedMilliseconds + " ms");
             }
             catch (Exception ex)
             {

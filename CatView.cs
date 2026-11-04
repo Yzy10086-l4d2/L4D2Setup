@@ -47,6 +47,12 @@ namespace Installer
         internal void ShowTree()
         {
             EnsureTree();
+            if (lblLoading != null)              // 读完第一屏就撤掉读取提示
+            {
+                viewHost.Controls.Remove(lblLoading);
+                lblLoading.Dispose();
+                lblLoading = null;
+            }
             tabCur = "#tree";
             foreach (CatView o in catViews.Values) if (o.Visible) o.Visible = false;
             viewHost.Visible = true;

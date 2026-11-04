@@ -378,7 +378,14 @@ namespace Installer
                 psi.RedirectStandardError = true;
                 using (Process p = Process.Start(psi))
                 {
-                    byte[] b = ReadTree(p.StandardOutput.BaseStream);
+                    // Rar.exe 偶发会卡住（杀软锁包/磁盘停顿）：读目录表放后台线程，15 秒读不完就放弃，
+                    // 不然初始化线程会无限期干等，窗口一直是空白。
+                    byte[] b = null;
+                    System.Threading.Thread rd = new System.Threading.Thread(delegate()
+                    { try { b = ReadTree(p.StandardOutput.BaseStream); } catch { } });
+                    rd.IsBackground = true;
+                    rd.Start();
+                    if (!rd.Join(15000)) { Kill(p); return null; }
                     Kill(p);
                     return b;
                 }
