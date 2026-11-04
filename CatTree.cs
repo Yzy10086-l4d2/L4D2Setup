@@ -1286,6 +1286,9 @@ namespace Installer
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                         | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
+                    // 「扩」角标：名字后面挂一个红底小图标，有可叠扩展的位置不用看数字就能扫出来
+                    if (s.Extras.Count > 0) DrawTag(g, nx + nameW + 4, y);
+
                     ModGroup chosen = owner.ChosenOf(s);
                     string sub = chosen == null ? (ecnt > 0 ? "原版" : "未选") : chosen.Name;
                     if (cnt > 1) sub = "叠了 " + cnt + " 件";
@@ -1309,7 +1312,7 @@ namespace Installer
                         new Rectangle(W - 42 - pw, y, 32, RowH), Theme.Ink3,
                         TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 
-                    int subX = nx + nameW + 8;
+                    int subX = nx + nameW + 26;      // 角标固定占一列，没角标的行文字也对得齐
                     int subW = W - subX - 46 - pw;
                     if (subW > 20)
                         TextRenderer.DrawText(g, sub, Theme.UISmall, new Rectangle(subX, y, subW, RowH), Theme.Ink3,
@@ -1334,6 +1337,28 @@ namespace Installer
                     g.FillPolygon(b, p);
                 }
             }
+        }
+
+        /// <summary>「扩」小角标：红底白字，挂在名字后面，表示这个位置有可叠加的扩展。</summary>
+        private static void DrawTag(Graphics g, int x, int y)
+        {
+            const int w = 17, h = 16;
+            int iy = y + (RowH - h) / 2;
+            using (SolidBrush b = new SolidBrush(Theme.Accent))
+            {
+                using (GraphicsPath p = new GraphicsPath())
+                {
+                    int r = 3;
+                    p.AddArc(x, iy, r * 2, r * 2, 180, 90);
+                    p.AddArc(x + w - r * 2, iy, r * 2, r * 2, 270, 90);
+                    p.AddArc(x + w - r * 2, iy + h - r * 2, r * 2, r * 2, 0, 90);
+                    p.AddArc(x, iy + h - r * 2, r * 2, r * 2, 90, 90);
+                    p.CloseFigure();
+                    g.FillPath(b, p);
+                }
+            }
+            TextRenderer.DrawText(g, "扩", Theme.UISmall, new Rectangle(x, iy - 1, w, h + 2), Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 
         private int IndexAt(int y)
