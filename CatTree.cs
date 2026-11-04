@@ -843,21 +843,25 @@ namespace Installer
             return n;
         }
 
-        /// <summary>扩展分小类用：这件扩展改的是什么面。多面的取第一个命中的，排序稳定。</summary>
+        /// <summary>
+        /// 扩展分小类用：直接用识别出来的属性名（模型/音效/HUD/特效/脚本）当组名。
+        /// 新加的 MOD 属性是什么就自动进什么组，不用再加分类规则。
+        /// 多属性的取排序靠前的那个；扩展里带「模型」的必然是只改第一人称的（完整模型当不了扩展）。
+        /// </summary>
         internal static string ExtraCat(ModGroup g)
         {
             if (g == null || g.Main == null) return "其他";
-            if (g.Main.Only1P) return "第一人称模型";
             string k = (g.Main.Kinds ?? "").Trim();
+            if (g.Main.Only1P && k.IndexOf("模型", StringComparison.Ordinal) >= 0) return "模型";
             if (k.IndexOf("音效", StringComparison.Ordinal) >= 0) return "音效";
-            if (k.IndexOf("HUD", StringComparison.Ordinal) >= 0) return "HUD图标";
+            if (k.IndexOf("HUD", StringComparison.Ordinal) >= 0) return "HUD";
             if (k.IndexOf("特效", StringComparison.Ordinal) >= 0) return "特效";
             if (k.IndexOf("脚本", StringComparison.Ordinal) >= 0) return "脚本";
             return k.Length > 0 ? k.Replace(",", "·") : "其他";
         }
 
-        /// <summary>扩展小类的固定排序，界面上从上到下按这个出。</summary>
-        private static readonly string[] ExtraCatOrder = { "第一人称模型", "音效", "HUD图标", "特效", "脚本" };
+        /// <summary>扩展小类的固定排序（就是属性顺序），界面上从上到下按这个出。</summary>
+        private static readonly string[] ExtraCatOrder = { "模型", "音效", "HUD", "特效", "脚本" };
         private static int ExtraCatRank(string cat)
         {
             for (int i = 0; i < ExtraCatOrder.Length; i++)
