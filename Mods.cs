@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Diagnostics;
@@ -103,6 +103,28 @@ namespace Installer
             }
             File.WriteAllLines(p, lines, Encoding.Default);
             return bak;
+        }
+
+        /// <summary>从 addonlist 里删掉这些名字（文件被移走后，别留一条指向不存在文件的开关）。</summary>
+        public static int Remove(string gameRoot, IEnumerable<string> names)
+        {
+            string p = FileOf(gameRoot);
+            if (!File.Exists(p)) return 0;
+            HashSet<string> drop = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+            if (drop.Count == 0) return 0;
+            List<string> lines = new List<string>(File.ReadAllLines(p, Encoding.Default));
+            int n = 0;
+            for (int i = lines.Count - 1; i >= 0; i--)
+            {
+                Match m = LineRe.Match(lines[i]);
+                if (m.Success && drop.Contains(m.Groups[1].Value)) { lines.RemoveAt(i); n++; }
+            }
+            if (n > 0)
+            {
+                Core.BackupOnce(p);
+                File.WriteAllLines(p, lines, Encoding.Default);
+            }
+            return n;
         }
     }
 
@@ -641,6 +663,7 @@ namespace Installer
         private ListView lv;
         private Label lbl;
         private Dictionary<string, bool> state = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        public int Deleted;                 // 这个窗口里删掉（移进回收目录）的个数，关窗后主窗口据此决定要不要重扫
 
         public AddonSwitchForm(string root)
         {
@@ -660,6 +683,9 @@ namespace Installer
             lv.Columns.Add("MOD 文件", 380);
             lv.Columns.Add("状态", 120);
             Controls.Add(lv);
+            ContextMenuStrip cms = new ContextMenuStrip();
+            cms.Items.Add("删除勾中的（移到回收目录，可反悔）", null, delegate { DeleteChecked(); });
+            lv.ContextMenuStrip = cms;
 
             Button up = new Button(); up.Text = "上移 ↑"; up.SetBounds(12, 360, 90, 28); up.Click += delegate { MoveItem(-1); }; Controls.Add(up);
             Button dn = new Button(); dn.Text = "下移 ↓"; dn.SetBounds(108, 360, 90, 28); dn.Click += delegate { MoveItem(1); }; Controls.Add(dn);
@@ -677,6 +703,40 @@ namespace Installer
             lbl = new Label(); lbl.SetBounds(12, 436, 536, 20); lbl.Text = ""; Controls.Add(lbl);
 
             LoadItems();
+        }
+
+        /// <summary>批量删除：把勾中的 vpk 从游戏 addons 移到回收目录（可反悔），并摘掉 addonlist 登记。</summary>
+        private void DeleteChecked()
+        {
+            List<string> names = new List<string>();
+            foreach (ListViewItem li in lv.CheckedItems) names.Add(li.Tag.ToString());
+            if (names.Count == 0)
+                foreach (ListViewItem li in lv.SelectedItems) names.Add(li.Tag.ToString());
+            if (names.Count == 0) { MessageBox.Show("先勾选要删的 MOD（或选中几行）。"); return; }
+            if (MessageBox.Show("把这 " + names.Count + " 个 MOD 从游戏里移走？\r\n\r\n"
+                + "· 文件进回收目录：" + Core.RecycleDir + "\r\n"
+                + "· 不真删，想用可以再拖回来\r\n"
+                + "· addonlist 里那条登记也会摘掉\r\n\r\n确定？",
+                "删除已装 MOD", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
+            int n = 0;
+            foreach (string name in names)
+            {
+                try
+                {
+                    ModItem m = new ModItem();
+                    m.Name = name;
+                    m.FullPath = Path.Combine(addons, name);
+                    m.FromGame = true;
+                    if (Work.MoveGameModToRecycle(m, gameRoot) != null) n++;
+                }
+                catch (Exception ex) { Core.Log("WARN", "删除 " + name + " 失败: " + ex.Message); }
+            }
+            Deleted += n;
+            Core.Log("OK", "已装 MOD 开关：从游戏 addons 移到回收目录 " + n + " 个（" + Core.RecycleDir + "）");
+            state = AddonList.Read(gameRoot);
+            LoadItems();
+            lbl.Text = "已移走 " + n + " 个；回收目录：" + Core.RecycleDir;
         }
 
         private void LoadItems()

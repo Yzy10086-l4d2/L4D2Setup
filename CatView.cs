@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -550,6 +550,21 @@ namespace Installer
             {
                 if (lv.Items.Count == 0) return "（空）";
                 return lv.Items[0].SubItems.Count > 1 ? lv.Items[0].SubItems[1].Text : "?";
+            }
+
+            /// <summary>自测用：前 N 行的「名称 ⇒ 分类列」，用来核对「已装」这类文本。</summary>
+            internal string DumpRows(int n)
+            {
+                if (lv == null || lv.Items.Count == 0) return "（空）";
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                for (int i = 0; i < lv.Items.Count && i < n; i++)
+                {
+                    ListViewItem li = lv.Items[i];
+                    sb.Append(li.Text);
+                    if (li.SubItems.Count > 4) sb.Append(" ⇒ ").Append(li.SubItems[4].Text);
+                    sb.Append(" ／ ");
+                }
+                return sb.ToString();
             }
 
             internal int DebugRows() { return lv == null ? 0 : lv.Items.Count; }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -1725,6 +1725,7 @@ namespace Installer
             ShowTree();
             Application.DoEvents();
 
+            Core.Log("INFO", "TREE 候选表右键菜单：" + treeView.TreeMenuText());
             int slots = treeView.SlotCount;
             int used = treeView.SlotCheckedCount;
             Core.Log("INFO", "TREE 槽位 " + slots + " 个，其中已选 " + used + " 个");

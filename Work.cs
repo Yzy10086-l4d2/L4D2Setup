@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -589,8 +589,24 @@ namespace Installer
         // ---------- MOD 库维护 ----------
         public static string MoveModToRecycle(ModItem m)
         {
-            if (m.FromGame) return null;   // 游戏 addons 里的文件不回收（那是已装的，不是库里的）
-            string dir = Path.Combine(Core.ModRoot, "_回收的MOD");
+            // U 盘模式：游戏 addons 里的文件不回收（那是已装的，不是库里的）。
+            // 本地模式：addons 就是库，删它 = 从游戏里卸掉，允许。
+            if (m.FromGame && !Core.IsLocal) return null;
+            return MoveToRecycleDir(m, m.FromGame ? Core.Cfg.GameRoot : null);
+        }
+
+        /// <summary>
+        /// 把游戏 addons 里的一个 vpk 移到回收目录（不管当前工作模式）。
+        /// 「已装 MOD 开关」窗口用它做批量删除；addonlist 里那条登记一并摘掉。
+        /// </summary>
+        public static string MoveGameModToRecycle(ModItem m, string gameRoot)
+        {
+            return MoveToRecycleDir(m, gameRoot);
+        }
+
+        static string MoveToRecycleDir(ModItem m, string addonListRoot)
+        {
+            string dir = Core.RecycleDir;
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
             string dst = Path.Combine(dir, m.Name);
             int n = 1;
@@ -600,6 +616,11 @@ namespace Installer
                 n++;
             }
             File.Move(m.FullPath, dst);
+            if (addonListRoot != null && addonListRoot.Length > 0)
+            {
+                try { AddonList.Remove(addonListRoot, new string[] { m.Name }); }
+                catch (Exception ex) { Core.Log("WARN", "从 addonlist 摘掉 " + m.Name + " 失败: " + ex.Message); }
+            }
             return dst;
         }
 
@@ -1075,6 +1096,32 @@ namespace Installer
                 int files2 = Directory.GetFiles(addons, "*.vpk").Length;
                 if (files2 != files) { bad++; Console.WriteLine("[FAIL] 全关时文件数变了"); }
                 Console.WriteLine("ADDON 一个都不选：全关=" + f1 + "，用户自己的还开着=" + f2 + "，文件 " + files2 + " 个");
+
+                // 本地模式：从游戏 addons 删一项 → 进回收目录、addonlist 里那条登记一起摘掉
+                string savedMode = Core.Cfg.Mode, savedLog = Core.LogDir, savedGame = Core.Cfg.GameRoot;
+                try
+                {
+                    Core.Cfg.Mode = "local";
+                    Core.Cfg.GameRoot = tmp;
+                    Core.LogDir = Path.Combine(tmp, "_装机记录");
+                    Directory.CreateDirectory(Core.LogDir);
+                    ModItem victim = pool[0];
+                    victim.FullPath = Path.Combine(addons, victim.Name);
+                    victim.FromGame = true;
+                    string dst = MoveModToRecycle(victim);
+                    bool moved = dst != null && File.Exists(dst) && !File.Exists(victim.FullPath);
+                    Dictionary<string, bool> st2 = AddonList.Read(tmp);
+                    bool dropped = !st2.ContainsKey(victim.Name);
+                    if (!moved) { bad++; Console.WriteLine("[FAIL] 本地模式删除没进回收目录: " + victim.Name); }
+                    if (!dropped) { bad++; Console.WriteLine("[FAIL] 删除后 addonlist 里还留着: " + victim.Name); }
+                    Console.WriteLine("ADDON 本地模式删除：进回收=" + moved + "，addonlist 摘掉=" + dropped);
+                }
+                finally
+                {
+                    Core.Cfg.Mode = savedMode;
+                    Core.Cfg.GameRoot = savedGame;
+                    Core.LogDir = savedLog;
+                }
             }
             catch (Exception ex)
             {

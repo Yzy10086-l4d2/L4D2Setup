@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -387,7 +387,9 @@ namespace Installer
                 List<string> arcs = new List<string>();
 
                 // 1) 主库：老结构 <库根>\游戏内容\求生之路2各项MOD\addons*（U 盘布局）
-                if (Directory.Exists(Core.ModRoot))
+                if (Core.IsLocal)
+                    Core.Log("INFO", "本地模式：不扫 U 盘库，把游戏目录 addons 当库");
+                else if (Directory.Exists(Core.ModRoot))
                 {
                     foreach (string dir in Directory.GetDirectories(Core.ModRoot))
                     {
@@ -495,6 +497,21 @@ namespace Installer
             }
             catch { }
 
+            // U 盘模式：库里已经有同名同大小的一份 → 游戏目录这份就是「已装」，合并进库条目、不再重复列
+            Dictionary<string, List<ModItem>> libByName = null;
+            if (!Core.IsLocal)
+            {
+                libByName = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
+                foreach (ModItem m in Core.ModList)
+                {
+                    if (m.FromGame || m.IsArchive) continue;
+                    List<ModItem> l;
+                    if (!libByName.TryGetValue(m.Name, out l)) { l = new List<ModItem>(); libByName[m.Name] = l; }
+                    l.Add(m);
+                }
+            }
+            int merged = 0;
+
             int n2 = 0;
             foreach (string key in names)
             {
@@ -508,6 +525,17 @@ namespace Installer
                 it.Category = "已装";
                 it.FromGame = true;
                 try { it.Size = new FileInfo(f).Length; } catch { it.Size = 0; }
+                if (libByName != null && it.Size > 0)
+                {
+                    List<ModItem> l;
+                    if (libByName.TryGetValue(key, out l))
+                    {
+                        bool dup = false;
+                        foreach (ModItem m in l)
+                            if (m.Size == it.Size) { m.Installed = true; dup = true; }
+                        if (dup) { merged++; continue; }   // 同一份，省掉识别、也不再重复显示
+                    }
+                }
                 Classify(it);
                 ModIdentify.Result ir = ModIdentify.AnalyzeCached(it.RelPath, f);
                 it.Subject = ir.Subject;
@@ -521,6 +549,7 @@ namespace Installer
                 Add(it);
                 n2++;
             }
+            if (merged > 0) Core.Log("INFO", "游戏目录: " + merged + " 个和库里的同名同大小，已合并到库条目（不再重复列）");
             if (n2 > 0) Core.Log("INFO", "游戏目录: addons 里认出 " + n2 + " 个已装 MOD（库外·已装，装机时不再复制）");
             return n2;
         }

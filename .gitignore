@@ -1,0 +1,8 @@
+_bak-*/
+.graphflow/
+*.exe
+*.bak
+*.orig
+*.tmp
+Thumbs.db
+desktop.ini

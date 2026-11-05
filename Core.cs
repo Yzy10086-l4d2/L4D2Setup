@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -33,6 +33,7 @@ namespace Installer
         public bool Only1P;               // 模型全是第一人称 v_，世界模型 w_ 一个没动（能和模型叠加）
         public bool AnimOnly;             // 模型全是 anim_/gestures_ 表情骨架（KSEP 这类陪套，能和模型叠加）
         public bool FromGame;             // 这个 vpk 本来就在游戏 addons 里（库外·已装），装的时候不用复制
+        public bool Installed;            // 游戏 addons 里有同名同大小的另一份（U 盘模式合并后不再重复列）
         public string AssetPaths = "";    // 包内模型/材质路径（分号分隔），只用于同套部件归组
 
         public bool IsArchive { get { return Container != null && Container.Length > 0; } }
@@ -52,6 +53,7 @@ namespace Installer
         public bool CfgFile = true;
         public bool Overwrite = false;      // false = 已装的跳过；true = 全部重装一遍
         public string TweakSet = "";        // 套用哪套参数存档（空 = 不套）
+        public string Mode = "usb";         // 工作模式：usb = U 盘库是主（默认）；local = 游戏目录 addons 当库
         public List<string> ModDirs = new List<string>();   // 额外的 MOD 库文件夹（任意电脑上的任意目录）
         public List<string> Recent = new List<string>();
         public List<string> Mods = new List<string>();
@@ -240,6 +242,7 @@ namespace Installer
                     else if (k == "CfgFile") Cfg.CfgFile = (v == "1");
                     else if (k == "Overwrite") Cfg.Overwrite = (v == "1");
                     else if (k == "TweakSet") Cfg.TweakSet = v;
+                    else if (k == "Mode") Cfg.Mode = v;
                     else if (k == "ModDir") Cfg.ModDirs.Add(v);
                     else if (k == "Recent") Cfg.Recent.Add(v);
                     else if (k.StartsWith("Mod:")) Cfg.Mods.Add(k.Substring(4));
@@ -268,6 +271,7 @@ namespace Installer
                 sb.AppendLine("CfgFile=" + (Cfg.CfgFile ? "1" : "0"));
                 sb.AppendLine("Overwrite=" + (Cfg.Overwrite ? "1" : "0"));
                 sb.AppendLine("TweakSet=" + Cfg.TweakSet);
+                sb.AppendLine("Mode=" + Cfg.Mode);
                 foreach (string d in Cfg.ModDirs) sb.AppendLine("ModDir=" + d);
                 foreach (string rp in Cfg.Recent) sb.AppendLine("Recent=" + rp);
                 sb.AppendLine("[mods]");
@@ -278,6 +282,12 @@ namespace Installer
         }
 
         // ---------------- 找游戏 ----------------
+        // 本地模式：游戏目录 addons 直接当库用，删除放行、装机只翻开关
+        public static bool IsLocal { get { return Cfg.Mode == "local"; } }
+
+        // 回收目录跟着模式走：U 盘模式放库根（老位置），本地模式放程序的记录目录（没有 ModRoot 概念）
+        public static string RecycleDir { get { return IsLocal ? Path.Combine(LogDir, "_回收的MOD") : Path.Combine(ModRoot, "_回收的MOD"); } }
+
         public static bool TestGame(string path)
         {
             if (string.IsNullOrEmpty(path)) return false;

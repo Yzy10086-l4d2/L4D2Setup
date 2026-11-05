@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -10,6 +10,8 @@ namespace Installer
     public partial class MainForm : Form
     {
         private ComboBox txtGame;
+        private ComboBox cboMode;          // 工作模式：U 盘模式 / 本地模式
+        private bool modeSync;             // 回填下拉时别触发重扫
         private FlatButton btnBrowse, btnFind, btnInstall, btnRestore, btnOpen, btnSwitch;
         private CheckBox chkL4N, chkSkeeto, chkAsset, chkMqcam, chkDxvk, chkLaunch, chkCfg, chkSwap, chkStrict;
         private RadioButton rdSkip, rdOver;
@@ -107,7 +109,7 @@ namespace Installer
 
         private void BeginInit()
         {
-            lblStatus.Text = "正在读取 U 盘…";
+            lblStatus.Text = Core.IsLocal ? "正在扫描游戏目录…" : "正在读取 U 盘…";
             bool needFind = !Core.TestGame(txtGame.Text);
             System.Threading.Thread th = new System.Threading.Thread(delegate()
             {
@@ -182,8 +184,16 @@ namespace Installer
 
             // ---- 顶部：游戏目录 ----
             Label l1 = new Label(); l1.Text = "游戏目录"; l1.SetBounds(Theme.M, 20, 56, 20); Theme.Dress(l1); Controls.Add(l1);
-            txtGame = new ComboBox(); txtGame.SetBounds(76, 18, W - 76 - Theme.M - 84 - 8 - 84 - 8, 24);
+            const int modeW = 104;
+            int modeX = W - Theme.M - 84 - 8 - 84 - 8 - modeW;
+            txtGame = new ComboBox(); txtGame.SetBounds(76, 18, modeX - 8 - 76, 24);
             txtGame.DropDownStyle = ComboBoxStyle.DropDown; Theme.Dress(txtGame); Controls.Add(txtGame);
+            cboMode = new ComboBox(); cboMode.SetBounds(modeX, 18, modeW, 24);
+            cboMode.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboMode);
+            cboMode.Items.Add("U 盘模式"); cboMode.Items.Add("本地模式");
+            cboMode.SelectedIndexChanged += delegate { OnModeChanged(); };
+            tips.SetToolTip(cboMode, "U 盘模式：U 盘库是主，装 MOD = 从库里复制到游戏。\r\n游戏目录里和库里同名同大小的那份会合并显示（标「已装」），不再重复列。\r\n本地模式：不扫 U 盘库，游戏目录 addons 直接当库；删除 = 从游戏里卸掉（文件进回收目录）。");
+            Controls.Add(cboMode);
             btnBrowse = new FlatButton(); btnBrowse.Text = "浏览…"; btnBrowse.SetBounds(W - Theme.M - 84 - 8 - 84, 16, 84, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
             btnFind = new FlatButton(); btnFind.Text = "自动找"; btnFind.SetBounds(W - Theme.M - 84, 16, 84, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
 
@@ -366,6 +376,7 @@ namespace Installer
             Rectangle wmin = Screen.PrimaryScreen.WorkingArea;
             MinimumSize = new Size(Math.Min(1120, wmin.Width - 20), Math.Min(740, wmin.Height - 20));
             txtGame.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            cboMode.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnBrowse.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnFind.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             gp.Anchor = AnchorStyles.Top | AnchorStyles.Left;
@@ -417,11 +428,45 @@ namespace Installer
             chkCfg.Checked = Core.Cfg.CfgFile || firstTimeTweak;
             rdSkip.Checked = !Core.Cfg.Overwrite;
             rdOver.Checked = Core.Cfg.Overwrite;
+            modeSync = true;
+            try { cboMode.SelectedIndex = Core.IsLocal ? 1 : 0; }
+            finally { modeSync = false; }
             FillTweaks(Core.Cfg.TweakSet);
             foreach (string m in Core.Cfg.Mods) checkedKeys.Add(m);
             CheckRowsByKeys();
             UpdateSel();
             Log("已载入上次勾选（" + checkedKeys.Count + " 个 MOD）");
+        }
+
+        /// <summary>
+        /// 切工作模式：存进配置，再按新模式重扫。
+        /// U 盘模式 = U 盘库是主，游戏目录里同名同大小的那份合并显示；本地模式 = 只把游戏 addons 当库。
+        /// </summary>
+        private void OnModeChanged()
+        {
+            if (modeSync || cboMode == null || cboMode.SelectedIndex < 0) return;
+            string want = cboMode.SelectedIndex == 1 ? "local" : "usb";
+            if (string.Equals(want, Core.Cfg.Mode, StringComparison.OrdinalIgnoreCase)) return;
+            Core.Cfg.Mode = want;
+            Core.SaveConfig();
+            Core.Log("OK", "工作模式：" + (want == "local" ? "本地模式（游戏目录 addons 当库）" : "U 盘模式（U 盘库是主，游戏目录重复项合并）"));
+            lblStatus.Text = want == "local" ? "正在按「本地模式」重扫游戏目录…" : "正在按「U 盘模式」重扫库…";
+            btnInstall.Enabled = false;
+            System.Threading.Thread th = new System.Threading.Thread(delegate()
+            {
+                try { Core.ScanMods(); }
+                catch (Exception ex) { Core.Log("FAIL", "切换模式后重扫失败: " + ex.Message); }
+                SafeInvoke(delegate()
+                {
+                    btnInstall.Enabled = true;
+                    RefreshMods();
+                    RefreshConflicts();
+                    if (treeView != null) treeView.Rebuild();
+                    lblStatus.Text = "就绪";
+                });
+            });
+            th.IsBackground = true;
+            th.Start();
         }
 
         // ---------------------------------------------------------- 参数配置
@@ -652,7 +697,14 @@ namespace Installer
         internal void UiTestCat(string s)
         {
             foreach (string c in Catalog.Cats)
-                if (c == s) { ShowCatView(c); Core.Log("INFO", "UICA T 切到类视图: " + c); return; }
+                if (c == s)
+                {
+                    ShowCatView(c);
+                    CatView cv;
+                    string tail = catViews.TryGetValue(c, out cv) ? cv.DumpRows(8) : "（没建视图）";
+                    Core.Log("INFO", "UICA T 切到类视图: " + c + "；前几行: " + tail);
+                    return;
+                }
             CatChoice hit = null;
             foreach (CatChoice c in CatChoices()) if (c.Text.Trim() == s || c.Cat == s) { hit = c; break; }
             if (hit == null) { Core.Log("WARN", "UICA T 没找到分类: " + s); return; }
@@ -853,6 +905,13 @@ namespace Installer
             li.Tag = g;
             li.Checked = sel > 0;
             if (g.IsSet) li.ToolTipText = PartsTip(g);
+            foreach (ModItem p in g.Parts)
+                if (p.Installed)
+                {
+                    li.ToolTipText = (li.ToolTipText.Length > 0 ? li.ToolTipText + "\r\n" : "")
+                        + "游戏 addons 里已经有同名同大小的这一份，安装时会直接跳过复制。";
+                    break;
+                }
             return li;
         }
 
@@ -936,9 +995,10 @@ namespace Installer
 
             cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
             cms.Items.Add("设置 MOD 分类…", null, delegate { SetModCatIn(lv); });
+            string recycleHint = Core.IsLocal ? "回收目录（装机记录\\_回收的MOD）" : "U 盘 _回收的MOD";
             cms.Items.Add(checkedRows > 0
-                ? "删除勾中的 " + checkedRows + " 行 → U 盘 _回收的MOD"
-                : "删除这个 MOD → U 盘 _回收的MOD", null, delegate { DeleteSelectedIn(lv); });
+                ? "删除勾中的 " + checkedRows + " 行 → " + recycleHint
+                : "删除这个 MOD → " + recycleHint, null, delegate { DeleteSelectedIn(lv); });
             cms.Items.Add(new ToolStripSeparator());
 
             cms.Items.Add("从文件夹导入…（vpk / rar / zip）", null, delegate { BulkImport(); });
@@ -962,15 +1022,56 @@ namespace Installer
             cms.Items.Add(new ToolStripSeparator());
             cms.Items.Add("只装这个 MOD（不动平台/启动项）", null, delegate { InstallThisOne(lv); });
             cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
+            cms.Items.Add("删除这个 MOD → 回收目录（可反悔）", null, delegate { DeleteInTree(lv); });
             cms.Items.Add(new ToolStripSeparator());
             cms.Items.Add("设置 MOD 分类…（算哪一类 / 替换什么）", null, delegate { SetModCatIn(lv); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
             return cms;
         }
 
-        /// <summary>方案树里的「用这个替换」：交给树自己去换，位置和勾选都按树的规则走。</summary>
-        private void PickInTree(ListView lv)
+        /// <summary>
+        /// 方案树候选表里删一个 MOD：文件移进回收目录（可反悔），删完重扫，树留在原来那个位置。
+        /// 套装行删整套；展开出来的单件行只删那一个文件。
+        /// </summary>
+        internal void DeleteInTree(ListView lv)
         {
+            ListViewItem li = RowTarget(lv);
+            if (li == null) { MessageBox.Show("先右键点一行。"); return; }
+            ModGroup g = li.Tag as ModGroup;
+            ModItem one = li.Tag as ModItem;
+            string name;
+            List<ModItem> parts = new List<ModItem>();
+            if (g != null) { name = g.Name; parts.AddRange(g.Parts); }
+            else if (one != null) { name = one.Name; parts.Add(one); }
+            else { MessageBox.Show("这一行没有对应的 vpk。"); return; }
+
+            foreach (ModItem it in parts)
+            {
+                if (it.IsArchive) { MessageBox.Show("「" + it.Name + "」在压缩包里（" + it.Container + "），\r\n装机台不会去改压缩包。想删请自己在资源管理器里处理。", "不能删除"); return; }
+                if (it.FromGame && !Core.IsLocal) { MessageBox.Show("「" + it.Name + "」在游戏目录 addons 里。\r\nU 盘模式不动游戏目录的文件；要删它，把右上角切到「本地模式」再来。", "不能删除"); return; }
+            }
+            string where = Core.IsLocal ? "回收目录（" + Core.RecycleDir + "）" : "U 盘 _回收的MOD";
+            string tail = parts.Count > 1 ? "（整套 " + parts.Count + " 个 vpk）" : "";
+            bool fromGame = parts.Exists(delegate(ModItem m) { return m.FromGame; });
+            if (MessageBox.Show("删除「" + name + "」" + tail + "？\r\n\r\n· 文件移到" + where + "\r\n· 不真删，想用可以再拖回来"
+                + (fromGame ? "\r\n· 这是游戏 addons 里的文件，移走 = 从游戏里卸掉" : ""),
+                "确认删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+
+            int n = 0;
+            foreach (ModItem it in parts)
+            {
+                try { if (Work.MoveModToRecycle(it) != null) { n++; checkedKeys.Remove(it.Key); } }
+                catch (Exception ex) { Core.Log("WARN", "移动 " + it.Name + " 失败: " + ex.Message); }
+            }
+            Core.Log("OK", "方案树里删掉 " + n + " 个 vpk：" + name + "（" + where + "）");
+            Core.ScanMods();
+            RefreshMods();
+            RefreshConflicts();
+            if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
+        }
+
+        /// <summary>方案树里的「用这个替换」：交给树自己去换，位置和勾选都按树的规则走。</summary>
+        private void PickInTree(ListView lv)        {
             ListViewItem li = RowTarget(lv);
             if (li == null) { MessageBox.Show("先右键点一行。"); return; }
             if (treeView == null) return;
@@ -1140,7 +1241,10 @@ namespace Installer
         // 分类列只放得下 130 px：人物的「二代 · 西装Nick」取最后一段，省「人物 · 二代」那截
         private static string WhereText(ModGroup g)
         {
-            return SubText(g);
+            string s = SubText(g);
+            foreach (ModItem p in g.Parts)
+                if (p.Installed) return s == "—" ? "已装" : s + " · 已装";
+            return s;
         }
 
         // 分组标题已经写明大类了，这一列只留细分，别每行重复一遍「地图 ·」
@@ -1476,9 +1580,11 @@ namespace Installer
             foreach (ModItem it in list)
             {
                 if (it.IsArchive) { MessageBox.Show("「" + it.Name + "」在压缩包里（" + it.Container + "），\r\n装机台不会去改 U 盘上的压缩包。想删请自己在资源管理器里处理。", "不能删除"); return; }
-                if (it.FromGame) { MessageBox.Show("「" + it.Name + "」在游戏目录 addons 里，是已装的 MOD，不是库里的。\r\n要移除请用「已装 MOD 开关」或自己删。", "不能删除"); return; }
+                if (it.FromGame && !Core.IsLocal) { MessageBox.Show("「" + it.Name + "」在游戏目录 addons 里，是已装的 MOD，不是库里的。\r\nU 盘模式不动游戏目录的文件；要删它，把右上角切到「本地模式」再来。", "不能删除"); return; }
             }
-            if (MessageBox.Show("把这 " + list.Count + " 个 vpk 移到 U 盘 _回收的MOD？\r\n（不真删，想用可以再拖回来）", "确认", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            string where = Core.IsLocal ? "回收目录（" + Core.RecycleDir + "）" : "U 盘 _回收的MOD";
+            if (MessageBox.Show("把这 " + list.Count + " 个 vpk 移到" + where + "？\r\n（不真删，想用可以再拖回来）"
+                + (Core.IsLocal ? "\r\n\r\n注意：这些是游戏 addons 里的文件，移走 = 从游戏里卸掉。" : ""), "确认", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             int n = 0;
             foreach (ModItem it in list)
             {
@@ -1961,8 +2067,16 @@ namespace Installer
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("窗口客户区: " + ClientSize.Width + " x " + ClientSize.Height);
             sb.AppendLine("游戏路径框: " + txtGame.Width + " x " + txtGame.Height);
+            sb.AppendLine("模式下拉  : " + cboMode.Left + "," + cboMode.Top + " " + cboMode.Width + "x" + cboMode.Height
+                          + "  文本=" + (cboMode.SelectedIndex >= 0 ? cboMode.SelectedItem.ToString() : "(未选)")
+                          + "  可见=" + cboMode.Visible);
             sb.AppendLine("MOD 库分组: " + gMod.Width + " x " + gMod.Height);
             sb.AppendLine("类视图    : 已建 " + catViews.Count + " 个，当前显示「" + tabCur + "」");
+            CatView cur;
+            string catVis = catViews.TryGetValue(tabCur, out cur)
+                ? (cur.Visible ? "可见 " + cur.Width + "x" + cur.Height : "隐藏") : "未建";
+            sb.AppendLine("类视图可见: " + catVis + "，树可见=" + (treeView != null && treeView.Visible) + "，树尺寸="
+                          + (treeView == null ? "-" : treeView.Width + "x" + treeView.Height));
             sb.AppendLine("日志分组  : " + gLog.Width + " x " + gLog.Height);
             sb.AppendLine("日志框    : " + txtLog.Width + " x " + txtLog.Height);
             sb.AppendLine("进度条    : " + bar.Left + "," + bar.Top + " " + bar.Width + " x " + bar.Height);
@@ -2010,7 +2124,11 @@ namespace Installer
             btnManage.Left = rightW - 12 - 68;
 
             // 顶部
-            txtGame.Width = W - 76 - Theme.M - 84 - 8 - 84 - 8;
+            const int modeW = 104;
+            int modeX = W - Theme.M - 84 - 8 - 84 - 8 - modeW;
+            txtGame.Width = modeX - 8 - 76;
+            cboMode.Left = modeX;
+            cboMode.Top = 18;
             btnBrowse.Left = W - Theme.M - 84 - 8 - 84;
             btnFind.Left = W - Theme.M - 84;
 
@@ -2185,6 +2303,15 @@ namespace Installer
             if (!Core.TestGame(root)) { MessageBox.Show("先选对游戏根目录。"); return; }
             AddonSwitchForm f = new AddonSwitchForm(root);
             f.ShowDialog(this);
+            // 这个窗口现在也能删 MOD（移进回收目录）：删过就重扫，列表/树跟上
+            if (f.Deleted > 0)
+            {
+                Log("OK", "已装 MOD 开关里删掉 " + f.Deleted + " 个，重新扫库");
+                Core.ScanMods();
+                RefreshMods();
+                RefreshConflicts();
+                if (treeView != null) treeView.Rebuild();
+            }
         }
 
         private void DoRestore()
