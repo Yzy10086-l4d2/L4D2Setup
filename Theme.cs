@@ -36,6 +36,11 @@ namespace Installer
         // 信息蓝：表示「这里有可叠加的东西」，中性提示，不用红——红容易让人误以为装冲突了。
         public static readonly Color Info = Color.FromArgb(2, 119, 189);
 
+        // 列表行的状态底色：一眼扫过去就能分清「装没装」，不用逐行读字
+        public static readonly Color RowOn = Color.FromArgb(238, 247, 238);    // 已装·开（淡绿）
+        public static readonly Color RowOff = Color.FromArgb(253, 246, 231);   // 已装·关（淡琥珀）
+        public static readonly Color RowGame = Color.FromArgb(240, 246, 252);  // 游戏里本来就有（淡蓝）
+
         // 字体：一个族 + 固定角色刻度，不换身份
         public static readonly Font UI = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
         public static readonly Font UIBold = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold, GraphicsUnit.Point);

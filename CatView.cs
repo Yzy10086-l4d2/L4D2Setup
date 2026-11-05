@@ -253,6 +253,7 @@ namespace Installer
             private readonly string cat;
             private ListView lv;
             private CheckBox chkOnly;
+            private ComboBox cboShow;
             private Label lblFoot, hint;
             private bool filling;
             private bool syncing;          // 正在同步勾选：这时的重入直接跳过，否则会互相改状态
@@ -284,6 +285,24 @@ namespace Installer
                 btnNone.Click += delegate { mf.SetAllIn(lv, false); };
                 Controls.Add(btnNone);
 
+                // 显示：按「装到游戏里没有」筛。机房最常见的问题是「这台到底装过没」，不是「方案里有什么」
+                Label lShow = new Label(); lShow.Text = "显示"; lShow.SetBounds(252, 12, 30, 18);
+                Theme.Dress(lShow); Controls.Add(lShow);
+                cboShow = new ComboBox(); cboShow.SetBounds(284, 8, 104, 24);
+                cboShow.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboShow);
+                cboShow.Items.Add("全部");
+                cboShow.Items.Add("已装");
+                cboShow.Items.Add("未装");
+                cboShow.Items.Add("已装但关闭");
+                cboShow.SelectedIndex = 0;
+                cboShow.SelectedIndexChanged += delegate { Fill(); };
+                Controls.Add(cboShow);
+
+                FlatButton btnRescan = new FlatButton(); btnRescan.Text = "重扫";
+                btnRescan.SetBounds(396, 8, 50, Theme.H);
+                btnRescan.Click += delegate { mf.RescanMods(); };
+                Controls.Add(btnRescan);
+
                 hint = new Label();
                 hint.Text = "双击套装行展开，可单个勾选";
                 hint.Font = Theme.UISmall;
@@ -311,6 +330,7 @@ namespace Installer
                 lv.Columns.Add("改了什么", 84);
                 lv.Columns.Add("大小", 70).TextAlign = HorizontalAlignment.Right;
                 lv.Columns.Add("细分", 132);
+                lv.Columns.Add("状态", 96);
                 lv.ItemChecked += delegate(object s, ItemCheckedEventArgs e)
                 {
                     if (filling) return;
@@ -370,15 +390,18 @@ namespace Installer
 
             private void LayoutCols()
             {
-                if (lv == null || lv.Columns.Count < 5) return;
+                if (lv == null || lv.Columns.Count < 6) return;
                 int w = lv.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 6;
-                const int markW = 58, subjW = 84, sizeW = 70;
-                int nameW = Math.Max(180, Math.Min(620, w - markW - subjW - sizeW - 132));
+                const int markW = 58, subjW = 76, sizeW = 62, stateW = 96;
+                int rest = w - markW - subjW - sizeW - stateW;      // 名称 + 细分 分剩下的
+                int nameW = Math.Max(180, Math.Min(620, rest - 120));
+                int subW = Math.Max(80, rest - nameW);
                 lv.Columns[0].Width = nameW;
                 lv.Columns[1].Width = markW;
                 lv.Columns[2].Width = subjW;
                 lv.Columns[3].Width = sizeW;
-                lv.Columns[4].Width = Math.Max(90, w - nameW - markW - subjW - sizeW);
+                lv.Columns[4].Width = subW;
+                lv.Columns[5].Width = stateW;
             }
 
             /// <summary>重建列表：这一类的全部条目，方案内的排前面。</summary>
@@ -387,11 +410,13 @@ namespace Installer
                 if (lv == null || lv.IsDisposed) return;
                 string kw = mf.SearchText;          // 搜索框只有一个，就在主窗口顶上
                 bool only = chkOnly.Checked;
+                int show = cboShow == null ? 0 : cboShow.SelectedIndex;   // 0 全部 / 1 已装 / 2 未装 / 3 已装但关闭
                 List<ModGroup> pass = new List<ModGroup>();
                 foreach (ModGroup g in Catalog.Groups)
                 {
                     if (g.Cat != cat) continue;
                     if (only && !mf.InScheme(g)) continue;
+                    if (show > 0 && !MainForm.MatchShow(g, show)) continue;
                     if (kw.Length > 0 && !mf.MatchGroup(g, kw)) continue;
                     pass.Add(g);
                 }
@@ -512,17 +537,24 @@ namespace Installer
 
             private void UpdateFoot()
             {
-                int total = 0, inn = 0, on = 0;
+                int total = 0, inn = 0, on = 0, instN = 0, offN = 0, partN = 0;
                 foreach (ModGroup g in Catalog.Groups)
                 {
                     if (g.Cat != cat) continue;
                     total++;
                     if (mf.InScheme(g)) inn++;
                     if (mf.CountChecked(g) > 0) on++;
+                    int all, inst, live, game;
+                    MainForm.CountState(g, out all, out inst, out live, out game);
+                    if (inst > 0) instN++;
+                    if (inst > 0 && live == 0) offN++;
+                    if (inst > 0 && inst < all) partN++;
                 }
-                string s = listed == total
-                    ? "本类 " + total + " 个 · 方案内 " + inn + " · 已选 " + on
-                    : "筛出 " + listed + " 个（本类 " + total + "） · 方案内 " + inn + " · 已选 " + on;
+                string st = "已装 " + instN
+                          + (partN > 0 ? "（部分 " + partN + "）" : "")
+                          + (offN > 0 ? "（关 " + offN + "）" : "");
+                string s = (listed == total ? "本类 " + total + " 个" : "筛出 " + listed + " 个（本类 " + total + "）")
+                         + " · " + st + " · 方案内 " + inn + " · 已选 " + on;
                 lblFoot.Text = s;
                 if (mf.tabCur == cat) mf.UpdateModCaption();
             }

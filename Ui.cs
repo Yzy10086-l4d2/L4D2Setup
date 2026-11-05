@@ -902,6 +902,11 @@ namespace Installer
             li.SubItems.Add(Core.Human(g.Size));
             li.SubItems.Add(WhereText(g));
             li.SubItems[4].ForeColor = CatInk(g.Cat);
+            Color stInk, stBg;
+            li.SubItems.Add(StatusOf(g, out stInk, out stBg));      // 状态：已装·开 / 已装·关 / 未装 …
+            li.SubItems[5].ForeColor = stInk;
+            li.SubItems[5].Font = Theme.UISmall;
+            if (stBg != Theme.Surface) li.BackColor = stBg;
             li.Tag = g;
             li.Checked = sel > 0;
             if (g.IsSet) li.ToolTipText = PartsTip(g);
@@ -909,7 +914,9 @@ namespace Installer
                 if (p.Installed)
                 {
                     li.ToolTipText = (li.ToolTipText.Length > 0 ? li.ToolTipText + "\r\n" : "")
-                        + "游戏 addons 里已经有同名同大小的这一份，安装时会直接跳过复制。";
+                        + "游戏 addons 里已经有同名同大小的这一份，安装时会直接跳过复制。\r\n"
+                        + "addonlist.txt 里现在是「" + (p.AddonOn ? "1 · 开" : "0 · 关") + "」"
+                        + (p.AddonOn ? "，进游戏就能看到。" : "，文件在但没启用 —— 想开就在「已装 MOD 开关」里打开，或勾上它再装一次。");
                     break;
                 }
             return li;
@@ -924,10 +931,16 @@ namespace Installer
             li.SubItems.Add(Core.Human(p.Size));
             li.SubItems.Add(p.Role + " · 单件");
             li.SubItems[4].ForeColor = Theme.Ink3;
+            Color pInk, pBg;
+            li.SubItems.Add(PartStatus(p, out pInk, out pBg));
+            li.SubItems[5].ForeColor = pInk;
+            li.SubItems[5].Font = Theme.UISmall;
+            if (pBg != Theme.Surface) li.BackColor = pBg;
             li.Tag = p;
             li.ForeColor = Theme.Ink3;
             li.Checked = checkedKeys.Contains(p.Key);
-            li.ToolTipText = "这一个 vpk：" + p.Name + "\r\n勾上 = 只装它（" + p.Role + "）";
+            li.ToolTipText = "这一个 vpk：" + p.Name + "\r\n勾上 = 只装它（" + p.Role + "）"
+                           + "\r\n现在：" + PartStatus(p, out pInk, out pBg);
             return li;
         }
 
@@ -1161,6 +1174,21 @@ namespace Installer
             UpdateModCaption();
         }
 
+        /// <summary>手动重扫：库或游戏目录在别处被改过（别人手动丢过 vpk、装了一半），点一下重读。</summary>
+        internal void RescanMods()
+        {
+            try
+            {
+                SetBusy(true);
+                SetStatus("正在重扫…");
+                Core.ScanMods();
+                RefreshMods();
+                Core.Log("OK", "已重扫：共 " + Core.ModList.Count + " 个 vpk");
+            }
+            catch (Exception ex) { Core.Log("FAIL", "重扫失败: " + ex.Message); }
+            finally { SetBusy(false); SetStatus("就绪"); }
+        }
+
         // 一行说清这套方案在各类里放了几个
         private void UpdateSchemeLabel()
         {
@@ -1239,12 +1267,78 @@ namespace Installer
         }
 
         // 分类列只放得下 130 px：人物的「二代 · 西装Nick」取最后一段，省「人物 · 二代」那截
+        // 装没装已经单独有一列（状态），这里不再拼「· 已装」，免得一格里塞两件事
         private static string WhereText(ModGroup g)
         {
-            string s = SubText(g);
+            return SubText(g);
+        }
+
+        // ---------- 状态：两维 ----------
+        // 第一维「文件在不在 addons 里」（Installed / FromGame），第二维「addonlist 里是 1 还是 0」（AddonOn）。
+        // 只看第一维会把「装了但被关掉」和「装好了正开着」说成一样，机房里这两种要区别对待。
+
+        /// <summary>这条现在在游戏里是什么状态：一共几个、装了几个、开着几个、几个本来就是游戏里的。</summary>
+        internal static void CountState(ModGroup g, out int total, out int inst, out int on, out int game)
+        {
+            total = g.Parts.Count; inst = 0; on = 0; game = 0;
             foreach (ModItem p in g.Parts)
-                if (p.Installed) return s == "—" ? "已装" : s + " · 已装";
-            return s;
+            {
+                if (p.FromGame) game++;
+                if (p.FromGame || p.Installed) { inst++; if (p.AddonOn) on++; }
+            }
+        }
+
+        /// <summary>一行要显示的状态文字、字色、整行底色。</summary>
+        internal static string StatusOf(ModGroup g, out Color ink, out Color bg)
+        {
+            int total, inst, on, game;
+            CountState(g, out total, out inst, out on, out game);
+            ink = Theme.Ink3; bg = Theme.Surface;
+            if (inst == 0) return "未装";
+            if (game == total)                       // 全都在游戏目录里、库里没有
+            {
+                ink = Theme.Ink2; bg = Theme.RowGame;
+                return on > 0 ? "仅游戏内 · 开" : "仅游戏内 · 关";
+            }
+            if (inst < total)
+            {
+                ink = Theme.Info; bg = Theme.RowGame;
+                return "部分已装 " + inst + "/" + total;
+            }
+            if (on == inst) { ink = Theme.Ok; bg = Theme.RowOn; return "已装 · 开"; }
+            if (on == 0) { ink = Theme.Warn; bg = Theme.RowOff; return "已装 · 关"; }
+            ink = Theme.Warn; bg = Theme.RowOff;
+            return "已装 · 开 " + on + "/" + inst;
+        }
+
+        /// <summary>单个 vpk 的状态（套装展开后的子行用）。</summary>
+        internal static string PartStatus(ModItem p, out Color ink, out Color bg)
+        {
+            bg = Theme.Surface; ink = Theme.Ink3;
+            if (p.FromGame)
+            {
+                ink = Theme.Ink2; bg = Theme.RowGame;
+                return p.AddonOn ? "游戏内 · 开" : "游戏内 · 关";
+            }
+            if (p.Installed)
+            {
+                ink = p.AddonOn ? Theme.Ok : Theme.Warn;
+                bg = p.AddonOn ? Theme.RowOn : Theme.RowOff;
+                return p.AddonOn ? "已装 · 开" : "已装 · 关";
+            }
+            return "未装";
+        }
+
+        /// <summary>页头「显示」下拉的过滤：0 全部 / 1 已装 / 2 未装 / 3 已装但关闭。</summary>
+        internal static bool MatchShow(ModGroup g, int show)
+        {
+            if (show <= 0) return true;
+            int total, inst, on, game;
+            CountState(g, out total, out inst, out on, out game);
+            if (show == 1) return inst > 0;
+            if (show == 2) return inst == 0;
+            if (show == 3) return inst > 0 && on == 0;
+            return true;
         }
 
         // 分组标题已经写明大类了，这一列只留细分，别每行重复一遍「地图 ·」
@@ -2544,6 +2638,11 @@ namespace Installer
                     SafeBeginInvoke(delegate
                     {
                         UpdateTweakTip();
+                        // 装完必须重扫：状态列（已装·开 / 已装·关）是现读 addons 和 addonlist 得出的，
+                        // 不重扫的话回到列表看到的还是装机前的旧状态
+                        try { Core.ScanMods(); }
+                        catch (Exception exs) { Core.Log("WARN", "装完重扫失败: " + exs.Message); }
+                        RefreshMods();
                         RefreshConflicts(true);
                         bool go = MessageBox.Show(
                             "装好了。\r\n\r\n现在启动游戏吗？\r\n\r\n"

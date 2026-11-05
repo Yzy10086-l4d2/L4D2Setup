@@ -34,6 +34,7 @@ namespace Installer
         public bool AnimOnly;             // 模型全是 anim_/gestures_ 表情骨架（KSEP 这类陪套，能和模型叠加）
         public bool FromGame;             // 这个 vpk 本来就在游戏 addons 里（库外·已装），装的时候不用复制
         public bool Installed;            // 游戏 addons 里有同名同大小的另一份（U 盘模式合并后不再重复列）
+        public bool AddonOn = true;       // addonlist.txt 里这条是 "1"（开着）；未登记的按游戏默认算「开」
         public string AssetPaths = "";    // 包内模型/材质路径（分号分隔），只用于同套部件归组
 
         public bool IsArchive { get { return Container != null && Container.Length > 0; } }

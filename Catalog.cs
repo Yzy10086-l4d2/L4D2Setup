@@ -476,10 +476,13 @@ namespace Installer
             if (addons == null) return 0;
 
             // addonlist 登记的（游戏认识、能开关的）
+            // 顺手把每条的开关状态留下来：文件在 addons 里只说明「装过」，开没开还得看 addonlist 的 1/0
             HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, bool> addonState = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                foreach (KeyValuePair<string, bool> kv in AddonList.Read(Core.Cfg.GameRoot))
+                addonState = AddonList.Read(Core.Cfg.GameRoot);
+                foreach (KeyValuePair<string, bool> kv in addonState)
                     if (kv.Key.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase) && File.Exists(Path.Combine(addons, kv.Key)))
                         names.Add(kv.Key);
             }
@@ -524,6 +527,8 @@ namespace Installer
                 it.Key = "#game#" + key;
                 it.Category = "已装";
                 it.FromGame = true;
+                bool on;
+                it.AddonOn = !addonState.TryGetValue(key, out on) || on;   // 没登记 = 游戏默认启用
                 try { it.Size = new FileInfo(f).Length; } catch { it.Size = 0; }
                 if (libByName != null && it.Size > 0)
                 {
@@ -532,7 +537,7 @@ namespace Installer
                     {
                         bool dup = false;
                         foreach (ModItem m in l)
-                            if (m.Size == it.Size) { m.Installed = true; dup = true; }
+                            if (m.Size == it.Size) { m.Installed = true; m.AddonOn = it.AddonOn; dup = true; }
                         if (dup) { merged++; continue; }   // 同一份，省掉识别、也不再重复显示
                     }
                 }
