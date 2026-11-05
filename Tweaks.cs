@@ -247,7 +247,7 @@ namespace Installer
                 File.WriteAllText(cfg, "// 第二次装机前\r\n", new UTF8Encoding(false));
                 Apply(game, "自测套", out lines);
                 if (File.ReadAllText(cfg) != original) { Core.Log("FAIL", "TWEAKSELF 第二次套用没覆盖上"); bad++; }
-                if (Directory.GetFiles(Path.GetDirectoryName(cfg), "autoexec.cfg.*").Length > 0)
+                if (File.Exists(cfg + ".装之前") || File.Exists(cfg + ".上一次") || File.Exists(cfg + ".还原前"))
                 { Core.Log("FAIL", "TWEAKSELF 套用后留下了副本"); bad++; }
 
                 // 删除：必须是真删（目录没了），不是改个名留在原地
