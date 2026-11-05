@@ -2264,11 +2264,26 @@ namespace Installer
             }
             int on = 0;
             foreach (KeyValuePair<string, bool> kv in st) if (kv.Value) on++;
+
+            // 先数一下 addonlist 里原来有多少条、这次命中的有几条 —— 好让日志和状态栏说清楚
+            // 「只动了这几条，别的没碰」。Write 本身也只改传进去的名字，不会重排、不会顺手改别的。
+            int total = 0, hit = 0;
+            try
+            {
+                Dictionary<string, bool> before = AddonList.Read(root);
+                total = before.Count;
+                foreach (string k in st.Keys) if (before.ContainsKey(k)) hit++;
+            }
+            catch { }
+            int untouched = Math.Max(0, total - hit);
+
             try
             {
                 string bak = AddonList.Write(root, st);
                 Core.Log("OK", "应用开关改动 " + st.Count + " 处（开 " + on + "、关 " + (st.Count - on)
-                    + "），原文件备份 " + Path.GetFileName(bak));
+                    + "）：改值 " + hit + " 条、新增 " + (st.Count - hit) + " 条；"
+                    + "addonlist 原有 " + total + " 条，其余 " + untouched + " 条原样没动。备份 "
+                    + Path.GetFileName(bak));
 
                 // 只改了开关，文件没动：直接对齐内存里的值，省一次全库重扫
                 foreach (ModGroup g in Catalog.Groups)
@@ -2279,9 +2294,8 @@ namespace Installer
                     }
                 RefreshMods();
                 RefreshConflicts(true);
-                SetStatus(GameRunning()
-                    ? "已应用 " + st.Count + " 处 · 游戏开着，重启后才生效"
-                    : "已应用 " + st.Count + " 处开关改动");
+                SetStatus((GameRunning() ? "已应用 " + st.Count + " 处（游戏开着，重启后才生效）" : "已应用 " + st.Count + " 处开关改动")
+                    + " · 其它 " + untouched + " 条没动");
                 return true;
             }
             catch (Exception ex)

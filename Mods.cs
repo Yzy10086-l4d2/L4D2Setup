@@ -48,8 +48,30 @@ namespace Installer
             }
             List<string> all = new List<string>();
             all.AddRange(head); all.AddRange(body); all.AddRange(tail);
-            File.WriteAllLines(p, all, Encoding.Default);
+            WriteKeepEol(p, all);
             return bak;
+        }
+
+        /// <summary>
+        /// 按原文件的行尾写回。游戏自己写出来的是 LF；以前一律用 File.WriteAllLines（Windows 下是 CRLF），
+        /// 结果只是「点一下开关」，整份 addonlist 的每一行都被改了 —— 用对比工具看像是全文件都动过，
+        /// 也说不清到底改的是哪几条。现在沿用原文的行尾和文件末尾是否有换行，只动该动的那几行。
+        /// </summary>
+        private static void WriteKeepEol(string path, List<string> lines)
+        {
+            string nl = "\r\n", tail = "";
+            try
+            {
+                if (File.Exists(path))
+                {
+                    string raw = File.ReadAllText(path, Encoding.Default);
+                    nl = raw.IndexOf("\r\n", StringComparison.Ordinal) >= 0 ? "\r\n" : "\n";
+                    tail = raw.EndsWith("\r\n", StringComparison.Ordinal) ? "\r\n"
+                         : raw.EndsWith("\n", StringComparison.Ordinal) ? "\n" : "";
+                }
+            }
+            catch { }
+            File.WriteAllText(path, string.Join(nl, lines.ToArray()) + tail, Encoding.Default);
         }
 
         public static Dictionary<string, bool> Read(string gameRoot)
@@ -101,7 +123,7 @@ namespace Installer
                 if (close < 0) close = lines.Count;
                 lines.InsertRange(close, add);
             }
-            File.WriteAllLines(p, lines, Encoding.Default);
+            WriteKeepEol(p, lines);
             return bak;
         }
 
@@ -122,7 +144,7 @@ namespace Installer
             if (n > 0)
             {
                 Core.BackupOnce(p);
-                File.WriteAllLines(p, lines, Encoding.Default);
+                WriteKeepEol(p, lines);
             }
             return n;
         }
