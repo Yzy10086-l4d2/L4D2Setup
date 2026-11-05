@@ -15,19 +15,14 @@ namespace Installer
 
         internal string TabCurrent { get { return tabCur; } }
 
-        /// <summary>切到某个大类：复用已建好的视图，没建过才新建。</summary>
+        /// <summary>
+        /// 页签撤掉之后，「切到某一类」这件事没有了 —— 一律回到方案树。
+        /// 保留这个方法只是为了让原来那些调用点（自测、定位、菜单）不用全改，
+        /// 语义变成「显示方案树」。
+        /// </summary>
         internal void ShowCatView(string cat)
         {
-            if (string.IsNullOrEmpty(cat) || cat == "#tree") { ShowTree(); return; }
-            CatView v = GetCatView(cat);
-            tabCur = cat;
-            foreach (CatView o in catViews.Values) if (o != v && o.Visible) o.Visible = false;
-            viewHost.Visible = true;
-            v.Visible = true;
-            v.BringToFront();
-            v.Fill();
-            UpdateModCaption();
-            SyncTabs();
+            ShowTree();
         }
 
         private CatView GetCatView(string cat)

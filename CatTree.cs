@@ -22,6 +22,9 @@ namespace Installer
         public string Cat;                       // 大类：枪械 / 医疗 / 人物 …
         public string Sub = "其他";              // 小分类：步枪 / 霰弹枪 / 一代 / 医疗包 …
         public bool Manual;                      // 这个位置是人工指定出来的（可能还要并回自动的同名位置）
+        // 「一堆」而不是「一个位置」：地图 / 喷漆 / 用户自建分支 —— 里面能同时开好几个，
+        // 点一行是开 / 关，不是把别的替换掉。Items 里装的就是这一堆的全部候选。
+        public bool Pile;
         // 换本体的：一个位置只能有一个（同一把枪两套模型会打架）
         public readonly List<ModGroup> Items = new List<ModGroup>();
         // 叠加的扩展：开火音效 / 只改第一人称模型 / HUD 图标 —— 不换本体，可以和上面的同时装
@@ -593,7 +596,11 @@ namespace Installer
                 if (li == null) return;
                 // 点「开关」那一列 = 只翻 addonlist 的 1/0，不换 MOD；点别处还是老行为（换掉这个位置）
                 if (ColAt(lv, e.X) == 4) { ToggleSwitch(li.Tag as ModGroup); return; }
-                Choose(li.Tag as ModGroup);
+                ModGroup g = li.Tag as ModGroup;
+                if (selKey == "#search") { RevealGroup(g); return; }        // 搜索结果：跳回它在树里的位置
+                Slot cur = Current;
+                if (cur != null && cur.Pile) { TogglePile(g); return; }     // 地图 / 我的分支：开 / 关，不替换
+                Choose(g);
             };
             lv.MouseDown += delegate(object s, MouseEventArgs e)
             {
@@ -835,8 +842,8 @@ namespace Installer
         {
             slots = SlotIndex.Build();
             SortSlots();
+            BuildPiles();                       // 地图 / 喷漆 / 我的分支：能叠着开的那些，排在最后
             // 未归类 = 库里剩下的、没进任何位置的 MOD，一个不漏全收进列表。
-            // 地图 / 喷漆有自己的页签、本来就不进树（能叠好几张，没有「一个位置」的说法），不算认不出。
             HashSet<ModGroup> placed = new HashSet<ModGroup>();
             foreach (Slot s0 in slots)
             {
@@ -883,6 +890,53 @@ namespace Installer
                 int c = string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
                 return c != 0 ? c : string.Compare(a.Key, b.Key, StringComparison.Ordinal);
             });
+        }
+
+        /// <summary>
+        /// 排在最后的三类「一堆」：
+        ///   地图 / 喷漆 —— 能叠好几张，没有「一个位置只能一个」的说法，所以不做槽位互斥；
+        ///   我的分支 —— 程序认不出改的是什么的，用户自己拉个分组装进去，同样允许叠着开。
+        /// 它们都是 Slot.Pile=true，点一行 = 开 / 关，不会把同堆里别的顶掉。
+        /// </summary>
+        private void BuildPiles()
+        {
+            AddPile("地图", "三方图", "地图", delegate(ModGroup g) { return g.Cat == "地图"; });
+            AddPile("喷漆", "喷漆", "喷漆", delegate(ModGroup g) { return g.Cat == "喷漆"; });
+
+            // 我的分支：就算一个分支都没有，也留一行「＋ 新建分支…」，
+            // 否则用户永远不知道有这个功能（页签删掉之后，这是唯一入口）。
+            MyBranch.Ensure();
+            foreach (string nm in MyBranch.Names())
+            {
+                Slot s = new Slot();
+                s.Key = "#mine:" + nm;
+                s.Name = nm;
+                s.Cat = "我的分支";
+                s.Sub = "";
+                s.Pile = true;
+                foreach (ModGroup g in Catalog.Groups)
+                    if (g.Main != null && MyBranch.BranchOf(g.Main.Name) == nm) s.Items.Add(g);
+                slots.Add(s);
+            }
+            Slot add = new Slot();
+            add.Key = "#mine+new";
+            add.Name = "＋ 新建分支…";
+            add.Cat = "我的分支";
+            add.Sub = "";
+            add.Pile = true;
+            slots.Add(add);
+        }
+
+        private void AddPile(string cat, string name, string key, Predicate<ModGroup> pick)
+        {
+            Slot s = new Slot();
+            s.Key = "#pile:" + key;
+            s.Name = name;
+            s.Cat = cat;
+            s.Sub = "";
+            s.Pile = true;
+            foreach (ModGroup g in Catalog.Groups) if (pick(g)) s.Items.Add(g);
+            if (s.Items.Count > 0) slots.Add(s);
         }
 
         private void BuildRows()
@@ -1003,6 +1057,150 @@ namespace Installer
         {
             foreach (ModGroup g in s.Items) if (mf.CountChecked(g) > 0) return g;
             return null;
+        }
+
+        // ---------------- 「一堆」：地图 / 喷漆 / 我的分支 ----------------
+
+        /// <summary>点「一堆」里的行：开着的关掉，关着的打开 —— 同堆别的照旧，不顶掉。</summary>
+        internal void TogglePile(ModGroup g)
+        {
+            if (g == null) return;
+            if (mf.CountChecked(g) > 0) mf.UncheckGroup(g);
+            else mf.CheckGroupDefault(g);
+            mf.AfterTreePick();
+            FillDetail();
+        }
+
+        /// <summary>分支位置？（键以 #mine: 开头）</summary>
+        internal static bool IsBranchSlot(Slot s)
+        {
+            return s != null && s.Key != null && s.Key.StartsWith("#mine:", StringComparison.Ordinal);
+        }
+
+        /// <summary>这个 MOD 在树里哪一格：搜索结果点一下、托盘定位都走它。</summary>
+        internal bool RevealGroup(ModGroup g)
+        {
+            if (g == null) return false;
+            foreach (Slot s in slots)
+            {
+                if (s.Pile) continue;
+                if (s.Items.Contains(g) || s.Extras.Contains(g)) return GoSlot(s.Key);
+            }
+            foreach (Slot s in slots)
+                if (s.Pile && s.Items.Contains(g)) return GoSlot(s.Key);
+            selKey = "#unmatched";
+            body.Invalidate();
+            FillDetail();
+            return false;
+        }
+
+        private bool GoSlot(string key)
+        {
+            selKey = key;
+            body.Invalidate();
+            FillDetail();
+            body.ScrollToSlot(key);
+            return true;
+        }
+
+        /// <summary>新建分支：树上「＋ 新建分支…」那行、右键菜单都走这里。</summary>
+        internal void NewBranch()
+        {
+            string nm = PromptForm.Ask("分支名（例：音效 / 整活 / 收藏）。建好后右键任意 MOD 行，把它放进来。", "新建分支");
+            if (nm == null) return;
+            string err = MyBranch.Create(nm);
+            if (err != null) { MessageBox.Show(err, "建不了这个分支"); return; }
+            string final = MyBranch.CleanName(nm);
+            Rebuild();
+            GoSlot("#mine:" + final);
+            lblFoot.Text = "分支「" + final + "」建好了 · 右键任意 MOD 行 →「放进我的分支」";
+        }
+
+        internal void RenameBranch(Slot s)
+        {
+            if (!IsBranchSlot(s)) return;
+            string nm = PromptForm.Ask("新名字（原来是「" + s.Name + "」）", "重命名分支", s.Name);
+            if (nm == null) return;
+            string err = MyBranch.Rename(s.Name, nm);
+            if (err != null) { MessageBox.Show(err, "改不了"); return; }
+            Rebuild();
+            GoSlot("#mine:" + MyBranch.CleanName(nm));
+        }
+
+        internal void DeleteBranch(Slot s)
+        {
+            if (!IsBranchSlot(s)) return;
+            if (MessageBox.Show("解散分支「" + s.Name + "」？\r\n\r\n"
+                + "· 只删这个分组，vpk 文件一个都不动\r\n"
+                + "· 里面的 MOD 回到各自原来的分类（认不出的回「未归类」）\r\n"
+                + "· 已经勾着的不会被取消",
+                "解散分支", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            MyBranch.Delete(s.Name);
+            Rebuild();
+            GoSlot("#mine+new");
+        }
+
+        /// <summary>把这个 MOD 放进某个分支（还没分支就先起名）。</summary>
+        internal void PutIntoBranch(ModGroup g)
+        {
+            if (g == null || g.Main == null) return;
+            string pick;
+            List<string> names = MyBranch.Names();
+            if (names.Count == 0)
+            {
+                pick = PromptForm.Ask("还没有分支。先起个名字（例：音效 / 整活 / 收藏）：", "放进我的分支");
+                if (pick == null) return;
+                string err = MyBranch.Create(pick);
+                if (err != null) { MessageBox.Show(err, "建不了这个分支"); return; }
+                pick = MyBranch.CleanName(pick);
+            }
+            else
+            {
+                BranchPickForm f = new BranchPickForm(names);
+                if (f.ShowDialog() != DialogResult.OK) return;
+                pick = f.Picked;
+                if (pick == null) return;
+                if (pick != null && pick.StartsWith("＋", StringComparison.Ordinal))   // 选了「＋ 新建分支…」
+                {
+                    string nm = PromptForm.Ask("新分支名（例：音效 / 整活 / 收藏）：", "新建分支");
+                    if (nm == null) return;
+                    string err2 = MyBranch.Create(nm);
+                    if (err2 != null) { MessageBox.Show(err2, "建不了这个分支"); return; }
+                    pick = MyBranch.CleanName(nm);
+                }
+            }
+            MyBranch.Put(pick, g.Main.Name);
+            Rebuild();
+            GoSlot("#mine:" + pick);
+            lblFoot.Text = "「" + g.Name + "」已放进分支「" + pick + "」· 点一行 = 开 / 关";
+        }
+
+        /// <summary>从当前分支里把这个 MOD 移出（不删文件、不改勾选）。</summary>
+        internal void TakeOutOfBranch(ModGroup g)
+        {
+            Slot s = Current;
+            if (g == null || g.Main == null || !IsBranchSlot(s)) return;
+            MyBranch.Take(g.Main.Name);
+            Rebuild();
+            GoSlot(s.Key);
+            lblFoot.Text = "已从分支「" + s.Name + "」移出（文件和勾选都没动）";
+        }
+
+        /// <summary>树的右键菜单：分支重命名 / 解散 / 新建。</summary>
+        internal void TreeMenuFor(TreeRow r, Point at)
+        {
+            ContextMenuStrip m = new ContextMenuStrip();
+            m.Font = Theme.UI;
+            Slot s = r == null ? null : r.Slot;
+            if (IsBranchSlot(s))
+            {
+                Slot ss = s;
+                m.Items.Add("重命名分支…", null, delegate { RenameBranch(ss); });
+                m.Items.Add("解散分支（文件不动）", null, delegate { DeleteBranch(ss); });
+                m.Items.Add(new ToolStripSeparator());
+            }
+            m.Items.Add("新建分支…", null, delegate { NewBranch(); });
+            m.Show(at);
         }
 
         internal int Unmatched { get { return unmatched; } }
@@ -1139,7 +1337,9 @@ namespace Installer
 
         public void SelectSlot(string key)
         {
-            if (key == null || key == selKey) return;
+            if (key == null) return;
+            if (key == "#mine+new") { NewBranch(); return; }   // 点「＋ 新建分支…」直接弹输入框
+            if (key == selKey) return;
             selKey = key;
             body.Invalidate();
             FillDetail();
@@ -1204,10 +1404,11 @@ namespace Installer
                 {
                     foreach (ModItem p in g.Parts) sel.Add(p);
                 }
-                else
+                else if (!s.Pile)
                 {
                     // 同一位置互斥：以前装过的（库里的、或只在游戏目录里的）只把开关写成 0，文件一律不动。
                     // 只在游戏目录里的那些（FromGame）以前漏了，会导致同一位置两个 MOD 同时开着。
+                    // 「一堆」（地图 / 我的分支）不互斥：没勾就是没勾，不能顺手把别的地图关掉。
                     foreach (ModItem p in g.Parts) if (p.Installed || p.FromGame) off.Add(p);
                 }
             }
@@ -1270,6 +1471,9 @@ namespace Installer
         /// <summary>给右键菜单用：把这一组 MOD 的开关翻过来（和点「开关 ⇄」列同一个动作）。</summary>
         internal void ToggleFromMenu(ModGroup g) { ToggleSwitch(g); }
 
+        /// <summary>右边那半重画一次（搜索词变了、外部改了勾选之后调）。</summary>
+        internal void RefreshPane() { FillDetail(); }
+
         /// <summary>只重画受影响的两列文字和底色，不重建列表 —— 点开关时滚动位置不跳。</summary>
         private void RefreshSwitchCells()
         {
@@ -1325,10 +1529,19 @@ namespace Installer
         private void FillDetail()
         {
             UpdateApplyButton();               // 攒着的开关改动跨位置、跨页签都算，跟着按钮显示数量
+            // 搜索优先：搜了词就只看结果（页签删掉以后，搜索只剩这一条路可走）
+            string kw = mf.SearchText;
+            if (kw.Length > 0) { ShowSearch(kw); return; }
             if (selKey == "#unmatched")
             {
                 if (btnDeploy != null) btnDeploy.Visible = false;
                 ShowUnmatched();
+                return;
+            }
+            if (selKey == "#mine+new")
+            {
+                if (btnDeploy != null) btnDeploy.Visible = false;
+                ShowNewBranch();
                 return;
             }
             lv.Visible = true;
@@ -1354,7 +1567,14 @@ namespace Installer
                 int n = CheckedGroups(s);
                 int ne = CheckedExtras(s);
                 lblTitle.Text = s.Name;
-                if (n == 0 && ne == 0) lblCur.Text = "还没选 · 游戏里还是原版";
+                if (s.Pile)
+                {
+                    // 一堆：能同时开好几个，「叠了 N 件」这种话在这里是正常的，不是警告
+                    lblCur.Text = n == 0
+                        ? "这一堆还没勾 · 共 " + s.Items.Count + " 个，能同时开好几个"
+                        : "这一堆已勾 " + n + " 个 · 会一起装，冲不冲突自己确认";
+                }
+                else if (n == 0 && ne == 0) lblCur.Text = "还没选 · 游戏里还是原版";
                 else if (n == 1)
                 {
                     ModGroup c = ChosenOf(s);
@@ -1385,15 +1605,24 @@ namespace Installer
                     lv.Items.Add(li);
                 }
 
-                ListViewItem none = new ListViewItem("留原版（不换模型）");
-                none.SubItems.Add("");
-                none.SubItems.Add("—");
-                none.ForeColor = Theme.Ink3;
-                none.StateImageIndex = n == 0 ? 1 : 0;
-                none.Tag = null;
-                lv.Items.Add(none);
+                if (!s.Pile)
+                {
+                    ListViewItem none = new ListViewItem("留原版（不换模型）");
+                    none.SubItems.Add("");
+                    none.SubItems.Add("—");
+                    none.ForeColor = Theme.Ink3;
+                    none.StateImageIndex = n == 0 ? 1 : 0;
+                    none.Tag = null;
+                    lv.Items.Add(none);
+                }
 
-                lblFoot.Text = s.Items.Count == 0
+                if (s.Pile)
+                {
+                    lblFoot.Text = s.Items.Count + " 个 · 点一行 = 开 / 关（不是替换，能同时开好几个）"
+                                 + (s.Key.StartsWith("#mine:", StringComparison.Ordinal)
+                                    ? " · 右键行可以把它移出这个分支" : "");
+                }
+                else lblFoot.Text = s.Items.Count == 0
                     ? "这个位置没有换模型的包，只有下面那些扩展"
                     : s.Items.Count + " 个模型候选 · 点一个就换掉原来的"
                       + (HasSet(s) ? " · 组合装双击可挑部件" : "")
@@ -1464,6 +1693,59 @@ namespace Installer
         }
 
         /// <summary>
+        /// 搜索结果页：搜了词就只列名字里带这个词的 MOD，点一行跳回它在树里的位置。
+        /// 页签删掉之后，搜索框原来只筛类列表，现在筛这里。
+        /// </summary>
+        private void ShowSearch(string kw)
+        {
+            lblExtraTitle.Visible = false;
+            lvExtra.Visible = false;
+            if (btnDeploy != null) btnDeploy.Visible = false;
+            if (btnCat != null) btnCat.Visible = false;
+            lv.Visible = true;
+            lblTitle.Text = "搜索：" + kw;
+            lv.BeginUpdate();
+            try
+            {
+                lv.Items.Clear();
+                string K = kw.ToLowerInvariant();
+                int n = 0;
+                foreach (ModGroup g in Catalog.Groups)
+                {
+                    if (string.IsNullOrEmpty(g.Name) || g.Name.ToLowerInvariant().IndexOf(K, StringComparison.Ordinal) < 0) continue;
+                    ListViewItem li = new ListViewItem(g.Name);
+                    ModItem mi = g.Main;
+                    li.SubItems.Add(g.Cat + (mi == null || string.IsNullOrEmpty(mi.Sub) ? "" : " · " + mi.Sub));
+                    li.SubItems.Add(Core.Human(g.Size));
+                    AddStateCells(li, g);
+                    li.StateImageIndex = mf.CountChecked(g) > 0 ? 1 : 0;
+                    li.Tag = g;
+                    lv.Items.Add(li);
+                    n++;
+                }
+                lblCur.Text = n + " 个名字里带「" + kw + "」的 MOD · 点一行跳到他该在的位置";
+            }
+            finally { lv.EndUpdate(); }
+            lblFoot.Text = "清空搜索框回到方案树；这一页只找东西，不改勾选。";
+            LayoutSelf();
+            LayoutCols();
+        }
+
+        /// <summary>「＋ 新建分支…」那行：右半边只放说明（真正的输入框在点上那一行时弹）。</summary>
+        private void ShowNewBranch()
+        {
+            lblExtraTitle.Visible = false;
+            lvExtra.Visible = false;
+            lv.Visible = true;
+            lv.Items.Clear();
+            lblTitle.Text = "我的分支";
+            lblCur.Text = "程序认不出改的是什么的 MOD，自己拉一组装进去（一组里能同时开好几个）";
+            lblFoot.Text = "树上「＋ 新建分支…」= 新建 · 右键任意 MOD 行 →「放进我的分支」";
+            LayoutSelf();
+            LayoutCols();
+        }
+
+        /// <summary>
         /// 未归类页：把没进任何位置的 MOD 全部列出来（一个不漏），
         /// 选中一行点「指定位置…」或直接双击，就打开「设置 MOD 分类」窗口手动归位。
         /// </summary>
@@ -1503,7 +1785,7 @@ namespace Installer
                 }
             }
             finally { lv.EndUpdate(); }
-            lblFoot.Text = "不影响装机，照常能勾。选中一行 →「指定位置…」，一次就记住。";
+            lblFoot.Text = "不影响装机，照常能勾。选中一行 →「指定位置…」；认不出的也可以右键 →「放进我的分支」。";
             if (btnCat != null) btnCat.Visible = true;
             LayoutSelf();
             LayoutCols();
@@ -1781,6 +2063,19 @@ namespace Installer
 
                     Slot s = r.Slot;
                     if (s == null) continue;
+
+                    // 「＋ 新建分支…」不是位置：只画一行灰字，点了弹输入框
+                    if (s.Key == "#mine+new")
+                    {
+                        if (i == hover) g.FillRectangle(hovBg, 0, y, W, RowH);
+                        g.DrawLine(branch, 39, y, 39, y + RowH / 2);
+                        g.DrawLine(branch, 39, y + RowH / 2, 48, y + RowH / 2);
+                        TextRenderer.DrawText(g, s.Name, Theme.UI, new Rectangle(54, y, W - 66, RowH), Theme.Ink3,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
+                            | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                        continue;
+                    }
+
                     bool sel = s.Key == owner.SelectedKey;
                     if (sel) g.FillRectangle(selBg, 0, y, W, RowH);
                     else if (i == hover) g.FillRectangle(hovBg, 0, y, W, RowH);
@@ -1794,9 +2089,11 @@ namespace Installer
                     g.DrawLine(branch, bx, y + RowH / 2, bx + 9, y + RowH / 2);
 
                     // 状态点：绿=选了本体，橙=叠了好几件本体，蓝=只有扩展（音效/只改第一人称模型），灰=空
+                    // 「一堆」（地图 / 我的分支）里勾好几个是正常事，别用橙色报警
                     int cnt = owner.CheckedGroups(s);
                     int ecnt = owner.CheckedExtras(s);
-                    Color dot = cnt > 1 ? Theme.Warn
+                    Color dot = s.Pile ? (cnt > 0 ? Theme.Ok : Color.FromArgb(210, 216, 223))
+                              : cnt > 1 ? Theme.Warn
                               : cnt == 1 ? Theme.Ok
                               : ecnt > 0 ? Theme.Info
                               : Color.FromArgb(210, 216, 223);
@@ -1816,9 +2113,16 @@ namespace Installer
 
                     ModGroup chosen = owner.ChosenOf(s);
                     string sub = chosen == null ? (ecnt > 0 ? "原版" : "未选") : chosen.Name;
-                    if (cnt > 1) sub = "叠了 " + cnt + " 件";
-                    if (ecnt > 0) sub += "  +" + ecnt + " 扩展";
-                    else if (s.Extras.Count > 0) sub += "  ·" + s.Extras.Count + " 扩展待选";
+                    if (s.Pile)
+                    {
+                        sub = cnt == 0 ? "未勾 · 共 " + s.Items.Count + " 个" : "已勾 " + cnt + " 个";
+                    }
+                    else
+                    {
+                        if (cnt > 1) sub = "叠了 " + cnt + " 件";
+                        if (ecnt > 0) sub += "  +" + ecnt + " 扩展";
+                        else if (s.Extras.Count > 0) sub += "  ·" + s.Extras.Count + " 扩展待选";
+                    }
 
                     // 右端数字：本体候选数；有扩展时「+N」单独用信息蓝 —— 扫一眼，带蓝色 +N 的就是有扩展可叠
                     string plus = s.Extras.Count > 0 ? "+" + s.Extras.Count : "";
@@ -1940,6 +2244,12 @@ namespace Installer
             int i = IndexAt(e.Y);
             if (i < 0) return;
             TreeRow r = rows[i];
+            // 右键：分支的重命名 / 解散，以及「新建分支…」——页签去掉以后，这里也是建分支的入口
+            if (e.Button == MouseButtons.Right)
+            {
+                owner.TreeMenuFor(r, PointToScreen(e.Location));
+                return;
+            }
             if (r.IsCat)
             {
                 owner.SetFolded(r.Cat, !owner.IsFolded(r.Cat));
@@ -1957,6 +2267,25 @@ namespace Installer
                 owner.SelectSlot(r.Slot.Key);
             }
             base.OnMouseDown(e);
+        }
+
+        /// <summary>把某个位置滚进可视区（搜索跳转、定位用）。</summary>
+        public void ScrollToSlot(string key)
+        {
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (rows[i].Slot == null || rows[i].Slot.Key != key) continue;
+                Panel p = Parent as Panel;
+                if (p == null || !p.VerticalScroll.Visible) return;
+                int y = i * RowH;
+                int h = p.ClientSize.Height;
+                int top = p.VerticalScroll.Value;
+                if (y >= top && y + RowH <= top + h) return;              // 已经在视野里
+                int v = Math.Max(0, Math.Min(p.VerticalScroll.Maximum, y - h / 3));
+                p.VerticalScroll.Value = v;
+                p.PerformLayout();
+                return;
+            }
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)

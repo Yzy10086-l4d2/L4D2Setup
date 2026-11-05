@@ -308,24 +308,25 @@ namespace Installer
             lblScheme.Text = "";
             gm.Controls.Add(lblScheme);
 
-            // 页签：方案树 + 六个大类，每格右侧写着「方案内 / 本类总数」
-            tabs = new CatTabs(this);
-            tabs.SetBounds(12, 114, rightW - 24, 32);
-            tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            gm.Controls.Add(tabs);
+            // 页签条已撤掉：只剩方案树一屏（分类页那种「按大类平铺」的列表不再需要，
+            // 树本身已经按大类/小分类/位置分了层，认不出来的交给「我的分支」）。
+            // tabs 留着字段只是为了别处不为 null 判断，不再创建，也不占地方。
+            tabs = null;
 
             int cw = rightW - 24;
-            int ch = modH - 152 - 74;
+            int ch = modH - 118 - 74;          // 页签那 38 像素让给下面这块
 
-            // 类列表 / 方案树就放在这块矩形里，切换时只换可见性
+            // 方案树就放在这块矩形里
             viewHost = new Panel();
-            viewHost.SetBounds(12, 152, cw, ch);
+            viewHost.SetBounds(12, 118, cw, ch);
             viewHost.BackColor = Theme.Surface;
             viewHost.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             viewHost.SizeChanged += delegate
             {
                 foreach (CatView v in catViews.Values)
                     v.SetBounds(0, 0, viewHost.ClientSize.Width, viewHost.ClientSize.Height);
+                if (treeView != null)
+                    treeView.SetBounds(0, 0, viewHost.ClientSize.Width, viewHost.ClientSize.Height);
             };
             gm.Controls.Add(viewHost);
 
@@ -1035,12 +1036,34 @@ namespace Installer
             cms.Items.Add(new ToolStripSeparator());
             cms.Items.Add("只装这个 MOD（不动平台/启动项）", null, delegate { InstallThisOne(lv); });
             cms.Items.Add("开 / 关这个 MOD（只改 addonlist 的 1/0，不动文件）", null, delegate { ToggleSwitchIn(lv); });
+            cms.Items.Add("放进我的分支…（认不出改什么的，自己归一组）", null, delegate { PutIntoBranchIn(lv); });
+            cms.Items.Add("从这个分支移出（文件不动）", null, delegate { TakeOutOfBranchIn(lv); });
             cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
             cms.Items.Add("删除这个 MOD → 回收目录（可反悔）", null, delegate { DeleteInTree(lv); });
             cms.Items.Add(new ToolStripSeparator());
             cms.Items.Add("设置 MOD 分类…（算哪一类 / 替换什么）", null, delegate { SetModCatIn(lv); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
             return cms;
+        }
+
+        /// <summary>右键「放进我的分支」：把这个 MOD 归到用户自己拉的分组里（不动文件）。</summary>
+        internal void PutIntoBranchIn(ListView lv)
+        {
+            ListViewItem li = RowTarget(lv);
+            ModGroup g = li == null ? null : li.Tag as ModGroup;
+            if (g == null) { MessageBox.Show("先右键点一行 MOD。"); return; }
+            if (treeView == null) return;
+            treeView.PutIntoBranch(g);
+        }
+
+        /// <summary>右键「从这个分支移出」：只把这一条从分组里摘掉，文件和勾选都不动。</summary>
+        internal void TakeOutOfBranchIn(ListView lv)
+        {
+            ListViewItem li = RowTarget(lv);
+            ModGroup g = li == null ? null : li.Tag as ModGroup;
+            if (g == null) { MessageBox.Show("先右键点一行 MOD。"); return; }
+            if (treeView == null) return;
+            treeView.TakeOutOfBranch(g);
         }
 
         /// <summary>
@@ -1188,6 +1211,7 @@ namespace Installer
             {
                 if (treeView.SlotCount == 0) treeView.Rebuild();
                 else if (treeView.Visible) treeView.SyncIfSame();   // 正在看树：重扫后状态列、圆点要立刻对上（换了新对象就整棵重建）
+                treeView.RefreshPane();                             // 搜索词变了，右边（结果 / 候选）跟着换
             }
             UpdateSel();
             SyncTabs();
@@ -1587,14 +1611,13 @@ namespace Installer
             }
         }
 
-        /// <summary>在对应的类视图里选中那一行；顺便切过去。</summary>
+        /// <summary>在方案树里选中这个 MOD 所在的格子（没有格子就落到「未归类」）。</summary>
         private void RevealModRow(ModItem it)
         {
             ModGroup g;
             if (!Catalog.GroupByKey.TryGetValue(it.GroupKey, out g)) { Core.Log("WARN", "定位不到这一行：" + it.Name); return; }
-            if (tabCur != g.Cat) ShowCatView(g.Cat);
-            CatView v;
-            if (catViews.TryGetValue(g.Cat, out v)) v.RevealItem(it, g);
+            ShowTree();
+            if (treeView != null) treeView.RevealGroup(g);
         }
 
         private void BrowseGame()
@@ -2241,7 +2264,7 @@ namespace Installer
 
             gMod.Left = rightX;
             gMod.Width = rightW;
-            tabs.Width = rightW - 24;
+            if (tabs != null) tabs.Width = rightW - 24;
             viewHost.Width = rightW - 24;
             lblSel.Width = rightW - 24;
             lblConflict.Width = rightW - 24;
