@@ -54,6 +54,7 @@ namespace Installer
         public bool CfgFile = true;
         public bool Overwrite = false;      // false = 已装的跳过；true = 全部重装一遍
         public string TweakSet = "";        // 套用哪套参数存档（空 = 不套）
+        public bool ReduceMotion = false;   // true = 关闭轻量过渡，直接显示最终状态
         public string Mode = "usb";         // 工作模式：usb = U 盘库是主（默认）；local = 游戏目录 addons 当库
         public List<string> ModDirs = new List<string>();   // 额外的 MOD 库文件夹（任意电脑上的任意目录）
         public List<string> Recent = new List<string>();
@@ -243,6 +244,7 @@ namespace Installer
                     else if (k == "CfgFile") Cfg.CfgFile = (v == "1");
                     else if (k == "Overwrite") Cfg.Overwrite = (v == "1");
                     else if (k == "TweakSet") Cfg.TweakSet = v;
+                    else if (k == "ReduceMotion") Cfg.ReduceMotion = (v == "1");
                     else if (k == "Mode") Cfg.Mode = v;
                     else if (k == "ModDir") Cfg.ModDirs.Add(v);
                     else if (k == "Recent") Cfg.Recent.Add(v);
@@ -272,6 +274,7 @@ namespace Installer
                 sb.AppendLine("CfgFile=" + (Cfg.CfgFile ? "1" : "0"));
                 sb.AppendLine("Overwrite=" + (Cfg.Overwrite ? "1" : "0"));
                 sb.AppendLine("TweakSet=" + Cfg.TweakSet);
+                sb.AppendLine("ReduceMotion=" + (Cfg.ReduceMotion ? "1" : "0"));
                 sb.AppendLine("Mode=" + Cfg.Mode);
                 foreach (string d in Cfg.ModDirs) sb.AppendLine("ModDir=" + d);
                 foreach (string rp in Cfg.Recent) sb.AppendLine("Recent=" + rp);

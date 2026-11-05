@@ -668,6 +668,11 @@ namespace Installer
             lv.FullRowSelect = true;
             lv.Columns.Add("MOD 文件", 380);
             lv.Columns.Add("状态", 120);
+            lv.ItemChecked += delegate(object s, ItemCheckedEventArgs e)
+            {
+                if (e.Item.SubItems.Count > 1)
+                    e.Item.SubItems[1].Text = e.Item.Checked ? "启用" : "关闭";
+            };
             Controls.Add(lv);
             ContextMenuStrip cms = new ContextMenuStrip();
             cms.Items.Add("删除勾中的（真删，不进回收目录）", null, delegate { DeleteChecked(); });
@@ -788,7 +793,7 @@ namespace Installer
                 + "· 挪走的以后要用会自动重新复制\r\n\r\n"
                 + "先把上面的开关写进去，再清理。", "清理关着的 MOD",
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
-            ApplyQuiet();                       // 界面上的勾选先落到 addonlist，否则清的还是旧状态
+            if (!ApplyQuiet()) return;          // 写入失败就不继续清理，避免按旧状态挪文件
             int n = Work.ParkDisabled(gameRoot);
             state = AddonList.Read(gameRoot);
             LoadItems();
@@ -797,7 +802,7 @@ namespace Installer
                 : "没有可清理的：关着的 MOD 本来就不在 addons 里。");
         }
 
-        private void ApplyQuiet()
+        private bool ApplyQuiet()
         {
             Dictionary<string, bool> changes = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             List<string> order = new List<string>();
@@ -808,16 +813,19 @@ namespace Installer
                 int on = 0;
                 foreach (KeyValuePair<string, bool> kv in changes) if (kv.Value) on++;
                 Core.Log("OK", "addonlist 已更新：" + on + " 个启用 / " + (changes.Count - on) + " 个关闭");
+                return true;
             }
             catch (Exception ex)
             {
-                MessageBox.Show("写入失败: " + ex.Message);
+                Core.Log("FAIL", "addonlist 写入失败: " + ex.Message);
+                MessageBox.Show("写入失败: " + ex.Message + "\r\n\r\n窗口不会关闭，避免看起来已经保存成功。", "写入失败");
+                return false;
             }
         }
 
         private void Apply()
         {
-            ApplyQuiet();
+            if (!ApplyQuiet()) return;
             DialogResult = DialogResult.OK;
             Close();
         }

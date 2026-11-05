@@ -25,7 +25,7 @@ namespace Installer
         // 文字三级
         public static readonly Color Ink = Color.FromArgb(28, 32, 36);    // 正文 / 值
         public static readonly Color Ink2 = Color.FromArgb(90, 98, 107);  // 标签 / 次级
-        public static readonly Color Ink3 = Color.FromArgb(150, 158, 166); // 提示 / 占位
+        public static readonly Color Ink3 = Color.FromArgb(102, 112, 122); // 提示 / 占位（白底约 5.0:1）
 
         // 强调：只给主操作和一个危险信号。取自图标里的那支血红。
         public static readonly Color Accent = Color.FromArgb(179, 38, 30);
@@ -54,6 +54,16 @@ namespace Installer
         public const int H = 28;   // 普通控件高
         public const int HP = 36;  // 主操作高
         public const int R = 6;    // 控件圆角
+
+        /// <summary>只在颜色变化上做很短的过渡；系统开启高对比度或用户选择减少动效时直接切到终态。</summary>
+        public static bool MotionEnabled
+        {
+            get
+            {
+                try { return !Core.Cfg.ReduceMotion && SystemInformation.UIEffectsEnabled && !SystemInformation.HighContrast; }
+                catch { return false; }
+            }
+        }
 
         public static GraphicsPath Round(Rectangle r, int radius)
         {
@@ -107,6 +117,11 @@ namespace Installer
     {
         public bool Primary;
         private bool hover, down;
+        private readonly Timer anim;
+        private Color shownFace;
+        private Color animFrom, animTo;
+        private float animT = 1f;
+        private bool faceReady;
 
         public FlatButton()
         {
@@ -118,13 +133,72 @@ namespace Installer
             Cursor = Cursors.Hand;
             BackColor = Theme.Surface;
             UseVisualStyleBackColor = false;
+
+            // 83–120ms 的轻量颜色反馈，不位移、不缩放；按钮按下仍然立即变色。
+            anim = new Timer();
+            anim.Interval = 15;
+            anim.Tick += delegate
+            {
+                animT = Math.Min(1f, animT + 0.16f);
+                float eased = 1f - (1f - animT) * (1f - animT);
+                shownFace = Mix(animFrom, animTo, eased);
+                if (animT >= 1f) anim.Stop();
+                Invalidate();
+            };
         }
 
-        protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
-        protected override void OnMouseLeave(EventArgs e) { hover = false; down = false; Invalidate(); base.OnMouseLeave(e); }
-        protected override void OnMouseDown(MouseEventArgs e) { down = true; Invalidate(); base.OnMouseDown(e); }
-        protected override void OnMouseUp(MouseEventArgs e) { down = false; Invalidate(); base.OnMouseUp(e); }
-        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+        protected override void OnMouseEnter(EventArgs e) { hover = true; AnimateFace(); Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { hover = false; down = false; AnimateFace(); Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnMouseDown(MouseEventArgs e) { down = true; SetFace(TargetFace()); Invalidate(); base.OnMouseDown(e); }
+        protected override void OnMouseUp(MouseEventArgs e) { down = false; AnimateFace(); Invalidate(); base.OnMouseUp(e); }
+        protected override void OnEnabledChanged(EventArgs e) { SetFace(TargetFace()); Invalidate(); base.OnEnabledChanged(e); }
+
+        private Color TargetFace()
+        {
+            if (Primary)
+                return !Enabled ? Color.FromArgb(203, 187, 186)
+                     : (down ? Theme.AccentDown : (hover ? Theme.AccentHover : Theme.Accent));
+            return !Enabled ? Theme.SurfaceAlt
+                 : (down ? Theme.BtnDown : (hover ? Theme.BtnHover : Theme.Surface));
+        }
+
+        private void AnimateFace()
+        {
+            Color target = TargetFace();
+            if (!faceReady || !Theme.MotionEnabled || !IsHandleCreated)
+            {
+                SetFace(target);
+                return;
+            }
+            if (shownFace.ToArgb() == target.ToArgb()) return;
+            anim.Stop();
+            animFrom = shownFace;
+            animTo = target;
+            animT = 0f;
+            anim.Start();
+        }
+
+        private void SetFace(Color c)
+        {
+            anim.Stop();
+            animT = 1f;
+            shownFace = c;
+            faceReady = true;
+        }
+
+        private static Color Mix(Color a, Color b, float t)
+        {
+            return Color.FromArgb(
+                (int)Math.Round(a.R + (b.R - a.R) * t),
+                (int)Math.Round(a.G + (b.G - a.G) * t),
+                (int)Math.Round(a.B + (b.B - a.B) * t));
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && anim != null) anim.Dispose();
+            base.Dispose(disposing);
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -132,18 +206,17 @@ namespace Installer
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Parent != null ? Parent.BackColor : Theme.Bg);
 
-            Color face, ink, edge;
+            Color ink, edge;
+            if (!faceReady) SetFace(TargetFace());
+            if (!Theme.MotionEnabled && shownFace.ToArgb() != TargetFace().ToArgb()) SetFace(TargetFace());
+            Color face = shownFace;
             if (Primary)
             {
-                face = !Enabled ? Color.FromArgb(203, 187, 186)
-                     : (down ? Theme.AccentDown : (hover ? Theme.AccentHover : Theme.Accent));
                 ink = Color.White;
                 edge = face;
             }
             else
             {
-                face = !Enabled ? Theme.SurfaceAlt
-                     : (down ? Theme.BtnDown : (hover ? Theme.BtnHover : Theme.Surface));
                 ink = Enabled ? Theme.Ink : Theme.Ink3;
                 edge = Theme.Line;
             }

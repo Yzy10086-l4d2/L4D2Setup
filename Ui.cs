@@ -12,7 +12,7 @@ namespace Installer
         private ComboBox txtGame;
         private ComboBox cboMode;          // 工作模式：U 盘模式 / 本地模式
         private bool modeSync;             // 回填下拉时别触发重扫
-        private FlatButton btnBrowse, btnFind, btnInstall, btnRestore, btnOpen, btnSwitch;
+        private FlatButton btnBrowse, btnFind, btnInstall, btnRestore, btnOpen, btnSwitch, btnCancel;
         private CheckBox chkL4N, chkSkeeto, chkAsset, chkMqcam, chkDxvk, chkLaunch, chkCfg, chkSwap, chkStrict;
         private RadioButton rdSkip, rdOver;
         private ComboBox cboTweak;
@@ -43,13 +43,13 @@ namespace Installer
         private List<string> conflictMsgs = new List<string>();
         private bool bulk;                       // 批量勾选时先别逐项刷新
         private bool applying;                   // 正在回填配置：这时的勾选变化不要触发联动
-        private bool refreshing;                 // 正在重建列表：这时的勾选状态是「照着现有勾选画的」，不许反过来改 checkedKeys
         private int logLines;                    // 日志行数，超了就截断，避免文本框越用越慢
         private readonly System.Windows.Forms.Timer searchTimer = new System.Windows.Forms.Timer();
         private volatile bool bgDone;            // RunBusy 的完成标志
         private int lastRespW, lastRespH = -1;   // 上一次重排用的窗口宽度（拖动时去重，少重排一半以上）
         private object bgResult;
         private Exception bgError;
+        private int logWarnings;                 // 日志里的 WARN/FAIL 条数，直接显示在标题上
 
         // 缩放窗口时闪/错位：整窗走系统合成（WS_EX_COMPOSITED）+ 双缓冲，
         // 子控件不再各自重绘；配合 ApplyResponsive 里的 SuspendLayout，拖动时只排一次
@@ -127,6 +127,13 @@ namespace Installer
                         Core.Log("INFO", "启动计时: 找游戏 " + __sw.ElapsedMilliseconds + " ms（找到 " + g.Count + " 个）");
                         __sw.Restart();
                     }
+                    // 自动找到游戏时，先把唯一的权威目录写回配置，再扫描。
+                    // 否则 ScanMods 还在读旧目录，界面却显示新路径，已装状态会张冠李戴。
+                    if (found != null)
+                    {
+                        Core.Cfg.GameRoot = found;
+                        Core.SaveConfig();
+                    }
                     Core.ScanMods();
                     Core.Log("INFO", "启动计时: 扫库 " + __sw.ElapsedMilliseconds + " ms（" + Core.ModList.Count + " 个）");
 
@@ -136,7 +143,7 @@ namespace Installer
                         if (found != null) { txtGame.Text = found; Core.Log("INFO", "自动找到游戏: " + found); }
                         else if (!Core.TestGame(txtGame.Text)) Core.Log("WARN", "没自动找到游戏，点「自动找」或「浏览…」");
                         ApplyConfig();
-                        FillProfiles();
+                        FillProfiles(null);
                         Core.Log("INFO", "启动计时: 填充列表 " + __sw2.ElapsedMilliseconds + " ms");
                         __sw2.Restart();
                         RefreshConflicts(false);          // 启动只做内存里的同名/同大小判断
@@ -267,6 +274,19 @@ namespace Installer
             gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, CH - 438 - 116); Controls.Add(gl);
             FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68 - 6 - 52, 1, 68, 20); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
             FlatButton btnEnv = new FlatButton(); btnEnv.Text = "环境"; btnEnv.SetBounds(leftW - 12 - 52, 1, 52, 20); btnEnv.Font = Theme.UISmall; btnEnv.Click += delegate { ShowEnv(); }; gl.Controls.Add(btnEnv);
+            FlatButton btnMotion = new FlatButton();
+            btnMotion.Text = Core.Cfg.ReduceMotion ? "动效 关" : "动效 开";
+            btnMotion.SetBounds(leftW - 12 - 68 - 6 - 52 - 6 - 68, 1, 68, 20);
+            btnMotion.Font = Theme.UISmall;
+            tips.SetToolTip(btnMotion, "只控制按钮悬停等轻量过渡。关闭后直接显示最终状态，更适合低性能机器或减少动态干扰。");
+            btnMotion.Click += delegate
+            {
+                Core.Cfg.ReduceMotion = !Core.Cfg.ReduceMotion;
+                Core.SaveConfig();
+                btnMotion.Text = Core.Cfg.ReduceMotion ? "动效 关" : "动效 开";
+                Core.Log("INFO", Core.Cfg.ReduceMotion ? "已关闭轻量动效" : "已开启轻量动效");
+            };
+            gl.Controls.Add(btnMotion);
             txtLog = new TextBox();
             txtLog.SetBounds(12, 30, leftW - 24, Math.Max(60, CH - 438 - 116 - 34));   // 日志框撑满卡片
             txtLog.Multiline = true; txtLog.ScrollBars = ScrollBars.Both; txtLog.WordWrap = false; txtLog.ReadOnly = true;
@@ -285,9 +305,11 @@ namespace Installer
 
             Label l8 = new Label(); l8.Text = "方案"; l8.SetBounds(12, 34, 34, 20); Theme.Dress(l8); gm.Controls.Add(l8);
             cboProfile = new ComboBox(); cboProfile.SetBounds(50, 30, 204, 24); cboProfile.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboProfile); gm.Controls.Add(cboProfile);
-            cboProfile.SelectedIndexChanged += delegate { PreviewProfile(); };
+            cboProfile.SelectedIndexChanged += delegate { ProfileSelectionChanged(); };
+            tips.SetToolTip(cboProfile, "只选择方案，不会立刻改当前勾选；确认后点「套用」。");
             btnSaveProfile = new FlatButton(); btnSaveProfile.Text = "存为方案"; btnSaveProfile.SetBounds(262, 28, 84, Theme.H); btnSaveProfile.Click += delegate { SaveProfile(); }; gm.Controls.Add(btnSaveProfile);
             btnApplyProfile = new FlatButton(); btnApplyProfile.Text = "套用"; btnApplyProfile.SetBounds(354, 28, 58, Theme.H); btnApplyProfile.Click += delegate { ApplyProfile(); }; gm.Controls.Add(btnApplyProfile);
+            tips.SetToolTip(btnApplyProfile, "把选中的方案套用到当前勾选；如果会覆盖现有选择，会先确认。");
             btnManage = new FlatButton(); btnManage.Text = "管理…"; btnManage.SetBounds(rightW - 12 - 68, 28, 68, Theme.H); btnManage.Click += delegate { ManageProfiles(); }; gm.Controls.Add(btnManage);
 
             Label l9 = new Label(); l9.Text = "搜"; l9.SetBounds(12, 66, 24, 20); Theme.Dress(l9); gm.Controls.Add(l9);
@@ -356,6 +378,14 @@ namespace Installer
             btnOpen.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", txtGame.Text); } catch { } }; Controls.Add(btnOpen);
 
             bar = new ProgressBar(); bar.SetBounds(Theme.M, CH - 56, 440, 12); Controls.Add(bar);
+            btnCancel = new FlatButton();
+            btnCancel.Text = "停止剩余";
+            btnCancel.SetBounds(Theme.M + 452, CH - 60, 92, 24);
+            btnCancel.Visible = false;
+            btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            btnCancel.Click += delegate { RequestStopInstall(); };
+            tips.SetToolTip(btnCancel, "在当前步骤或文件结束后停止后续安装。已经写入的文件会保留，不会自动回滚。");
+            Controls.Add(btnCancel);
             lblStatus = new Label(); lblStatus.SetBounds(Theme.M, CH - 36, W - 2 * Theme.M, 20); lblStatus.Text = "就绪";
             lblStatus.ForeColor = Theme.Ink2; lblStatus.BackColor = Color.Transparent; Controls.Add(lblStatus);
 
@@ -380,6 +410,7 @@ namespace Installer
             btnRestore.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             btnOpen.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             bar.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             lblStatus.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
             searchTimer.Interval = 250;
@@ -536,14 +567,21 @@ namespace Installer
             }
         }
 
-        private void FillProfiles()
+        private void FillProfiles(string keep)
         {
             cboProfile.Items.Clear();
             List<string> ps = ProfileStore.ListProfiles();
             if (ps.Count == 0) { cboProfile.Items.Add("（还没有方案）"); cboProfile.SelectedIndex = 0; LoadSchemeKeys(); SyncPicks(); return; }
+            cboProfile.Items.Add("（当前选择，未套用方案）");
             foreach (string p in ps) cboProfile.Items.Add(p);
-            cboProfile.SelectedIndex = 0;
-            // SelectedIndex 变了会走 PreviewProfile 把方案灌进来；这里再兜一次，防止方案文件被改过
+            string want = string.IsNullOrEmpty(keep) ? appliedProfile : keep;
+            int idx = 0;
+            if (!string.IsNullOrEmpty(want))
+                for (int i = 0; i < ps.Count; i++)
+                    if (string.Equals(ps[i], want, StringComparison.OrdinalIgnoreCase)) { idx = i + 1; break; }
+            cboProfile.SelectedIndex = idx;
+            // 下拉现在只代表“选中了哪套”，不再在选择瞬间灌进当前勾选。
+            // 启动仍然保留上次工作选择，必须点「套用」才覆盖。
             LoadSchemeKeys();
             RefreshMods();
         }
@@ -797,8 +835,6 @@ namespace Installer
         /// <summary>任何窗口里勾了一行，都走这里：先改 checkedKeys，再把所有窗口同步一遍。</summary>
         internal void OnRowChecked(ListView lv, ItemCheckedEventArgs e)
         {
-            if (refreshing) return;
-
             // 展开出来的单件行：勾哪个就装哪个，不动同套装的其他 vpk
             ModItem part = e.Item.Tag as ModItem;
             if (part != null)
@@ -1002,7 +1038,7 @@ namespace Installer
         internal void ManageProfiles()
         {
             using (ProfileManageForm f = new ProfileManageForm(this)) f.ShowDialog(this);
-            FillProfiles();
+            FillProfiles(null);
             RefreshMods();
         }
 
@@ -1256,7 +1292,7 @@ namespace Installer
         internal bool IsChecked(string key) { return key != null && checkedKeys.Contains(key); }
 
         /// <summary>搜名字、搜「替换了什么」、搜大类/位置 —— 分类就是筛选词，不再另有一套标签。</summary>
-        private bool MatchGroup(ModGroup g, string kw)
+        internal bool MatchGroup(ModGroup g, string kw)
         {
             if (g.Name.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (g.Subject.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
@@ -1426,21 +1462,69 @@ namespace Installer
         {
             FolderBrowserDialog d = new FolderBrowserDialog();
             d.Description = "选游戏根目录（里面有 left4dead2.exe 的那个文件夹）";
-            if (d.ShowDialog() == DialogResult.OK) { txtGame.Text = d.SelectedPath; RefreshConflicts(true); }
+            if (d.ShowDialog() == DialogResult.OK) SwitchGameRoot(d.SelectedPath, "浏览选择");
         }
 
         private void FindGame()
         {
             List<string> g = Core.FindGames();
             if (g.Count == 0) { Log("没找到。点「浏览…」手动选。"); return; }
-            txtGame.Text = g[0];
             if (g.Count == 1) Log("找到: " + g[0]);
             else
             {
                 foreach (string s in g) Log("候选: " + s);
                 Log("找到多个，先用第一个（不对就用浏览改）");
             }
-            RefreshConflicts(true);
+            SwitchGameRoot(g[0], "自动查找");
+        }
+
+        /// <summary>
+        /// 切换游戏目录只有这一条路：先更新唯一配置，再后台重扫，最后刷新列表。
+        /// 以前浏览/自动找只改输入框，列表还按旧目录显示“已装/未装”，很容易看错。
+        /// </summary>
+        private void SwitchGameRoot(string path, string source)
+        {
+            string root = (path == null ? "" : path.Trim().Trim('"').TrimEnd('\\'));
+            if (root.Length == 0) return;
+            txtGame.Text = root;
+            if (!Core.TestGame(root))
+            {
+                Core.Log("WARN", source + "的目录里没有 left4dead2.exe：" + root);
+                lblStatus.Text = "目录不对：里面没有 left4dead2.exe";
+                lblStatus.ForeColor = Theme.Accent;
+                return;
+            }
+            bool same = string.Equals(root, Core.Cfg.GameRoot, StringComparison.OrdinalIgnoreCase);
+            Core.Cfg.GameRoot = root;
+            Core.SaveConfig();
+            if (same)
+            {
+                RefreshConflicts(true);
+                return;
+            }
+
+            Core.Log("OK", source + "游戏目录：" + root);
+            SetBusy(true);
+            SetStatus("正在按新游戏目录重扫…");
+            bar.Style = ProgressBarStyle.Marquee;
+            Thread th = new Thread(delegate()
+            {
+                string err = null;
+                try { Core.ScanMods(); }
+                catch (Exception ex) { err = ex.Message; Core.Log("FAIL", "切换游戏目录后重扫失败: " + ex.Message); }
+                SafeBeginInvoke(delegate()
+                {
+                    SetBusy(false);
+                    bar.Style = ProgressBarStyle.Blocks;
+                    RefreshMods();
+                    RefreshConflicts(true);
+                    if (treeView != null) treeView.Rebuild();
+                    SetStatus(err == null ? "就绪" : "目录已切换，但重扫失败；请看日志");
+                    if (err == null) lblStatus.ForeColor = Theme.Ink2;
+                });
+            });
+            th.IsBackground = true;
+            th.Start();
         }
 
         private ModGroup FirstSelectedGroup(ListView lv)
@@ -1517,8 +1601,8 @@ namespace Installer
         {
             if (MessageBox.Show("扫描全库同名文件，每个名字只留第一个，其余直接删掉（删了没法恢复）？", "清理重复", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             List<string> moved = Work.CleanDuplicateMods();
-            Core.Log("OK", "清理重复: 移走 " + moved.Count + " 个");
-            MessageBox.Show(moved.Count == 0 ? "没有同名重复。" : ("已移走 " + moved.Count + " 个重复文件，详见日志。"));
+            Core.Log("OK", "清理重复: 删除 " + moved.Count + " 个");
+            MessageBox.Show(moved.Count == 0 ? "没有同名重复。" : ("已删除 " + moved.Count + " 个重复文件，详见日志。"));
             Core.ScanMods(); RefreshMods(); RefreshConflicts();
         }
 
@@ -1653,7 +1737,7 @@ namespace Installer
             RefreshMods();
             RefreshConflicts(true);
             Core.Log("OK", "压缩包内容识别完成：新增 " + done + " 条");
-            MessageBox.Show("识别完成：新判出 " + done + " 条（其余读不出结论的也记下来了，不会再重算）。\r\n\r\n分类已刷新，切到「地图 / 人物」看看。", "识别压缩包内容");
+            MessageBox.Show("识别完成：新判出 " + done + " 条（其余读不出结论的也记下来了，不会再重算）。\r\n\r\n方案树和分类已刷新，可以直接查看更新后的位置。", "识别压缩包内容");
         }
 
         internal void BulkImport()
@@ -1692,7 +1776,7 @@ namespace Installer
                 for (int i = 0; i < log.Count && i < 6; i++) sample += "\r\n  · " + log[i];
             MessageBox.Show("导入完成：入库 " + imported + " 个，已存在跳过 " + skipped + " 个。" + sample
                 + "\r\n\r\n分类文件夹是按文件名猜的；猜不准就在列表里右键「重命名所选」或直接拖到对的文件夹。\r\n"
-                + "这些 MOD 现在只是躺在库里，**没装进游戏**——要用的时候勾上，右键「只装勾中的 MOD」。", "导入");
+                + "这些 MOD 现在只在库里，还没有装进游戏。要用的时候在方案树里勾上，或右键选「只装这个 MOD」。", "导入");
         }
 
         /// <summary>库文件夹管理：把电脑上任意目录加进/移出扫描范围。工具不再只服务 U 盘布局。</summary>
@@ -1837,7 +1921,7 @@ namespace Installer
             foreach (ModItem it in sel) p.Mods.Add(it.Key);
             ProfileStore.Save(p);                     // 同名就是覆盖，不留副本
             appliedProfile = p.Name;
-            FillProfiles();
+            FillProfiles(p.Name);
             Core.Log("OK", "方案已存（覆盖式）：" + p.Name + "（" + p.Mods.Count + " 个 MOD）");
         }
 
@@ -1882,21 +1966,15 @@ namespace Installer
         }
 
 
-        private void PreviewProfile()
+        private void ProfileSelectionChanged()
         {
-            if (initializing) return;
-            if (cboProfile.SelectedItem == null) return;
+            if (initializing || cboProfile.SelectedItem == null) return;
             string name = cboProfile.SelectedItem.ToString();
-            if (name.StartsWith("（")) return;
-            Profile p = ProfileStore.Load(name);
-            if (p == null || p.Mods.Count == 0) return;
             LoadSchemeKeys();
-            LoadProfileIntoUi(p, false, true);
-            // 分组标题里的「方案内 N」和「只看方案内」的筛选结果都跟方案走，换方案就得重排
             RefreshMods();
-            int shown = 0;
-            foreach (ModItem m in Core.ModList) if (checkedKeys.Contains(m.Key)) shown++;
-            Log("方案「" + name + "」：已按它勾好 " + shown + " 个 MOD（含不在当前筛选里的），点「开始装」即装这些");
+            UpdateSchemeLabel();
+            if (name.StartsWith("（")) return;
+            Log("正在对照方案「" + name + "」，点「套用」才会替换当前勾选");
         }
 
 
@@ -1905,9 +1983,44 @@ namespace Installer
             if (cboProfile.SelectedItem == null) return;
             string name = cboProfile.SelectedItem.ToString();
             if (name.StartsWith("（")) return;
+            Profile p = ProfileStore.Load(name);
+            if (p == null) { MessageBox.Show("找不到这个方案（文件可能被删了）。"); return; }
+
+            // 选择本身不再有任何副作用，只有这里才真正替换当前工作选择。
+            // 若当前勾选不是这套方案，先明确告诉用户会被覆盖，而不是默默丢掉。
+            if (checkedKeys.Count > 0 && CurrentSelectionDiffersFrom(p))
+            {
+                string q = "当前已经勾了 " + checkedKeys.Count + " 个 MOD，和方案「" + name + "」不一样。\r\n\r\n"
+                         + "套用会替换当前勾选；已经存好的方案不会受影响。继续吗？";
+                if (MessageBox.Show(q, "套用方案会替换当前选择",
+                    MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            }
             LoadSchemeKeys();
-            LoadProfileIntoUi(ProfileStore.Load(name), true, false);
+            LoadProfileIntoUi(p, true, false);
             RefreshMods();
+        }
+
+        private bool CurrentSelectionDiffersFrom(Profile p)
+        {
+            if (p == null) return true;
+            HashSet<string> stored = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string k in p.Mods) if (Core.ByRel.ContainsKey(k)) stored.Add(k);
+            if (!stored.SetEquals(checkedKeys)) return true;
+            if (p.HasOpt)
+            {
+                if (chkDxvk.Checked != p.Dxvk) return true;
+                if (chkSwap.Checked != p.Swap) return true;
+                if ((rdOver != null && rdOver.Checked) != p.Overwrite) return true;
+                if (!TweakMatches(p.Tweak)) return true;
+            }
+            return false;
+        }
+
+        private bool TweakMatches(string tweak)
+        {
+            string now = TweakName();
+            if (string.IsNullOrEmpty(tweak)) return string.IsNullOrEmpty(now);
+            return string.Equals(now, tweak, StringComparison.OrdinalIgnoreCase);
         }
 
 
@@ -2107,8 +2220,12 @@ namespace Installer
         {
             SafeInvoke(delegate
             {
-                if (++logLines > 1200) { txtLog.Clear(); logLines = 1; }
+                if (++logLines > 1200) { txtLog.Clear(); logLines = 1; logWarnings = 0; }
+                if (line.IndexOf("] WARN", StringComparison.Ordinal) >= 0
+                    || line.IndexOf("] FAIL", StringComparison.Ordinal) >= 0) logWarnings++;
                 txtLog.AppendText(line + "\r\n");
+                if (gLog != null)
+                    gLog.Caption = logWarnings > 0 ? "日志 · " + logWarnings + " 条提醒" : "日志";
             });
         }
 
@@ -2157,7 +2274,13 @@ namespace Installer
             }
             Cursor = Cursors.Default;
             bar.Style = ProgressBarStyle.Blocks;
-            if (bgError != null) Core.Log("FAIL", "后台任务出错: " + bgError.Message);
+            if (bgError != null)
+            {
+                Core.Log("FAIL", "后台任务出错: " + bgError.Message);
+                // 以前这里只记日志，调用方继续把“空结果”当成成功。
+                // 现在把异常交还给调用方，由界面明确显示失败，而不是继续走完成流程。
+                throw new InvalidOperationException(bgError.Message, bgError);
+            }
             return bgResult == null ? default(T) : (T)bgResult;
         }
 
@@ -2175,6 +2298,16 @@ namespace Installer
                 btnFind.Enabled = !busy;
                 btnBrowse.Enabled = !busy;
             });
+        }
+
+        private void RequestStopInstall()
+        {
+            if (Work.CancelRequested) return;
+            Work.CancelRequested = true;
+            btnCancel.Enabled = false;
+            btnCancel.Text = "正在停止…";
+            SetStatus("正在停止 · 当前步骤结束后不再继续");
+            Core.Log("WARN", "用户请求停止后续安装；已写入的文件会保留，不会自动回滚");
         }
 
         private void DoSwitch()
@@ -2445,13 +2578,24 @@ namespace Installer
             bool wantCfg = chkCfg.Checked;
             string launchVal = LaunchArgs.ForWrite(txtLaunch.Text);
             Core.StrictVerify = chkStrict.Checked;
-            if (!wantL4N && !wantDxvk && !wantSkeeto && !wantMqcam && sel.Count == 0 && !wantLaunch) { MessageBox.Show("什么都没勾。"); return; }
+            if (!wantL4N && !wantDxvk && !wantSkeeto && !wantMqcam && sel.Count == 0 && !wantLaunch && !wantAsset && !wantCfg)
+            { MessageBox.Show("什么都没勾。"); return; }
             List<string> deep = null;
             if (sel.Count >= 2)
             {
                 SetBusy(true);
-                deep = RunBusy<List<string>>("正在检查 " + sel.Count + " 个 MOD 有没有文件重叠…", delegate { return ConflictCheck.DeepAll(sel); });
-                SetBusy(false);
+                try
+                {
+                    deep = RunBusy<List<string>>("正在检查 " + sel.Count + " 个 MOD 有没有文件重叠…", delegate { return ConflictCheck.DeepAll(sel); });
+                }
+                catch (Exception ex)
+                {
+                    Core.Log("FAIL", "冲突检查失败: " + ex.Message);
+                    MessageBox.Show("安装前的冲突检查失败，这次没有开始安装。\r\n\r\n"
+                        + ex.Message + "\r\n\r\n详细信息见日志。", "冲突检查失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                finally { SetBusy(false); }
             }
             if (deep != null && deep.Count > 0)
             {
@@ -2491,6 +2635,22 @@ namespace Installer
             foreach (ModItem it in sel) Core.Cfg.Mods.Add(it.Key);
             Core.SaveConfig();
 
+            int stepTotal = (wantL4N ? 1 : 0) + (wantDxvk ? 1 : 0) + (wantSkeeto ? 1 : 0)
+                          + (wantAsset ? 1 : 0) + (wantCfg ? 1 : 0) + (wantMqcam ? 1 : 0)
+                          + (sel.Count > 0 ? 1 : 0) + (wantLaunch ? 1 : 0);
+            int stepDone = 0;
+            bool canceled = false;
+            List<string> failedSteps = new List<string>();
+            Action<string> BeginStep = delegate(string what)
+            {
+                stepDone++;
+                SetStatus("第 " + stepDone + "/" + stepTotal + " 步 · " + what);
+            };
+
+            Work.CancelRequested = false;
+            btnCancel.Enabled = true;
+            btnCancel.Text = "停止剩余";
+            btnCancel.Visible = true;
             SetBusy(true);
             bar.Style = ProgressBarStyle.Marquee;
             lblStatus.Text = "正在准备…";
@@ -2503,57 +2663,70 @@ namespace Installer
                     if (wantL4N)
                     {
                         Core.Log("STEP", "装 L4N");
-                        SetStatus("正在装 L4N…");
-                        Work.InstallL4N(root, delegate(int done, int total) { SetBar(total > 0 ? done * 1000 / total : 0); });
+                        BeginStep("正在装 L4N…");
+                        if (!Work.InstallL4N(root, delegate(int done, int total) { SetBar(total > 0 ? done * 1000 / total : 0); }))
+                            failedSteps.Add("L4N 平台");
+                        if (Work.CancelRequested) canceled = true;
                     }
-                    if (wantDxvk)
+                    if (!canceled && wantDxvk)
                     {
                         Core.Log("STEP", "装 dxvk");
-                        SetStatus("正在装 dxvk…");
-                        Work.InstallDxvk(root);
+                        BeginStep("正在装 dxvk…");
+                        if (!Work.InstallDxvk(root)) failedSteps.Add("dxvk 防闪退");
+                        if (Work.CancelRequested) canceled = true;
                     }
-                    if (wantSkeeto)
+                    if (!canceled && wantSkeeto)
                     {
                         Core.Log("STEP", "装 Skeeto");
-                        SetStatus("正在装 Skeeto…");
-                        Work.InstallSkeeto(root);
+                        BeginStep("正在装 Skeeto…");
+                        if (!Work.InstallSkeeto(root)) failedSteps.Add("Skeeto 增强框架");
+                        if (Work.CancelRequested) canceled = true;
                     }
                     string assetName = null;
-                    if (wantAsset)
+                    if (!canceled && wantAsset)
                     {
                         Core.Log("STEP", "装素材包");
-                        SetStatus("正在复制素材包…");
+                        BeginStep("正在复制素材包…");
                         assetName = Work.InstallAssetPack(root);
+                        if (assetName == null) failedSteps.Add("Skeeto 素材包");
+                        if (Work.CancelRequested) canceled = true;
                     }
-                    if (wantCfg)
+                    if (!canceled && wantCfg)
                     {
                         string tw = TweakName();
                         if (tw.Length > 0 && Tweaks.Exists(tw))
                         {
                             Core.Log("STEP", "写参数配置「" + tw + "」");
-                            SetStatus("正在写参数配置…");
+                            BeginStep("正在写参数配置…");
                             List<string> twLines;
                             string twErr = Tweaks.Apply(root, tw, out twLines);
-                            if (twErr != null) Core.Log("WARN", "参数配置没写进去: " + twErr);
+                            if (twErr != null)
+                            {
+                                Core.Log("FAIL", "参数配置没写进去: " + twErr);
+                                failedSteps.Add("参数配置");
+                            }
                         }
                         else
                         {
                             Core.Log("STEP", "搬 autoexec.cfg（没选参数存档，走旧做法）");
-                            SetStatus("正在搬 autoexec.cfg…");
-                            Work.InstallCfg(root);
+                            BeginStep("正在搬 autoexec.cfg…");
+                            if (!Work.InstallCfg(root)) failedSteps.Add("参数配置（autoexec.cfg）");
                         }
+                        if (Work.CancelRequested) canceled = true;
                     }
-                    if (wantMqcam)
+                    if (!canceled && wantMqcam)
                     {
                         Core.Log("STEP", "装 MQCam");
-                        SetStatus("正在装 MQCam…");
-                        Work.InstallMqcam(root);
+                        BeginStep("正在装 MQCam…");
+                        if (!Work.InstallMqcam(root)) failedSteps.Add("MQCam 相机");
+                        if (Work.CancelRequested) canceled = true;
                     }
                     List<string> added = new List<string>();
-                    if (sel.Count > 0)
+                    if (!canceled && sel.Count > 0)
                     {
                         Core.Log("STEP", "铺 MOD（" + sel.Count + " 个）");
-                        SetStatus("正在铺 MOD…");
+                        BeginStep("正在铺 MOD…");
+                        int finalFailed = 0;
                         List<ModItem> todo = new List<ModItem>(sel);
                         for (int attempt = 0; attempt <= 2; attempt++)
                         {
@@ -2565,6 +2738,8 @@ namespace Installer
                                 SetBar(pct);
                             }, out copied, out skipped, out addedThis, out failed);
                             if (addedThis.Count > 0) added.AddRange(addedThis);
+                            finalFailed = failed.Count;
+                            if (Work.CancelRequested) { canceled = true; break; }
                             if (failed.Count == 0 || attempt == 2) break;
                             List<ModItem> retryList = new List<ModItem>();
                             foreach (ModItem it in todo) if (failed.Contains(it.Name)) retryList.Add(it);
@@ -2576,46 +2751,84 @@ namespace Installer
                             Core.Log("WARN", "重试 " + retryList.Count + " 个失败的 MOD");
                             todo = retryList;
                         }
-                        // 换整套：只翻 addonlist 的开关（这次的打开、上一套的关上），文件一个都不动
-                        if (chkSwap.Checked)
+                        if (finalFailed > 0) failedSteps.Add("MOD 复制（" + finalFailed + " 个）");
+                        // 停止时不改 addonlist：已经复制完的文件先留在 addons 里，但不把它们突然启用。
+                        if (!canceled)
                         {
-                            Core.Log("STEP", "换整套：把不在这套里的 MOD 关掉");
-                            SetStatus("正在切换 MOD 开关…");
-                            int onN, offN, keepN;
-                            Work.SwitchAddons(root, sel, assetName, out onN, out offN, out keepN);
-                        }
-                        else
-                        {
-                            Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-                            foreach (ModItem it in sel) st[it.Name] = true;
-                            if (assetName != null) st[assetName] = true;
-                            AddonList.Write(root, st);
-                            Core.Log("OK", "启用状态已写入");
+                            // 换整套：只翻 addonlist 的开关（这次的打开、上一套的关上），文件一个都不动
+                            if (chkSwap.Checked)
+                            {
+                                Core.Log("STEP", "换整套：把不在这套里的 MOD 关掉");
+                                SetStatus("正在切换 MOD 开关…");
+                                int onN, offN, keepN;
+                                Work.SwitchAddons(root, sel, assetName, out onN, out offN, out keepN);
+                            }
+                            else
+                            {
+                                Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                                foreach (ModItem it in sel) st[it.Name] = true;
+                                if (assetName != null) st[assetName] = true;
+                                AddonList.Write(root, st);
+                                Core.Log("OK", "启用状态已写入");
+                            }
                         }
                     }
-                    else if (chkSwap.Checked)
+                    else if (!canceled && chkSwap.Checked)
                     {
                         // 一个 MOD 都没勾、但开着「换整套」：等于这套不要 MOD，全关掉
                         Core.Log("STEP", "换整套：这套没有 MOD，把旧的都关掉");
                         int onN, offN, keepN;
                         Work.SwitchAddons(root, sel, assetName, out onN, out offN, out keepN);
                     }
-                    else if (assetName != null)
+                    else if (!canceled && assetName != null)
                     {
                         Dictionary<string, bool> st2 = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                         st2[assetName] = true;
                         AddonList.Write(root, st2);
                     }
-                    if (wantLaunch)
+                    if (!canceled && wantLaunch)
                     {
                         Core.Log("STEP", "写 Steam 启动项");
-                        Core.Log("INFO", Work.WriteLaunchOptions(launchVal));
+                        BeginStep("正在写 Steam 启动项…");
+                        string launchMsg = Work.WriteLaunchOptions(launchVal);
+                        Core.Log("INFO", launchMsg);
+                        if (launchMsg.IndexOf("没写成功", StringComparison.Ordinal) >= 0)
+                            failedSteps.Add("Steam 启动项");
+                        if (Work.CancelRequested) canceled = true;
+                    }
+                    if (canceled || Work.CancelRequested)
+                    {
+                        SetStatus("已停止 · 已复制文件保留，开关未写入");
+                        Core.Log("WARN", "安装已停止：没有继续后续步骤，也没有改 addonlist；已写入的文件保留。");
+                        SafeBeginInvoke(delegate()
+                        {
+                            bool summary = MessageBox.Show(
+                                "安装已停止。\r\n\r\n"
+                                + "· 已经写完的文件保留在游戏目录里\r\n"
+                                + "· 后续组件没有继续安装\r\n"
+                                + "· addonlist 的开关没有改动\r\n\r\n"
+                                + "这不是“还原”。要清理，请用「一键还原」或手动处理。\r\n"
+                                + "需要继续时，可以再点一次「开始装」。",
+                                "安装已停止", MessageBoxButtons.OK, MessageBoxIcon.Information) == DialogResult.OK;
+                            try { Core.ScanMods(); } catch { }
+                            RefreshMods();
+                            RefreshConflicts(true);
+                        });
+                        return;
                     }
                     Core.Log("STEP", "逐项核对");
                     Work.Verify(root);
                     Work.WriteManifest(root, added);
-                    SetStatus("完成");
-                    Core.Log("OK", "全部完成。进游戏即可，开关在「已装 MOD 开关」里调。");
+                    if (failedSteps.Count == 0)
+                    {
+                        SetStatus("完成");
+                        Core.Log("OK", "全部完成。进游戏即可，开关在「已装 MOD 开关」里调。");
+                    }
+                    else
+                    {
+                        SetStatus("部分完成 · " + failedSteps.Count + " 项需要处理");
+                        Core.Log("FAIL", "安装结束，但有 " + failedSteps.Count + " 项失败：" + string.Join("、", failedSteps.ToArray()));
+                    }
                     SafeBeginInvoke(delegate
                     {
                         UpdateTweakTip();
@@ -2625,6 +2838,17 @@ namespace Installer
                         catch (Exception exs) { Core.Log("WARN", "装完重扫失败: " + exs.Message); }
                         RefreshMods();
                         RefreshConflicts(true);
+                        if (failedSteps.Count > 0)
+                        {
+                            // 有失败就不引导启动：先让用户看到“哪些没成”，而不是一句笼统的“装好了”。
+                            MessageBox.Show(
+                                "安装结束，但不是全部成功。\r\n\r\n没完成的 " + failedSteps.Count + " 项：\r\n  · "
+                                + string.Join("\r\n  · ", failedSteps.ToArray())
+                                + "\r\n\r\n已经写入的文件会保留；请查看下面的日志，处理后可以再装一次。\r\n"
+                                + "这次不会自动启动游戏。",
+                                "部分完成 · 需要处理", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return;
+                        }
                         bool go = MessageBox.Show(
                             "装好了。\r\n\r\n现在启动游戏吗？\r\n\r\n"
                             + "启动就是校验 —— 不用跑两遍：\r\n"
@@ -2703,13 +2927,21 @@ namespace Installer
                 catch (Exception ex)
                 {
                     Core.Log("FAIL", "中断: " + ex.Message);
-                    SetStatus("失败，看日志");
+                    SetStatus("失败 · 查看日志");
                 }
                 finally
                 {
+                    Work.CancelRequested = false;
                     SetBusy(false);
                     SetBar(0);
-                    SetStatus("就绪");
+                    SafeBeginInvoke(delegate()
+                    {
+                        btnCancel.Visible = false;
+                        btnCancel.Enabled = true;
+                        btnCancel.Text = "停止剩余";
+                    });
+                    // 不再无条件改回“就绪”：失败、部分完成、完成都应留在状态栏上，
+                    // 这是用户离开安装按钮后唯一能确认结果的常驻反馈。
                 }
             });
             th.IsBackground = true;
@@ -2757,7 +2989,20 @@ namespace Installer
 
         private void SetStatus(string s)
         {
-            SafeInvoke(delegate { lblStatus.Text = s; });
+            SafeInvoke(delegate
+            {
+                lblStatus.Text = s;
+                // 结果状态不只靠文字：失败/停止用强调色，部分完成用警告色，过程信息保持次级色。
+                if (s.IndexOf("失败", StringComparison.Ordinal) >= 0
+                    || s.IndexOf("停止", StringComparison.Ordinal) >= 0
+                    || s.IndexOf("目录不对", StringComparison.Ordinal) >= 0)
+                    lblStatus.ForeColor = Theme.Accent;
+                else if (s.IndexOf("部分完成", StringComparison.Ordinal) >= 0
+                    || s.IndexOf("需要处理", StringComparison.Ordinal) >= 0)
+                    lblStatus.ForeColor = Theme.Warn;
+                else
+                    lblStatus.ForeColor = Theme.Ink2;
+            });
         }
 
         private void SetBar(int permille)
@@ -2789,6 +3034,8 @@ namespace Installer
         private bool filling = false;
         private bool dirty = false;
         private bool hintOn = true;
+        private bool switchingSelection = false;
+        private int lastSelIndex = -1;
         private const string HintText = "搜 MOD 名字或分类…";
 
         public ProfileManageForm(MainForm o)
@@ -2808,7 +3055,17 @@ namespace Installer
             lb = new ListBox(); lb.SetBounds(12, 34, 220, 386);
             lb.BorderStyle = BorderStyle.FixedSingle; lb.BackColor = Theme.Surface; lb.ForeColor = Theme.Ink;
             lb.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
-            lb.SelectedIndexChanged += delegate { LoadSel(); }; lb.DoubleClick += delegate { ApplySel(); }; Controls.Add(lb);
+            lb.SelectedIndexChanged += delegate { GuardedSelect(); };
+            lb.DoubleClick += delegate { ApplySel(); };
+            Controls.Add(lb);
+            FormClosing += delegate(object s, FormClosingEventArgs e)
+            {
+                if (!dirty) return;
+                if (MessageBox.Show(this, "当前方案还有改动没保存。关闭会丢掉这些改动，确定关闭吗？",
+                    "未保存的改动", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+                { e.Cancel = true; return; }
+                dirty = false;
+            };
 
             FlatButton ap = new FlatButton(); ap.Text = "套用"; ap.Primary = true; ap.SetBounds(12, 428, 68, Theme.H);
             ap.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; ap.Click += delegate { ApplySel(); }; Controls.Add(ap);
@@ -2896,7 +3153,7 @@ namespace Installer
             FlatButton sv = new FlatButton(); sv.Text = "保存"; sv.Primary = true; sv.SetBounds(636, 452, 80, Theme.H);
             sv.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; sv.Click += delegate { SaveScheme(); }; Controls.Add(sv);
             FlatButton rl = new FlatButton(); rl.Text = "还原"; rl.SetBounds(724, 452, 80, Theme.H);
-            rl.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; rl.Click += delegate { LoadSel(); }; Controls.Add(rl);
+            rl.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; rl.Click += delegate { RestoreSel(); }; Controls.Add(rl);
             FlatButton ex = new FlatButton(); ex.Text = "导出…"; ex.SetBounds(636, 486, 80, Theme.H);
             ex.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; ex.Click += delegate { ExportSel(); }; Controls.Add(ex);
             FlatButton ea = new FlatButton(); ea.Text = "全部导出…"; ea.SetBounds(716, 486, 92, Theme.H);
@@ -2931,6 +3188,32 @@ namespace Installer
         private Profile Sel()
         {
             return lb.SelectedItem as Profile;
+        }
+
+        private void GuardedSelect()
+        {
+            if (switchingSelection || lb.SelectedIndex < 0) return;
+            if (dirty && lb.SelectedIndex != lastSelIndex)
+            {
+                if (MessageBox.Show(this, "当前方案还有改动没保存。切换会丢掉这些改动，继续吗？",
+                    "未保存的改动", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+                {
+                    switchingSelection = true;
+                    lb.SelectedIndex = lastSelIndex;
+                    switchingSelection = false;
+                    return;
+                }
+            }
+            LoadSel();
+            lastSelIndex = lb.SelectedIndex;
+        }
+
+        private void RestoreSel()
+        {
+            if (dirty && MessageBox.Show(this, "还原会丢掉当前未保存的改动，继续吗？",
+                "未保存的改动", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            LoadSel();
+            lastSelIndex = lb.SelectedIndex;
         }
 
         private void LoadSel()
@@ -3134,6 +3417,7 @@ namespace Installer
             Profile p = Sel();
             if (p == null) return;
             if (dirty && MessageBox.Show("这个方案有改过但没保存，套用会丢掉这些改动。继续？", "未保存", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            dirty = false;                 // 已经由用户确认；避免关闭时再问一次
             owner.ApplyProfileByName(p.Name);
             Close();
         }

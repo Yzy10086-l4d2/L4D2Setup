@@ -5,5 +5,5 @@ using System.Reflection;
 [assembly: AssemblyProduct("网吧装机台")]
 [assembly: AssemblyCompany("L4D2 扩展平台")]
 [assembly: AssemblyCopyright("")]
-[assembly: AssemblyVersion("2.31.0.0")]
-[assembly: AssemblyFileVersion("2.31.0.0")]
+[assembly: AssemblyVersion("2.32.0.0")]
+[assembly: AssemblyFileVersion("2.32.0.0")]

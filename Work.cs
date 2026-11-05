@@ -15,6 +15,13 @@ namespace Installer
         /// 每个安装函数都要照顾这个开关，日志里也要说清楚"跳过了"还是"覆盖了"。
         /// </summary>
         public static bool Overwrite;
+
+        /// <summary>
+        /// 用户请求停止后续安装。复制在文件边界安全停下，已经写完的文件保留；
+        /// 不在这里做回滚，界面必须明确告诉用户“停止不等于还原”。
+        /// </summary>
+        public static volatile bool CancelRequested;
+
         public static int SelfTest(string gameRootHint)
         {
             StringBuilder sb = new StringBuilder();
@@ -146,6 +153,7 @@ namespace Installer
             int total = files.Length, done = 0, skip = 0, write = 0;
             foreach (string f in files)
             {
+                if (CancelRequested) { Core.Log("WARN", "收到停止请求：平台文件在本文件结束后停止复制"); break; }
                 try
                 {
                     string rel = f.Substring(payload.Length).TrimStart('\\');
@@ -486,6 +494,19 @@ namespace Installer
                     new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = degree },
                     it =>
                     {
+                        if (CancelRequested)
+                        {
+                            bool reportCancel = false;
+                            lock (gate)
+                            {
+                                s++;
+                                done += it.Size;
+                                long tnow = sw.ElapsedMilliseconds;
+                                if (tnow - lastReport >= 120) { lastReport = tnow; reportCancel = true; }
+                            }
+                            if (reportCancel && progress != null) progress(done, total);
+                            return;
+                        }
                         string d = Path.Combine(addons, it.Name);
                         string why;
                         bool good = it.IsArchive

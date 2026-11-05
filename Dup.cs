@@ -99,7 +99,9 @@ namespace Installer
             }
             if (seen.Count == 0) { note = "都算不出来：" + note; return "unknown"; }
             if (seen.Count > 1) return "diff";
-            if (unknown > 0) { note = "有 " + unknown + " 个没核对成功"; return "same"; }
+            // 只核对了其中一部分，不能把“能读的几份一样”升级成“整组完全相同”。
+            // 这是删除前置判断，宁可多一次人工确认，也不能给错结论。
+            if (unknown > 0) { note = "有 " + unknown + " 个没核对成功"; return "partial"; }
             return "same";
         }
 
@@ -125,6 +127,14 @@ namespace Installer
                 string v1 = Check(g, out note);
                 if (v1 != "same") { bad++; Core.Log("FAIL", "DUPSELF 同样的两份应该判 same，实际 " + v1); }
                 else Core.Log("OK", "DUPSELF 同样的两份 → same");
+
+                // 有一份读不出来时，绝不能把“能读的两份一样”当成整组相同；这是删除前判断。
+                ModItem missing = TempItem(dir, "missing.vpk", data.Length);
+                g.Items.Add(missing);
+                string vPartial = Check(g, out note);
+                if (vPartial != "partial") { bad++; Core.Log("FAIL", "DUPSELF 有文件读不出应判 partial，实际 " + vPartial); }
+                else Core.Log("OK", "DUPSELF 部分文件读不出 → partial");
+                g.Items.Remove(missing);
 
                 data[100] ^= 0xFF;
                 File.WriteAllBytes(Path.Combine(dir, "b.vpk"), data);
@@ -229,7 +239,7 @@ namespace Installer
             FlatButton bVerify = new FlatButton(); bVerify.Text = "核对内容";
             bVerify.SetBounds(14, 470, 96, Theme.H);
             bVerify.Click += delegate { Verify(); };
-            tipsSet(bVerify, "算一遍内容指纹（独立 vpk 用 SHA256，rar 里用 CRC32，不重新解包）。\r\n一样就说明是同一个文件的两份拷贝。");
+            tipsSet(bVerify, "算一遍内容指纹（独立 vpk、zip / rar 内条目统一用 CRC32）。\r\n只有整组都核对成功且一致，才会标成“内容完全相同”。");
             Controls.Add(bVerify);
 
             FlatButton bSkip = new FlatButton(); bSkip.Text = "这次不装";
@@ -281,6 +291,7 @@ namespace Installer
                 string head = Core.Human(g.Size) + " · " + g.Items.Count + " 个 · "
                             + (g.Verdict == "same" ? "内容完全相同（可以删）"
                                : g.Verdict == "diff" ? "内容不同（不是重复）"
+                               : g.Verdict == "partial" ? "只核对了部分文件（不能判定相同）"
                                : g.Verdict == "unknown" ? "没核对成功"
                                : "可能重复");
                 ListViewGroup lg = new ListViewGroup(head);
@@ -360,7 +371,7 @@ namespace Installer
             Cursor = Cursors.WaitCursor;
             try
             {
-                int same = 0, diff = 0, unk = 0, i = 0;
+                int same = 0, diff = 0, unk = 0, partial = 0, i = 0;
                 foreach (DupGroup g in targets)
                 {
                     i++;
@@ -374,14 +385,19 @@ namespace Installer
                     g.VerdictNote = note;
                     if (g.Verdict == "same") same++;
                     else if (g.Verdict == "diff") diff++;
+                    else if (g.Verdict == "partial") partial++;
                     else unk++;
                     Core.Log("INFO", "DUPCHECK " + Core.Human(g.Size) + " x" + g.Items.Count + " → "
-                        + (g.Verdict == "same" ? "内容完全相同" : g.Verdict == "diff" ? "内容不同" : "没核对成功")
+                        + (g.Verdict == "same" ? "内容完全相同"
+                            : g.Verdict == "diff" ? "内容不同"
+                            : g.Verdict == "partial" ? "部分文件未核对成功"
+                            : "没核对成功")
                         + (note.Length > 0 ? "（" + note + "）" : ""));
                 }
                 Rebuild();
                 status.Text = "核对完 " + targets.Count + " 组：完全相同 " + same + " 组，内容不同 " + diff
-                            + " 组" + (unk > 0 ? "，" + unk + " 组没核对成功" : "") + "。";
+                            + " 组" + (partial > 0 ? "，" + partial + " 组只核对了部分文件" : "")
+                            + (unk > 0 ? "，" + unk + " 组没核对成功" : "") + "。";
                 status.ForeColor = diff > 0 ? Theme.Warn : Theme.Ok;
             }
             finally { Cursor = Cursors.Default; }
@@ -426,13 +442,22 @@ namespace Installer
             long total = 0;
             foreach (ModItem m in ok) { sb.AppendLine("· " + m.Name + "    " + Where(m)); total += m.Size; }
 
+            int unverified = 0;
+            foreach (DupGroup g in groups)
+            {
+                if (g.Verdict == "same") continue;
+                foreach (ModItem m in ok) if (g.Items.Contains(m)) { unverified++; break; }
+            }
+
             // 危险操作：把要动的每一个文件列出来，让人看清楚再点
             if (MessageBox.Show(this,
-                "把下面 " + ok.Count + " 个文件（合计 " + Core.Human(total) + "）从 U 盘库直接删掉？\r\n\r\n"
+                (unverified > 0 ? "注意：其中 " + unverified + " 组还没有确认内容完全相同。\r\n\r\n" : "")
+                + "把下面 " + ok.Count + " 个文件（合计 " + Core.Human(total) + "）从 U 盘库直接删掉？\r\n\r\n"
                 + sb.ToString() + "\r\n"
                 + (blocked > 0 ? "另有 " + blocked + " 个在压缩包里，这次不会动。\r\n\r\n" : "")
                 + "删了没法恢复。",
-                "确认删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                unverified > 0 ? "确认删除 · 有未核对项" : "确认删除",
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
 
             int done = 0;
             List<string> errs = new List<string>();
