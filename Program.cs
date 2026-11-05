@@ -57,15 +57,10 @@ namespace Installer
             string uiSize = "1280x900";
             string uiFilter = null;
             string uiDeep = null;
-            string uiCat = null;
-            bool uiScheme = false;
             bool uiProfile = false;
-            bool uiSync = false;
-            bool uiExpand = false;
             bool uiDeps = false;
             bool uiTree = false;
             string uiSelect = null;
-            bool uiMenu = false;
             bool uiSetCat = false;
             bool uiCatForm = false;
             bool uiAddons = false;
@@ -93,15 +88,10 @@ namespace Installer
                 else if (a.StartsWith("--uitsize=", StringComparison.OrdinalIgnoreCase)) uiSize = a.Substring(10);
                 else if (a.StartsWith("--uifilter=", StringComparison.OrdinalIgnoreCase)) uiFilter = a.Substring(11);
                 else if (a.StartsWith("--uideep=", StringComparison.OrdinalIgnoreCase)) uiDeep = a.Substring(9);
-                else if (a.StartsWith("--uicat=", StringComparison.OrdinalIgnoreCase)) uiCat = a.Substring(8);
-                else if (string.Equals(a, "--uischeme", StringComparison.OrdinalIgnoreCase)) uiScheme = true;
                 else if (string.Equals(a, "--uiprofile", StringComparison.OrdinalIgnoreCase)) uiProfile = true;
-                else if (string.Equals(a, "--uisync", StringComparison.OrdinalIgnoreCase)) uiSync = true;
-                else if (string.Equals(a, "--uiexpand", StringComparison.OrdinalIgnoreCase)) uiExpand = true;
                 else if (string.Equals(a, "--uideps", StringComparison.OrdinalIgnoreCase)) uiDeps = true;
                 else if (string.Equals(a, "--uitree", StringComparison.OrdinalIgnoreCase)) uiTree = true;
                 else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
-                else if (string.Equals(a, "--uimenu", StringComparison.OrdinalIgnoreCase)) uiMenu = true;
                 else if (string.Equals(a, "--uisetcat", StringComparison.OrdinalIgnoreCase)) uiSetCat = true;
                 else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
                 else if (string.Equals(a, "--uiaddons", StringComparison.OrdinalIgnoreCase)) uiAddons = true;
@@ -255,18 +245,13 @@ namespace Installer
                         if (i > 20 && f.Ready) break;
                     }
                     System.Windows.Forms.Application.DoEvents();
-                    if (uiCat != null) { f.UiTestCat(uiCat); System.Windows.Forms.Application.DoEvents(); }
                     if (uiParts != null) { f.UiTestParts(uiParts); System.Windows.Forms.Application.DoEvents(); }
                     if (uiTweaks != null) { f.UiTestTweaks(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiLaunch) { f.UiTestLaunch(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDup) { f.UiTestDup(); System.Windows.Forms.Application.DoEvents(); }
-                    if (uiScheme) { f.UiTestSchemeOnly(); System.Windows.Forms.Application.DoEvents(); }
-                    if (uiSync) { f.UiTestSync(); System.Windows.Forms.Application.DoEvents(); }
-                    if (uiExpand) { f.UiTestExpand(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiTree) { f.UiTestTree(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSelect != null) { f.UiTestSelect(uiSelect); System.Windows.Forms.Application.DoEvents(); }
-                    if (uiMenu) { f.UiTestMenu(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSetCat) { f.UiTestSetCat(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiCatForm) { f.UiTestCatForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiAddons) { f.UiTestAddonSwitch(); System.Windows.Forms.Application.DoEvents(); }

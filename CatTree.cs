@@ -1200,6 +1200,19 @@ namespace Installer
                 m.Items.Add(new ToolStripSeparator());
             }
             m.Items.Add("新建分支…", null, delegate { NewBranch(); });
+
+            // 库本身的活儿（导入、扫描范围、识别、去重）原来只在「分类页」的右键菜单里，
+            // 分类页撤掉后搬到这儿，不然这些功能就没入口了。
+            m.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem lib = new ToolStripMenuItem("MOD 库…");
+            lib.DropDownItems.Add("从文件夹导入…（vpk / rar / zip）", null, delegate { mf.BulkImport(); });
+            lib.DropDownItems.Add("库文件夹管理…（把电脑上任意目录加进扫描范围）", null, delegate { mf.ManageModDirs(); });
+            lib.DropDownItems.Add("识别压缩包内容（第一次慢，之后走缓存）", null, delegate { mf.ProbeArchivesUi(); });
+            lib.DropDownItems.Add("清理同名重复（每个名字留第一个）", null, delegate { mf.CleanDupMods(); });
+            lib.DropDownItems.Add(new ToolStripSeparator());
+            lib.DropDownItems.Add("重新扫描 MOD 库", null, delegate { mf.RescanMods(); });
+            m.Items.Add(lib);
+
             m.Show(at);
         }
 
@@ -2572,79 +2585,6 @@ namespace Installer
 {
     public partial class MainForm
     {
-        /// <summary>自测：右键菜单文案，以及「只装这个 MOD / 重命名」取的是不是右键那一行（而不是勾选）。</summary>
-        internal void UiTestMenu()
-        {
-            string cat = "枪械";
-            ShowCatView(cat);
-            Application.DoEvents();
-            CatView v;
-            if (!catViews.TryGetValue(cat, out v) || v.List == null)
-            { Core.Log("FAIL", "MENU 拿不到枪械列表"); return; }
-            ListView lv = v.List;
-            if (lv.Items.Count < 3) { Core.Log("FAIL", "MENU 行数太少 " + lv.Items.Count); return; }
-
-            int checkedRows = lv.CheckedItems.Count;
-            ContextMenuStrip cms = BuildRowMenu(lv);
-            string all = "";
-            foreach (ToolStripItem it in cms.Items)
-                all += (it is ToolStripSeparator ? " | " : it.Text + " · ");
-            Core.Log("INFO", "MENU 当时勾了 " + checkedRows + " 行，菜单：" + all);
-
-            // 选中第 3 行，勾选一个都不动 —— 看取值是不是跟着选中行走
-            lv.SelectedItems.Clear();
-            lv.Items[2].Selected = true;
-            lv.Items[2].Focused = true;
-            Application.DoEvents();
-
-            ModGroup rowGroup = lv.Items[2].Tag as ModGroup;
-            ModItem rowItem = lv.Items[2].Tag as ModItem;
-            string nm = rowGroup != null ? rowGroup.Name : lv.Items[2].Text;
-            List<ModItem> mine = RowItems(lv);
-            string names = "";
-            foreach (ModItem m in mine) names += m.Name + "、";
-            Core.Log("INFO", "MENU 右键行 = [" + nm + "]，取到 " + mine.Count + " 个 vpk：" + names);
-
-            bool ok = mine.Count > 0;
-            foreach (ModItem m in mine)
-            {
-                bool belong = (rowItem != null && rowItem.Key == m.Key);
-                if (rowGroup != null)
-                    foreach (ModItem p in rowGroup.Parts) if (p.Key == m.Key) belong = true;
-                if (!belong) ok = false;
-            }
-            if (!ok) Core.Log("FAIL", "MENU 取到的 vpk 不属于右键那一行（勾选优先的老毛病还在）");
-
-            bool hasOne = false, hasBatch = false;
-            foreach (ToolStripItem it in cms.Items)
-            {
-                if (it.Text != null && it.Text.StartsWith("只装这个 MOD")) hasOne = true;
-                if (it.Text != null && it.Text.StartsWith("只装勾中的这")) hasBatch = true;
-            }
-            if (!hasOne) Core.Log("FAIL", "MENU 没有「只装这个 MOD」");
-            if (checkedRows > 1 && !hasBatch) Core.Log("FAIL", "MENU 勾了 " + checkedRows + " 行却没有批量项");
-            if (checkedRows <= 1 && hasBatch) Core.Log("FAIL", "MENU 只勾 " + checkedRows + " 行却有批量项");
-            Core.Log("INFO", "MENU 单项=" + hasOne + " 批量项=" + hasBatch + "，重命名项文案="
-                + MenuTextOf(cms, "重命名"));
-
-            // 设置标签 → 设置 MOD 分类（点开是独立窗口，能选分类也能新建）
-            Core.Log(MenuTextOf(cms, "设置 MOD 分类") == "（没有）" ? "FAIL" : "OK",
-                "MENU 分类项文案=" + MenuTextOf(cms, "设置 MOD 分类"));
-            if (MenuTextOf(cms, "设置标签") != "（没有）") Core.Log("FAIL", "MENU 还留着「设置标签」");
-
-            lv.SelectedItems.Clear();
-            ShowTree();
-            Application.DoEvents();
-            Core.Log("INFO", "TREEMENU " + (treeView == null ? "（没有树）" : treeView.TreeMenuText()));
-        }
-
-        private static string MenuTextOf(ContextMenuStrip cms, string keyword)
-        {
-            foreach (ToolStripItem it in cms.Items)
-                if (it.Text != null && it.Text.IndexOf(keyword, StringComparison.Ordinal) >= 0) return it.Text;
-            return "（没有）";
-        }
-
         /// <summary>自测：「设置 MOD 分类」这条路走一遍 —— 人工归类要真的进树，测完原样还原。</summary>
         internal void UiTestSetCat()
         {
