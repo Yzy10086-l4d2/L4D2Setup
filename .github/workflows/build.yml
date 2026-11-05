@@ -1,0 +1,56 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 取源码
+        uses: actions/checkout@v4
+
+      # 和 build.bat 完全一致：用 Windows 自带的 csc.exe，
+      # 不需要 .NET SDK、不需要 NuGet、不联网还原依赖。
+      - name: 编译
+        shell: cmd
+        run: |
+          set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          if not exist "%CSC%" (
+            echo [X] csc.exe not found - needs .NET Framework 4.x
+            exit /b 1
+          )
+          "%CSC%" /nologo /codepage:65001 /target:winexe /optimize+ /out:L4D2Setup.exe /win32icon:app.ico ^
+            /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll ^
+            /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll ^
+            /reference:System.IO.Compression.FileSystem.dll ^
+            AssemblyInfo.cs Theme.cs Program.cs Core.cs Launch.cs Dup.cs Catalog.cs Parts.cs ^
+            CatPrefs.cs Tweaks.cs Work.cs Mods.cs Identify.cs SelfTest.cs CatTree.cs CatView.cs Ui.cs
+          if errorlevel 1 exit /b 1
+          dir L4D2Setup.exe
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: L4D2Setup
+          path: L4D2Setup.exe
+          if-no-files-found: error
+
+      - name: 打 tag 时发 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" L4D2Setup.exe \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "由 GitHub Actions 自动编译，与源码同一提交；校验哈希见下方附件信息。"
