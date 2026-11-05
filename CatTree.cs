@@ -552,11 +552,15 @@ namespace Installer
         private readonly FlatButton btnPick;
         private readonly FlatButton btnCat;                // 未归类页的手动入口：指定「算哪类 + 替换什么」
         private readonly FlatButton btnDeploy;             // 「只装这里」：只铺当前分支勾上的 vpk
+        private readonly FlatButton btnApply;               // 「应用改动」：把攒下的开关改动写进 addonlist
 
         private List<Slot> slots = new List<Slot>();
         private int unmatched;                       // 一个位置都归不上的 MOD 数
         private readonly List<ModGroup> unmatchedGroups = new List<ModGroup>();   // 具体是哪几组（未归类页列出来）
         private readonly HashSet<string> folded = new HashSet<string>(StringComparer.Ordinal);
+        // 界面上点了开关、但还没写进 addonlist.txt 的改动：vpk 名 → 是否开。
+        // 攒着不写是为了「点错能反悔」，也避免每点一次就动一次游戏文件；最后统一按「应用改动」落地。
+        private readonly Dictionary<string, bool> pending = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private string selKey = "";
 
         public string SelectedKey { get { return selKey; } }
@@ -586,6 +590,8 @@ namespace Installer
                 if (e.Button != MouseButtons.Left) return;      // 右键只是弹菜单，别顺手换掉 MOD
                 ListViewItem li = lv.GetItemAt(e.X, e.Y);
                 if (li == null) return;
+                // 点「开关」那一列 = 只翻 addonlist 的 1/0，不换 MOD；点别处还是老行为（换掉这个位置）
+                if (ColAt(lv, e.X) == 4) { ToggleSwitch(li.Tag as ModGroup); return; }
                 Choose(li.Tag as ModGroup);
             };
             lv.MouseDown += delegate(object s, MouseEventArgs e)
@@ -614,6 +620,7 @@ namespace Installer
                 if (e.Button != MouseButtons.Left) return;
                 ListViewItem li = lvExtra.GetItemAt(e.X, e.Y);
                 if (li == null) return;
+                if (ColAt(lvExtra, e.X) == 4) { ToggleSwitch(li.Tag as ModGroup); return; }   // 开关列：只翻开关
                 ToggleExtra(li.Tag as ModGroup);
             };
             lvExtra.Resize += delegate { LayoutCols(); };
@@ -673,6 +680,15 @@ namespace Installer
             btnDeploy.Click += delegate { DeployHere(); };
             Controls.Add(btnDeploy);
 
+            // 「应用改动」：开关点了一堆但还没落盘时出现在右下角，兜底一次性写进 addonlist.txt。
+            // 不自动写是为了点错能反悔，也避免每点一下都动一次游戏文件。
+            btnApply = new FlatButton();
+            btnApply.Text = "应用改动";
+            btnApply.SetBounds(0, 0, 104, Theme.H);
+            btnApply.Visible = false;
+            btnApply.Click += delegate { ApplyHere(); };
+            Controls.Add(btnApply);
+
             Resize += delegate { LayoutSelf(); };
             LayoutSelf();
         }
@@ -699,18 +715,62 @@ namespace Installer
             v.Columns.Add(firstCol, 380);
             v.Columns.Add("改了什么", 100);
             v.Columns.Add("大小", 74).TextAlign = HorizontalAlignment.Right;
-            v.Columns.Add("状态", 78);                       // 装了没 / 装了但关着
+            v.Columns.Add("已装", 84);                        // 游戏 addons 里有没有这一份
+            v.Columns.Add("开关", 58);                        // addonlist 里是 1 还是 0（点一下能翻）
             return v;
         }
 
-        /// <summary>候选行的「状态」格：和分类列表同一套判定，只上字色不上底色（方案树有自绘选中行）。</summary>
-        private static void AddStateCell(ListViewItem li, ModGroup g)
+        /// <summary>两列状态：3=已装（在不在游戏里）、4=开关（1/0，可点）。同一条判定给分类列表也用了。</summary>
+        private void AddStateCells(ListViewItem li, ModGroup g)
         {
-            Color ink, bg;
-            string s = MainForm.StatusOf(g, out ink, out bg);
-            li.SubItems.Add(s);
-            li.SubItems[3].ForeColor = ink;
+            li.SubItems.Add("");
+            li.SubItems.Add("");
+            ApplyStateCells(li, g);
+        }
+
+        /// <summary>只改两列的文字与颜色，不动整行结构 —— 点开关时用它，列表不重排、滚动位置不跳。</summary>
+        private void ApplyStateCells(ListViewItem li, ModGroup g)
+        {
+            if (li.SubItems.Count < 5) return;
+            int total, inst, on, game;
+            MainForm.CountState(g, out total, out inst, out on, out game);
+            int shownOn = 0, ins = 0;
+            foreach (ModItem p in g.Parts)
+            {
+                if (!(p.FromGame || p.Installed)) continue;
+                ins++;
+                if (PendingOf(p)) shownOn++;
+            }
+
+            // 已装列
+            string instText; Color instInk;
+            if (inst == 0) { instText = "未装"; instInk = Theme.Ink3; }
+            else if (inst < total) { instText = "部分 " + inst + "/" + total; instInk = Theme.Info; }
+            else if (game == total) { instText = "仅游戏内"; instInk = Theme.Ink2; }
+            else { instText = "已装"; instInk = Theme.Ok; }
+
+            // 开关列：只有装进去的才谈得上开关
+            string swText; Color swInk; Color rowBg;
+            if (ins == 0) { swText = "—"; swInk = Theme.Ink3; rowBg = Theme.Surface; }
+            else if (shownOn == ins) { swText = "开"; swInk = Theme.Ok; rowBg = Theme.RowOn; }
+            else if (shownOn == 0) { swText = "关"; swInk = Theme.Warn; rowBg = Theme.RowOff; }
+            else { swText = shownOn + "/" + ins; swInk = Theme.Warn; rowBg = Theme.RowOff; }
+
+            li.SubItems[3].Text = instText;
+            li.SubItems[3].ForeColor = instInk;
             li.SubItems[3].Font = Theme.UISmall;
+            li.SubItems[4].Text = swText;
+            li.SubItems[4].ForeColor = swInk;
+            li.SubItems[4].Font = Theme.UIBold;
+            if (li.BackColor != rowBg) li.BackColor = rowBg;
+        }
+
+        /// <summary>这个 vpk 现在的开关值：还没应用的改动优先，否则读扫描到的实际值。</summary>
+        private bool PendingOf(ModItem p)
+        {
+            bool v;
+            if (pending.TryGetValue(p.Name, out v)) return v;
+            return p.AddonOn;
         }
 
         private static void SelectRow(ListView v, MouseEventArgs e)
@@ -1125,11 +1185,88 @@ namespace Installer
                     "没有可装的东西", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            mf.DeploySlot(sel, off, s.Name);
+            mf.DeploySlot(sel, off, s.Name, new Dictionary<string, bool>(pending), delegate
+            {
+                // 「只装这里」把攒下的开关改动一起写了，这里清账
+                pending.Clear();
+                RefreshSwitchCells();
+                UpdateApplyButton();
+            });
+        }
+
+        /// <summary>鼠标 x 落在第几列（客户区坐标）。列宽是自适应的，没有横向滚动。</summary>
+        private static int ColAt(ListView v, int x)
+        {
+            int acc = 0;
+            for (int i = 0; i < v.Columns.Count; i++)
+            {
+                acc += v.Columns[i].Width;
+                if (x < acc) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>点「开关」列：把这个 MOD 在 addonlist 里的 1/0 翻过来（先攒在 pending，不立刻写文件）。</summary>
+        private void ToggleSwitch(ModGroup g)
+        {
+            if (g == null) return;
+            List<ModItem> ins = new List<ModItem>();
+            foreach (ModItem p in g.Parts) if (p.FromGame || p.Installed) ins.Add(p);
+            if (ins.Count == 0)
+            {
+                MessageBox.Show("这个 MOD 还没进游戏根目录，没得开关。\r\n\r\n先点走它装进去（或点「只装这里」），再来切开关。",
+                    "还没装", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            bool allOn = true;
+            foreach (ModItem p in ins) if (!PendingOf(p)) { allOn = false; break; }
+            bool target = !allOn;
+            foreach (ModItem p in ins) pending[p.Name] = target;
+            RefreshSwitchCells();
+            UpdateApplyButton();
+            lblFoot.Text = target
+                ? "已标记为「开」· 点右下角「应用改动」才写进游戏"
+                : "已标记为「关」· 点右下角「应用改动」才写进游戏";
+        }
+
+        /// <summary>只重画受影响的两列文字和底色，不重建列表 —— 点开关时滚动位置不跳。</summary>
+        private void RefreshSwitchCells()
+        {
+            if (lv != null)
+                foreach (ListViewItem li in lv.Items)
+                {
+                    ModGroup g = li.Tag as ModGroup;
+                    if (g != null) ApplyStateCells(li, g);
+                }
+            if (lvExtra != null)
+                foreach (ListViewItem li in lvExtra.Items)
+                {
+                    ModGroup g = li.Tag as ModGroup;
+                    if (g != null) ApplyStateCells(li, g);
+                }
+        }
+
+        private void UpdateApplyButton()
+        {
+            if (btnApply == null) return;
+            bool has = pending.Count > 0;
+            btnApply.Text = has ? "应用改动 " + pending.Count : "应用改动";
+            if (btnApply.Visible != has) { btnApply.Visible = has; LayoutSelf(); }
+        }
+
+        private void ApplyHere()
+        {
+            if (pending.Count == 0) return;
+            if (!mf.ApplySwitches(new Dictionary<string, bool>(pending))) return;
+            pending.Clear();
+            RefreshSwitchCells();
+            UpdateApplyButton();
+            FillDetail();                      // 底部说明与统计回到正常态
         }
 
         private void FillDetail()
         {
+            UpdateApplyButton();               // 攒着的开关改动跨位置、跨页签都算，跟着按钮显示数量
             if (selKey == "#unmatched")
             {
                 if (btnDeploy != null) btnDeploy.Visible = false;
@@ -1174,7 +1311,7 @@ namespace Installer
                     ListViewItem li = new ListViewItem(g.Name);
                     li.SubItems.Add(KindsOf(g));
                     li.SubItems.Add(Core.Human(g.Size));
-                    AddStateCell(li, g);
+                    AddStateCells(li, g);
                     li.StateImageIndex = on ? 1 : 0;
                     if (on) li.Font = Theme.UIBold;
                     li.Tag = g;
@@ -1245,7 +1382,7 @@ namespace Installer
                         ListViewItem li = new ListViewItem(g.Name);
                         li.SubItems.Add(KindsOf(g));
                         li.SubItems.Add(Core.Human(g.Size));
-                        AddStateCell(li, g);
+                        AddStateCells(li, g);
                         li.StateImageIndex = on ? 1 : 0;
                         if (on) li.Font = Theme.UIBold;
                         li.Tag = g;
@@ -1320,7 +1457,7 @@ namespace Installer
             ListViewItem li = new ListViewItem((inClan ? "└ " : "") + g.Name);
             li.SubItems.Add(KindsOf(g));
             li.SubItems.Add(Core.Human(g.Size));
-            AddStateCell(li, g);
+            AddStateCells(li, g);
             li.StateImageIndex = on ? 1 : 0;
             if (on) li.Font = Theme.UIBold;
             li.Tag = g;
@@ -1448,13 +1585,18 @@ namespace Installer
             }
 
             if (btnPick != null) btnPick.SetBounds(x + 16, H - 34, 76, Theme.H);
-            // 右下角两个按钮互斥：「指定位置…」只在未归类页，「只装这里」只在有勾选的槽位
+            // 右下角按需出现，从右往左排：「指定位置…」只在未归类页，「应用改动」在攒了改动时，
+            // 「只装这里」在这个位置有勾选时。脚注按实际占用让位。
             bool catBtn = btnCat != null && btnCat.Visible;
             bool depBtn = btnDeploy != null && btnDeploy.Visible;
-            if (btnCat != null) btnCat.SetBounds(x + rightW - 116, H - 34, 100, Theme.H);
-            if (btnDeploy != null) btnDeploy.SetBounds(x + rightW - 108, H - 34, 92, Theme.H);
+            bool appBtn = btnApply != null && btnApply.Visible;
+            int edge = x + rightW - 8;
+            int used = 0;
+            if (catBtn) { btnCat.SetBounds(edge - 100, H - 34, 100, Theme.H); edge -= 108; used += 108; }
+            if (appBtn) { btnApply.SetBounds(edge - 104, H - 34, 104, Theme.H); edge -= 112; used += 112; }
+            if (depBtn) { btnDeploy.SetBounds(edge - 92, H - 34, 92, Theme.H); edge -= 100; used += 100; }
             if (lblFoot != null)
-                lblFoot.SetBounds(x + 16, H - 30, Math.Max(60, rightW - 32 - (catBtn || depBtn ? 116 : 0)), 18);
+                lblFoot.SetBounds(x + 16, H - 30, Math.Max(60, rightW - 32 - used), 18);
             LayoutCols();
         }
 
@@ -1468,12 +1610,16 @@ namespace Installer
         {
             if (v == null || v.Columns.Count < 3) return;
             int w = v.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8;
-            const int kindW = 100, sizeW = 74, stateW = 78;
-            int nameW = Math.Max(140, w - kindW - sizeW - stateW);
+            const int kindW = 100, sizeW = 74, instW = 84, swW = 58;
+            int nameW = Math.Max(120, w - kindW - sizeW - instW - swW);
             v.Columns[0].Width = nameW;
             v.Columns[1].Width = kindW;
             v.Columns[2].Width = sizeW;
-            if (v.Columns.Count >= 4) v.Columns[3].Width = stateW;
+            if (v.Columns.Count >= 5)
+            {
+                v.Columns[3].Width = instW;
+                v.Columns[4].Width = swW;
+            }
         }
     }
 

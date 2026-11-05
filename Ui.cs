@@ -2437,10 +2437,56 @@ namespace Installer
         }
 
         /// <summary>
+        /// 「应用改动」：把方案树里点出来的开关改动一次性写进 left4dead2\addonlist.txt。
+        /// 只改这几行的 1/0，vpk 文件一个都不碰；写之前原文件备份成 addonlist.txt.装之前。
+        /// 不动内存里的库扫描结果，只把 AddonOn 对齐，所以点完立刻生效、不用重扫。
+        /// </summary>
+        internal bool ApplySwitches(Dictionary<string, bool> st)
+        {
+            if (st == null || st.Count == 0) return false;
+            string root = txtGame.Text.Trim();
+            if (!Core.TestGame(root)) { MessageBox.Show("这个目录里没有 left4dead2.exe，先选对游戏根目录。", "路径不对"); return false; }
+            if (!TestWritable(root))
+            {
+                MessageBox.Show("这个游戏目录写不进去（可能只读、被占用或权限不足）。\r\n可以试试以管理员身份运行。", "目录不可写");
+                return false;
+            }
+            int on = 0;
+            foreach (KeyValuePair<string, bool> kv in st) if (kv.Value) on++;
+            try
+            {
+                string bak = AddonList.Write(root, st);
+                Core.Log("OK", "应用开关改动 " + st.Count + " 处（开 " + on + "、关 " + (st.Count - on)
+                    + "），原文件备份 " + Path.GetFileName(bak));
+
+                // 只改了开关，文件没动：直接对齐内存里的值，省一次全库重扫
+                foreach (ModGroup g in Catalog.Groups)
+                    foreach (ModItem p in g.Parts)
+                    {
+                        bool v;
+                        if (st.TryGetValue(p.Name, out v)) p.AddonOn = v;
+                    }
+                RefreshMods();
+                RefreshConflicts(true);
+                SetStatus(GameRunning()
+                    ? "已应用 " + st.Count + " 处 · 游戏开着，重启后才生效"
+                    : "已应用 " + st.Count + " 处开关改动");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "应用开关改动失败: " + ex.Message);
+                MessageBox.Show("写不进 addonlist.txt：" + ex.Message + "\r\n\r\n可以试试以管理员身份运行。", "出错了",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 方案树「只装这里」：只把这个分支选中的 vpk 铺进游戏，别的位置一个都不动。
         /// 与整机装机的区别：不碰 L4N / dxvk / 素材包 / 参数配置，不改全局勾选，也不写整机清单。
         /// </summary>
-        internal void DeploySlot(List<ModItem> sel, List<ModItem> off, string slotName)
+        internal void DeploySlot(List<ModItem> sel, List<ModItem> off, string slotName, Dictionary<string, bool> extra, Action onDone)
         {
             string root = txtGame.Text.Trim();
             if (!Core.TestGame(root)) { MessageBox.Show("这个目录里没有 left4dead2.exe，先选对游戏根目录。", "路径不对"); return; }
@@ -2461,6 +2507,8 @@ namespace Installer
                      + "· 铺 " + sel.Count + " 个文件，共 " + Core.Human(need) + "\r\n";
             if (off.Count > 0)
                 q += "· 关掉这个位置之前装的 " + off.Count + " 个（文件保留，想用回来点一下就行）\r\n";
+            if (extra != null && extra.Count > 0)
+                q += "· 另有 " + extra.Count + " 处开关改动一并写入 addonlist\r\n";
             q += "· 其它位置、L4N / dxvk / 参数配置一律不动\r\n\r\n继续吗？";
             if (MessageBox.Show(q, "只装这个位置", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
 
@@ -2485,6 +2533,7 @@ namespace Installer
                     }, out copied, out skipped, out added, out failed);
 
                     Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                    if (extra != null) foreach (KeyValuePair<string, bool> kv in extra) st[kv.Key] = kv.Value;
                     foreach (ModItem it in sel) st[it.Name] = true;
                     foreach (ModItem it in off) st[it.Name] = false;
                     string bak = AddonList.Write(root, st);
@@ -2496,6 +2545,7 @@ namespace Installer
                     {
                         // 状态列是现读 addons + addonlist 得出的，装完必须重扫，否则列里还是旧状态
                         try { Core.ScanMods(); } catch (Exception exs) { Core.Log("WARN", "装完重扫失败: " + exs.Message); }
+                        if (onDone != null) onDone();      // 界面上攒的开关改动已经连同这次一起写进去了
                         RefreshMods();
                         RefreshConflicts(true);
                         SetBusy(false);
