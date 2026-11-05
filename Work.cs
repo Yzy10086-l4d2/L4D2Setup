@@ -257,9 +257,6 @@ namespace Installer
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 string dst = Path.Combine(dir, "autoexec.cfg");
                 if (!Overwrite && Core.SameFile(src, dst)) { Core.Log("OK", "autoexec.cfg 已是最新，跳过"); return true; }
-                // .装之前 只在第一次留：它是"这台机器原本的样子"，第二次装机不该冲掉它
-                if (File.Exists(dst) && !File.Exists(dst + ".装之前")) File.Copy(dst, dst + ".装之前", true);
-                if (File.Exists(dst)) File.Copy(dst, dst + ".上一次", true);
                 Core.CopyOne(src, dst);
                 Core.Log("OK", "autoexec.cfg 已放进 left4dead2\\cfg");
                 return true;
@@ -298,7 +295,6 @@ namespace Installer
                 string dst = Path.Combine(Path.Combine(Path.Combine(gameRoot, "bin\\neko"), "mqcore"), "mqcam_state.ini");
                 if (!File.Exists(clean)) { Core.Log("WARN", "没有 mqcam_state_clean.ini，跳过相机归零"); return; }
                 if (!Directory.Exists(Path.GetDirectoryName(dst))) return;
-                if (File.Exists(dst)) File.Copy(dst, dst + ".装之前", true);
                 File.Copy(clean, dst, true);
                 Core.Log("OK", "相机偏移已归零（F2/F3 从默认位置开始）");
             }
