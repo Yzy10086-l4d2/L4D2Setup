@@ -16,7 +16,7 @@ namespace Installer
         private CheckBox chkL4N, chkSkeeto, chkAsset, chkMqcam, chkDxvk, chkLaunch, chkCfg, chkSwap, chkStrict;
         private RadioButton rdSkip, rdOver;
         private ComboBox cboTweak;
-        private FlatButton btnTweak, btnTweakRestore;
+        private FlatButton btnTweak;
         private FlatButton btnLaunchEdit;
         private TextBox txtLaunch;
         private ComboBox cboProfile;
@@ -189,7 +189,7 @@ namespace Installer
             cboMode.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboMode);
             cboMode.Items.Add("U 盘模式"); cboMode.Items.Add("本地模式");
             cboMode.SelectedIndexChanged += delegate { OnModeChanged(); };
-            tips.SetToolTip(cboMode, "U 盘模式：U 盘库是主，装 MOD = 从库里复制到游戏。\r\n游戏目录里和库里同名同大小的那份会合并显示（标「已装」），不再重复列。\r\n本地模式：不扫 U 盘库，游戏目录 addons 直接当库；删除 = 从游戏里卸掉（文件进回收目录）。");
+            tips.SetToolTip(cboMode, "U 盘模式：U 盘库是主，装 MOD = 从库里复制到游戏。\r\n游戏目录里和库里同名同大小的那份会合并显示（标「已装」），不再重复列。\r\n本地模式：不扫 U 盘库，游戏目录 addons 直接当库；删除 = 从游戏里卸掉（文件真删）。");
             Controls.Add(cboMode);
             btnBrowse = new FlatButton(); btnBrowse.Text = "浏览…"; btnBrowse.SetBounds(W - Theme.M - 84 - 8 - 84, 16, 84, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
             btnFind = new FlatButton(); btnFind.Text = "自动找"; btnFind.SetBounds(W - Theme.M - 84, 16, 84, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
@@ -259,10 +259,8 @@ namespace Installer
             cboTweak.SelectedIndexChanged += delegate { UpdateTweakTip(); };
             gOpt.Controls.Add(cboTweak);
             tips.SetToolTip(cboTweak, "装机时勾着「写参数配置」，就会把这套 autoexec.cfg + skeeto_setting.ini 推过去。");
-            btnTweakRestore = new FlatButton(); btnTweakRestore.Text = "还原"; btnTweakRestore.SetBounds(230, 106, 44, Theme.H); btnTweakRestore.Font = Theme.UISmall; btnTweakRestore.Click += delegate { RestoreTweaks(); }; gOpt.Controls.Add(btnTweakRestore);
-            tips.SetToolTip(btnTweakRestore, "把这台机器的 autoexec.cfg 和 skeeto_setting.ini 回滚到装机之前。");
-            btnTweak = new FlatButton(); btnTweak.Text = "参数配置…"; btnTweak.SetBounds(278, 106, 90, Theme.H); btnTweak.Click += delegate { ManageTweaks(); }; gOpt.Controls.Add(btnTweak);
-            tips.SetToolTip(btnTweak, "保存这台机器调好的参数 / 套用存档 / 还原 / 删除存档。");
+            btnTweak = new FlatButton(); btnTweak.Text = "参数配置…"; btnTweak.SetBounds(230, 106, 90, Theme.H); btnTweak.Click += delegate { ManageTweaks(); }; gOpt.Controls.Add(btnTweak);
+            tips.SetToolTip(btnTweak, "保存这台机器调好的参数 / 套用存档 / 删除存档。");
 
             // ---- 左栏下：日志 ----
             Section gl = new Section();
@@ -496,14 +494,6 @@ namespace Installer
         private void UpdateTweakTip()
         {
             string n = TweakName();
-            bool canRestore = false;
-            try
-            {
-                string r = txtGame == null ? "" : txtGame.Text.Trim();
-                canRestore = r.Length > 0 && Core.TestGame(r) && Tweaks.RestorableCount(r) > 0;
-            }
-            catch { }
-            btnTweakRestore.Enabled = canRestore;
             tips.SetToolTip(cboTweak, n.Length == 0
                 ? "不套用存档。勾着「写参数配置」时会退回旧做法：搬 U 盘根目录的 autoexec.cfg。"
                 : ("装机时写入：" + Tweaks.DirOf(n)));
@@ -544,24 +534,6 @@ namespace Installer
                 FillTweaks(f.Chosen);
                 if (f.Applied) { chkCfg.Checked = true; Log("参数配置动过了，装机时会写进这台机器"); }
             }
-        }
-
-        private void RestoreTweaks()
-        {
-            string root = txtGame.Text.Trim();
-            if (!Core.TestGame(root)) { MessageBox.Show("先在上面选对游戏目录。", "没有游戏目录"); return; }
-            int can = Tweaks.RestorableCount(root);
-            if (can == 0)
-            {
-                MessageBox.Show("这台机器上没有 .装之前 / .上一次 备份，没东西可还原。\r\n\r\n（备份是在装机写参数、或在「参数配置」里套用存档时自动留的）", "没有备份");
-                return;
-            }
-            if (MessageBox.Show("把 autoexec.cfg 和 skeeto_setting.ini 回滚到装机之前？\r\n\r\n" + can + " 项可还原，现在这份会留成 .还原前。\r\n只回滚这两个文件，不动平台和 MOD。",
-                                "还原参数配置", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-            List<string> lines;
-            int n = Tweaks.Restore(root, out lines);
-            UpdateTweakTip();
-            MessageBox.Show((n > 0 ? "已还原 " + n + " 项：\r\n" : "没还原成功：\r\n") + string.Join("\r\n", lines.ToArray()), "还原");
         }
 
         private void FillProfiles()
@@ -651,7 +623,7 @@ namespace Installer
                 }
                 string root = txtGame.Text.Trim();
                 Core.Log("INFO", "TWEAKTEST 存档 " + Tweaks.List().Count + " 套，当前选 " + TweakName()
-                    + "，可还原 " + (Core.TestGame(root) ? Tweaks.RestorableCount(root) : -1) + " 项，存档根 " + Tweaks.Root);
+                    + "，存档根 " + Tweaks.Root);
                 tf.Close();
             }
         }
@@ -883,7 +855,7 @@ namespace Installer
             cms.Items.Add("放进我的分支…（认不出改什么的，自己归一组）", null, delegate { PutIntoBranchIn(lv); });
             cms.Items.Add("从这个分支移出（文件不动）", null, delegate { TakeOutOfBranchIn(lv); });
             cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
-            cms.Items.Add("删除这个 MOD → 回收目录（可反悔）", null, delegate { DeleteInTree(lv); });
+            cms.Items.Add("删除这个 MOD（真删，不进回收目录）", null, delegate { DeleteInTree(lv); });
             cms.Items.Add(new ToolStripSeparator());
             cms.Items.Add("设置 MOD 分类…（算哪一类 / 替换什么）", null, delegate { SetModCatIn(lv); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
@@ -926,7 +898,7 @@ namespace Installer
         }
 
         /// <summary>
-        /// 方案树候选表里删一个 MOD：文件移进回收目录（可反悔），删完重扫，树留在原来那个位置。
+        /// 方案树候选表里删一个 MOD：文件直接删掉，删完重扫，树留在原来那个位置。
         /// 套装行删整套；展开出来的单件行只删那一个文件。
         /// </summary>
         internal void DeleteInTree(ListView lv)
@@ -946,20 +918,19 @@ namespace Installer
                 if (it.IsArchive) { MessageBox.Show("「" + it.Name + "」在压缩包里（" + it.Container + "），\r\n装机台不会去改压缩包。想删请自己在资源管理器里处理。", "不能删除"); return; }
                 if (it.FromGame && !Core.IsLocal) { MessageBox.Show("「" + it.Name + "」在游戏目录 addons 里。\r\nU 盘模式不动游戏目录的文件；要删它，把右上角切到「本地模式」再来。", "不能删除"); return; }
             }
-            string where = Core.IsLocal ? "回收目录（" + Core.RecycleDir + "）" : "U 盘 _回收的MOD";
             string tail = parts.Count > 1 ? "（整套 " + parts.Count + " 个 vpk）" : "";
             bool fromGame = parts.Exists(delegate(ModItem m) { return m.FromGame; });
-            if (MessageBox.Show("删除「" + name + "」" + tail + "？\r\n\r\n· 文件移到" + where + "\r\n· 不真删，想用可以再拖回来"
-                + (fromGame ? "\r\n· 这是游戏 addons 里的文件，移走 = 从游戏里卸掉" : ""),
+            if (MessageBox.Show("删除「" + name + "」" + tail + "？\r\n\r\n· 文件直接从磁盘删掉，删了就是没了"
+                + (fromGame ? "\r\n· 这是游戏 addons 里的文件，删掉 = 从游戏里卸掉" : ""),
                 "确认删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
 
             int n = 0;
             foreach (ModItem it in parts)
             {
-                try { if (Work.MoveModToRecycle(it) != null) { n++; checkedKeys.Remove(it.Key); } }
-                catch (Exception ex) { Core.Log("WARN", "移动 " + it.Name + " 失败: " + ex.Message); }
+                try { if (Work.DeleteMod(it) == null) { n++; checkedKeys.Remove(it.Key); } }
+                catch (Exception ex) { Core.Log("WARN", "删除 " + it.Name + " 失败: " + ex.Message); }
             }
-            Core.Log("OK", "方案树里删掉 " + n + " 个 vpk：" + name + "（" + where + "）");
+            Core.Log("OK", "方案树里删掉 " + n + " 个 vpk：" + name);
             Core.ScanMods();
             RefreshMods();
             RefreshConflicts();
@@ -1361,7 +1332,7 @@ namespace Installer
                 string one = dups[0].Items[0].Name;
                 if (one.Length > 26) one = one.Substring(0, 26) + "…";
                 lblConflict.Text = "⚠ " + dups.Count + " 组体积重复 · 最多白占 " + Core.Human(waste) + " · " + one + "\r\n"
-                                 + "点这里处理：先核对内容是不是同一个文件，再这次不装 / 移到回收站";
+                                 + "点这里处理：先核对内容是不是同一个文件，再决定这次不装 / 直接删掉";
             }
             else
             {
@@ -1421,22 +1392,23 @@ namespace Installer
             RefreshConflicts();
         }
 
-        /// <summary>把库里的一个 vpk 挪到 _回收的MOD。返回 null 表示成功。</summary>
+        /// <summary>把库里的一个 vpk 直接删掉。返回 null 表示成功。</summary>
         private string DeleteModFromLibrary(ModItem m)
         {
             if (m.IsArchive) return "在压缩包里，装机台不改压缩包";
             try
             {
-                Work.MoveModToRecycle(m);
+                string err = Work.DeleteMod(m);
+                if (err != null) return err;
                 Core.ModList.Remove(m);
                 Core.ByRel.Remove(m.Key);
                 checkedKeys.Remove(m.Key);
-                Core.Log("OK", "已移到 _回收的MOD：" + m.Name);
+                Core.Log("OK", "已删除：" + m.Name);
                 return null;
             }
             catch (Exception ex)
             {
-                Core.Log("WARN", "移动 " + m.Name + " 失败: " + ex.Message);
+                Core.Log("WARN", "删除 " + m.Name + " 失败: " + ex.Message);
                 return ex.Message;
             }
         }
@@ -1543,7 +1515,7 @@ namespace Installer
 
         internal void CleanDupMods()
         {
-            if (MessageBox.Show("扫描全库同名文件，每个名字只留第一个，其余移到 _回收的MOD？", "清理重复", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            if (MessageBox.Show("扫描全库同名文件，每个名字只留第一个，其余直接删掉（删了没法恢复）？", "清理重复", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             List<string> moved = Work.CleanDuplicateMods();
             Core.Log("OK", "清理重复: 移走 " + moved.Count + " 个");
             MessageBox.Show(moved.Count == 0 ? "没有同名重复。" : ("已移走 " + moved.Count + " 个重复文件，详见日志。"));
@@ -1863,7 +1835,7 @@ namespace Installer
             p.Tweak = TweakName();
             p.Launch = txtLaunch == null ? "" : LaunchArgs.ForWrite(txtLaunch.Text);
             foreach (ModItem it in sel) p.Mods.Add(it.Key);
-            ProfileStore.Save(p, false);              // 同名就是覆盖，不留 .bak（用户明确要求）
+            ProfileStore.Save(p);                     // 同名就是覆盖，不留副本
             appliedProfile = p.Name;
             FillProfiles();
             Core.Log("OK", "方案已存（覆盖式）：" + p.Name + "（" + p.Mods.Count + " 个 MOD）");
@@ -2019,9 +1991,8 @@ namespace Installer
             btnLaunchEdit.Left = leftW - 12 - 26;
             chkSwap.Width = leftW - 24;
             chkStrict.Width = leftW - 24;
-            cboTweak.Width = Math.Max(120, leftW - 24 - 70 - 44 - 90 - 8);
-            btnTweakRestore.Left = cboTweak.Left + cboTweak.Width + 4;
-            btnTweak.Left = btnTweakRestore.Left + btnTweakRestore.Width + 4;
+            cboTweak.Width = Math.Max(120, leftW - 24 - 70 - 90 - 8);
+            btnTweak.Left = cboTweak.Left + cboTweak.Width + 4;
 
             gMod.Left = rightX;
             gMod.Width = rightW;
@@ -2212,7 +2183,7 @@ namespace Installer
             if (!Core.TestGame(root)) { MessageBox.Show("先选对游戏根目录。"); return; }
             AddonSwitchForm f = new AddonSwitchForm(root);
             f.ShowDialog(this);
-            // 这个窗口现在也能删 MOD（移进回收目录）：删过就重扫，列表/树跟上
+            // 这个窗口现在也能删 MOD（真删）：删过就重扫，列表/树跟上
             if (f.Deleted > 0)
             {
                 Log("OK", "已装 MOD 开关里删掉 " + f.Deleted + " 个，重新扫库");
@@ -2237,7 +2208,7 @@ namespace Installer
                 MessageBox.Show("游戏还开着，先完全退出再还原。", "游戏正在运行");
                 return;
             }
-            if (MessageBox.Show("彻底还原：删掉 L4N / Skeeto / MQCam / dxvk 写进去的文件，恢复原版 exe、addonlist、autoexec，并把本次铺的 MOD 挪进回收站。\r\n\r\n确定？", "确认彻底还原", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            if (MessageBox.Show("彻底还原：删掉 L4N / Skeeto / MQCam / dxvk 写进去的文件，并删掉本次铺进 addons 的 MOD。\r\n\r\n注意：原版 exe / addonlist / autoexec 没有备份了，需要原版请用 Steam 校验文件。\r\n\r\n确定？", "确认彻底还原", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             Log("--- 彻底还原 ---");
             try
             {
@@ -2249,7 +2220,7 @@ namespace Installer
 
         /// <summary>
         /// 「应用改动」：把方案树里点出来的开关改动一次性写进 left4dead2\addonlist.txt。
-        /// 只改这几行的 1/0，vpk 文件一个都不碰；写之前原文件备份成 addonlist.txt.装之前。
+        /// 只改这几行的 1/0，vpk 文件一个都不碰；写之前也不留副本。
         /// 不动内存里的库扫描结果，只把 AddonOn 对齐，所以点完立刻生效、不用重扫。
         /// </summary>
         internal bool ApplySwitches(Dictionary<string, bool> st)
@@ -2279,11 +2250,10 @@ namespace Installer
 
             try
             {
-                string bak = AddonList.Write(root, st);
+                AddonList.Write(root, st);
                 Core.Log("OK", "应用开关改动 " + st.Count + " 处（开 " + on + "、关 " + (st.Count - on)
                     + "）：改值 " + hit + " 条、新增 " + (st.Count - hit) + " 条；"
-                    + "addonlist 原有 " + total + " 条，其余 " + untouched + " 条原样没动。备份 "
-                    + Path.GetFileName(bak));
+                    + "addonlist 原有 " + total + " 条，其余 " + untouched + " 条原样没动。");
 
                 // 只改了开关，文件没动：直接对齐内存里的值，省一次全库重扫
                 foreach (ModGroup g in Catalog.Groups)
@@ -2403,8 +2373,8 @@ namespace Installer
                     if (extra != null) foreach (KeyValuePair<string, bool> kv in extra) st[kv.Key] = kv.Value;
                     foreach (ModItem it in offReal) st[it.Name] = false;     // 先关旧的
                     foreach (ModItem it in sel) st[it.Name] = true;          // 选中的最后写，永远赢
-                    string bak = AddonList.Write(root, st);
-                    Core.Log("OK", "启用状态已写入（原文件备份 " + Path.GetFileName(bak) + "）");
+                    AddonList.Write(root, st);
+                    Core.Log("OK", "启用状态已写入");
                     if (failed.Count > 0)
                         Core.Log("FAIL", "复制失败 " + failed.Count + " 个：" + string.Join("、", failed.ToArray()));
 
@@ -2523,15 +2493,13 @@ namespace Installer
 
             SetBusy(true);
             bar.Style = ProgressBarStyle.Marquee;
-            lblStatus.Text = "正在备份…";
+            lblStatus.Text = "正在准备…";
             Thread th = new Thread(delegate()
             {
                 try
                 {
-                    string backupDir;
-                    Core.Log("STEP", "备份原文件");
+                    Core.Log("STEP", "开始写入");
                     Core.Log("INFO", Work.Overwrite ? "模式：覆盖重装（已装的也全部重写一遍）" : "模式：跳过已装（只写缺的和不一样的）");
-                    Core.BackupGame(root, out backupDir);
                     if (wantL4N)
                     {
                         Core.Log("STEP", "装 L4N");
@@ -2542,7 +2510,7 @@ namespace Installer
                     {
                         Core.Log("STEP", "装 dxvk");
                         SetStatus("正在装 dxvk…");
-                        Work.InstallDxvk(root, backupDir);
+                        Work.InstallDxvk(root);
                     }
                     if (wantSkeeto)
                     {
@@ -2621,8 +2589,8 @@ namespace Installer
                             Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                             foreach (ModItem it in sel) st[it.Name] = true;
                             if (assetName != null) st[assetName] = true;
-                            string bak = AddonList.Write(root, st);
-                            Core.Log("OK", "启用状态已写入（原文件备份 " + Path.GetFileName(bak) + "）");
+                            AddonList.Write(root, st);
+                            Core.Log("OK", "启用状态已写入");
                         }
                     }
                     else if (chkSwap.Checked)
@@ -2645,7 +2613,7 @@ namespace Installer
                     }
                     Core.Log("STEP", "逐项核对");
                     Work.Verify(root);
-                    Work.WriteManifest(root, backupDir, added);
+                    Work.WriteManifest(root, added);
                     SetStatus("完成");
                     Core.Log("OK", "全部完成。进游戏即可，开关在「已装 MOD 开关」里调。");
                     SafeBeginInvoke(delegate
@@ -3153,12 +3121,12 @@ namespace Installer
             foreach (ModItem it in Core.ModList) if (picked.Contains(it.Key)) mods.Add(it.Key);
             foreach (string k in picked) if (!mods.Contains(k)) mods.Add(k);
             fresh.Mods = mods;
-            string bak = ProfileStore.Save(fresh, true);
+            ProfileStore.Save(fresh);
             current = fresh;
             saved = new HashSet<string>(fresh.Mods, StringComparer.OrdinalIgnoreCase);
             dirty = false;
             LoadList();
-            MessageBox.Show("已保存「" + fresh.Name + "」：" + mods.Count + " 个文件。" + (bak == null ? "" : "\r\n旧版备份：" + Path.GetFileName(bak)), "保存方案");
+            MessageBox.Show("已保存「" + fresh.Name + "」：" + mods.Count + " 个文件。", "保存方案");
         }
 
         private void ApplySel()

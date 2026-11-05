@@ -19,17 +19,15 @@ namespace Installer
             return Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addonlist.txt");
         }
 
-        public static string WriteOrdered(string gameRoot, List<string> order, Dictionary<string, bool> states)
+        public static void WriteOrdered(string gameRoot, List<string> order, Dictionary<string, bool> states)
         {
             string p = FileOf(gameRoot);
-            string bak = p + ".装之前";
-            Core.BackupOnce(p);
             List<string> lines = new List<string>();
             if (File.Exists(p)) lines.AddRange(File.ReadAllLines(p, Encoding.Default));
             if (lines.Count == 0) { lines.Add("\"AddonList\""); lines.Add("{"); lines.Add("}"); }
             int open = lines.FindIndex(delegate(string s) { return s.Trim() == "{"; });
             int close = lines.FindLastIndex(delegate(string s) { return s.Trim() == "}"; });
-            if (open < 0 || close < 0 || close <= open) return Write(gameRoot, states);
+            if (open < 0 || close < 0 || close <= open) { Write(gameRoot, states); return; }
             List<string> head = lines.GetRange(0, open + 1);
             List<string> tail = lines.GetRange(close, lines.Count - close);
             HashSet<string> written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -49,7 +47,6 @@ namespace Installer
             List<string> all = new List<string>();
             all.AddRange(head); all.AddRange(body); all.AddRange(tail);
             WriteKeepEol(p, all);
-            return bak;
         }
 
         /// <summary>
@@ -87,11 +84,9 @@ namespace Installer
             return d;
         }
 
-        public static string Write(string gameRoot, Dictionary<string, bool> changes)
+        public static void Write(string gameRoot, Dictionary<string, bool> changes)
         {
             string p = FileOf(gameRoot);
-            string bak = p + ".装之前";
-            Core.BackupOnce(p);
             List<string> lines = new List<string>();
             if (File.Exists(p)) lines.AddRange(File.ReadAllLines(p, Encoding.Default));
             if (lines.Count == 0)
@@ -124,7 +119,6 @@ namespace Installer
                 lines.InsertRange(close, add);
             }
             WriteKeepEol(p, lines);
-            return bak;
         }
 
         /// <summary>从 addonlist 里删掉这些名字（文件被移走后，别留一条指向不存在文件的开关）。</summary>
@@ -141,11 +135,7 @@ namespace Installer
                 Match m = LineRe.Match(lines[i]);
                 if (m.Success && drop.Contains(m.Groups[1].Value)) { lines.RemoveAt(i); n++; }
             }
-            if (n > 0)
-            {
-                Core.BackupOnce(p);
-                WriteKeepEol(p, lines);
-            }
+            if (n > 0) WriteKeepEol(p, lines);
             return n;
         }
     }
@@ -257,19 +247,13 @@ namespace Installer
             return p;
         }
 
-        // 写方案；同名时先把旧文件复制成 .bak-时间戳（backupOld=false 时不备份，内部改写用）
-        public static string Save(Profile p, bool backupOld)
+        // 写方案：同名直接覆盖，不留副本
+        public static void Save(Profile p)
         {
             p.Name = Core.SafeName(p.Name);
             string d = DirOf();
             if (!Directory.Exists(d)) Directory.CreateDirectory(d);
             string f = Path.Combine(d, p.Name + ".txt");
-            string bak = null;
-            if (backupOld && File.Exists(f))
-            {
-                bak = f + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                try { File.Copy(f, bak, true); } catch { bak = null; }
-            }
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("# 方案 " + p.Name + "  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
             sb.AppendLine("Dxvk=" + (p.Dxvk ? "1" : "0"));
@@ -282,7 +266,6 @@ namespace Installer
             foreach (string m in p.Mods) sb.AppendLine("Mod=" + m);
             if (!string.IsNullOrEmpty(p.SelfTest)) sb.AppendLine("SelfTest=" + p.SelfTest);
             File.WriteAllText(f, sb.ToString(), new UTF8Encoding(true));
-            return bak;
         }
 
         // 把自检结果写回方案（kind = PASS / FAIL）
@@ -291,7 +274,7 @@ namespace Installer
             Profile p = Load(name);
             if (p == null) return;
             p.SelfTest = kind + "|" + seconds + "|" + DateTime.Now.ToString("yyyy-MM-dd HH:mm");
-            Save(p, false);
+            Save(p);
         }
 
         public static void Delete(string name)
@@ -323,25 +306,6 @@ namespace Installer
             if (File.Exists(b)) return "已经有叫这个名字的方案了";
             File.Copy(a, b, false);
             return null;
-        }
-    }
-
-    // ---------- 回收站（删除不真删，挪走） ----------
-    public static class Bin
-    {
-        public static string Move(string gameRoot, string file)
-        {
-            string dir = Path.Combine(Path.Combine(gameRoot, "_回收站_l4d2"), DateTime.Now.ToString("yyyyMMdd-HHmmss"));
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            string dst = Path.Combine(dir, Path.GetFileName(file));
-            int n = 1;
-            while (File.Exists(dst))
-            {
-                dst = Path.Combine(dir, Path.GetFileNameWithoutExtension(file) + "_" + n + Path.GetExtension(file));
-                n++;
-            }
-            File.Move(file, dst);
-            return dst;
         }
     }
 
@@ -685,7 +649,7 @@ namespace Installer
         private ListView lv;
         private Label lbl;
         private Dictionary<string, bool> state = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        public int Deleted;                 // 这个窗口里删掉（移进回收目录）的个数，关窗后主窗口据此决定要不要重扫
+        public int Deleted;                 // 这个窗口里删掉（真删）的个数，关窗后主窗口据此决定要不要重扫
 
         public AddonSwitchForm(string root)
         {
@@ -706,7 +670,7 @@ namespace Installer
             lv.Columns.Add("状态", 120);
             Controls.Add(lv);
             ContextMenuStrip cms = new ContextMenuStrip();
-            cms.Items.Add("删除勾中的（移到回收目录，可反悔）", null, delegate { DeleteChecked(); });
+            cms.Items.Add("删除勾中的（真删，不进回收目录）", null, delegate { DeleteChecked(); });
             lv.ContextMenuStrip = cms;
 
             Button up = new Button(); up.Text = "上移 ↑"; up.SetBounds(12, 360, 90, 28); up.Click += delegate { MoveItem(-1); }; Controls.Add(up);
@@ -727,7 +691,7 @@ namespace Installer
             LoadItems();
         }
 
-        /// <summary>批量删除：把勾中的 vpk 从游戏 addons 移到回收目录（可反悔），并摘掉 addonlist 登记。</summary>
+        /// <summary>批量删除：把勾中的 vpk 从游戏 addons 直接删掉，并摘掉 addonlist 登记。</summary>
         private void DeleteChecked()
         {
             List<string> names = new List<string>();
@@ -735,9 +699,8 @@ namespace Installer
             if (names.Count == 0)
                 foreach (ListViewItem li in lv.SelectedItems) names.Add(li.Tag.ToString());
             if (names.Count == 0) { MessageBox.Show("先勾选要删的 MOD（或选中几行）。"); return; }
-            if (MessageBox.Show("把这 " + names.Count + " 个 MOD 从游戏里移走？\r\n\r\n"
-                + "· 文件进回收目录：" + Core.RecycleDir + "\r\n"
-                + "· 不真删，想用可以再拖回来\r\n"
+            if (MessageBox.Show("把这 " + names.Count + " 个 MOD 从游戏里删掉？\r\n\r\n"
+                + "· vpk 直接从 left4dead2\\addons 删除，删了就是没了\r\n"
                 + "· addonlist 里那条登记也会摘掉\r\n\r\n确定？",
                 "删除已装 MOD", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
@@ -750,15 +713,15 @@ namespace Installer
                     m.Name = name;
                     m.FullPath = Path.Combine(addons, name);
                     m.FromGame = true;
-                    if (Work.MoveGameModToRecycle(m, gameRoot) != null) n++;
+                    if (Work.DeleteGameMod(m, gameRoot) == null) n++;
                 }
                 catch (Exception ex) { Core.Log("WARN", "删除 " + name + " 失败: " + ex.Message); }
             }
             Deleted += n;
-            Core.Log("OK", "已装 MOD 开关：从游戏 addons 移到回收目录 " + n + " 个（" + Core.RecycleDir + "）");
+            Core.Log("OK", "已装 MOD 开关：从游戏 addons 删掉 " + n + " 个");
             state = AddonList.Read(gameRoot);
             LoadItems();
-            lbl.Text = "已移走 " + n + " 个；回收目录：" + Core.RecycleDir;
+            lbl.Text = "已删除 " + n + " 个";
         }
 
         private void LoadItems()
@@ -841,10 +804,10 @@ namespace Installer
             foreach (ListViewItem li in lv.Items) { changes[(string)li.Tag] = li.Checked; order.Add((string)li.Tag); }
             try
             {
-                string bak = AddonList.WriteOrdered(gameRoot, order, changes);
+                AddonList.WriteOrdered(gameRoot, order, changes);
                 int on = 0;
                 foreach (KeyValuePair<string, bool> kv in changes) if (kv.Value) on++;
-                Core.Log("OK", "addonlist 已更新：" + on + " 个启用 / " + (changes.Count - on) + " 个关闭（备份 " + Path.GetFileName(bak) + "）");
+                Core.Log("OK", "addonlist 已更新：" + on + " 个启用 / " + (changes.Count - on) + " 个关闭");
             }
             catch (Exception ex)
             {

@@ -286,8 +286,6 @@ namespace Installer
         // 本地模式：游戏目录 addons 直接当库用，删除放行、装机只翻开关
         public static bool IsLocal { get { return Cfg.Mode == "local"; } }
 
-        // 回收目录跟着模式走：U 盘模式放库根（老位置），本地模式放程序的记录目录（没有 ModRoot 概念）
-        public static string RecycleDir { get { return IsLocal ? Path.Combine(LogDir, "_回收的MOD") : Path.Combine(ModRoot, "_回收的MOD"); } }
 
         public static bool TestGame(string path)
         {
@@ -649,62 +647,6 @@ namespace Installer
                 return true;
             }
             catch (Exception ex) { why = ex.Message; return false; }
-        }
-
-        // 覆盖式备份：每次写之前把当前版本存成 <path>.装之前，上一份留成 .装之前.上次
-        public static void BackupOnce(string path)
-        {
-            try
-            {
-                if (!File.Exists(path)) return;
-                string bak = path + ".装之前";
-                if (File.Exists(bak))
-                {
-                    string old = path + ".装之前.上次";
-                    try { if (File.Exists(old)) File.Delete(old); } catch { }
-                    try { File.Move(bak, old); } catch { }
-                }
-                File.Copy(path, bak, true);
-            }
-            catch { }
-        }
-
-        public static void BackupGame(string gameRoot, out string backupDir)
-        {
-            backupDir = Path.Combine(gameRoot, "_backup_l4d2suite_" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
-            Directory.CreateDirectory(backupDir);
-            PruneBackups(gameRoot);
-            string exe = Path.Combine(gameRoot, "left4dead2.exe");
-            if (File.Exists(exe))
-            {
-                File.Copy(exe, Path.Combine(backupDir, "left4dead2.exe.原版备份"), true);
-                Log("OK", "备份 left4dead2.exe");
-            }
-            string cfg = Path.Combine(gameRoot, "left4dead2\\cfg");
-            if (Directory.Exists(cfg))
-            {
-                foreach (string f in Directory.GetFiles(cfg, "*", SearchOption.AllDirectories))
-                {
-                    string rel = f.Substring(cfg.Length).TrimStart('\\');
-                    string d = Path.Combine(Path.Combine(backupDir, "cfg"), rel);
-                    Directory.CreateDirectory(Path.GetDirectoryName(d));
-                    File.Copy(f, d, true);
-                }
-                Log("OK", "备份 left4dead2\\cfg");
-            }
-        }
-
-        // 游戏目录里的旧备份最多留 3 份，不然每装一次就多一个目录
-        private static void PruneBackups(string gameRoot)
-        {
-            try
-            {
-                string[] ds = Directory.GetDirectories(gameRoot, "_backup_l4d2suite_*");
-                if (ds.Length <= 3) return;
-                Array.Sort(ds, StringComparer.OrdinalIgnoreCase);
-                for (int i = 0; i < ds.Length - 3; i++) { try { Directory.Delete(ds[i], true); } catch { } }
-            }
-            catch { }
         }
 
         public static void SelfTestCore(string gameRoot)

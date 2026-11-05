@@ -121,13 +121,7 @@ namespace Installer
             string dir = DirOf(name);
             try
             {
-                if (Directory.Exists(dir))
-                {
-                    // 旧存档别直接冲掉：整体挪成 .bak-时间戳
-                    string bak = dir + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                    Directory.Move(dir, bak);
-                    lines.Add("原存档已备份为 " + Path.GetFileName(bak));
-                }
+                // 同名直接覆盖：旧的那套不另存副本
                 Directory.CreateDirectory(dir);
                 if (hasA) { File.Copy(a, Path.Combine(dir, AutoexecName), true); lines.Add("已存 autoexec.cfg（" + Core.Human(new FileInfo(a).Length) + "）"); }
                 if (hasS) { File.Copy(s, Path.Combine(dir, SkeetoName), true); lines.Add("已存 skeeto_setting.ini（" + Core.Human(new FileInfo(s).Length) + "）"); }
@@ -151,7 +145,7 @@ namespace Installer
 
         // ------------------------------------------------------------ 套用 / 还原
 
-        /// <summary>把存档推到游戏目录。装之前先备份目标文件。返回 null 表示成功。</summary>
+        /// <summary>把存档推到游戏目录（直接覆盖，不留副本）。返回 null 表示成功。</summary>
         public static string Apply(string gameRoot, string name, out List<string> lines)
         {
             lines = new List<string>();
@@ -180,64 +174,11 @@ namespace Installer
         {
             string dir = Path.GetDirectoryName(dst);
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            if (File.Exists(dst))
-            {
-                // .装之前 只写一次 —— 它是"这台机器原本的样子"，不能被第二次装机冲掉
-                string first = dst + ".装之前";
-                if (!File.Exists(first)) File.Copy(dst, first, true);
-                File.Copy(dst, dst + ".上一次", true);
-            }
             File.Copy(src, dst, true);
             long len = new FileInfo(dst).Length;
             if (len != new FileInfo(src).Length) throw new IOException(label + " 写入后大小不对");
             lines.Add(label + "  已写入 " + Core.Human(len));
-            Core.Log("OK", label + " 已按存档写入（原文件备份 " + Path.GetFileName(dst) + ".装之前）");
-        }
-
-        // ------------------------------------------------------------ 还原
-
-        /// <summary>把游戏里这两份配置还原成装机之前的样子。返回处理了几项。</summary>
-        public static int Restore(string gameRoot, out List<string> lines)
-        {
-            lines = new List<string>();
-            int n = 0;
-            n += RestoreOne(AutoexecInGame(gameRoot), "left4dead2\\cfg\\autoexec.cfg", lines) ? 1 : 0;
-            n += RestoreOne(SkeetoInGame(gameRoot), "skeeto_setting.ini", lines) ? 1 : 0;
-            if (n > 0) Core.Log("OK", "参数已还原 " + n + " 项");
-            else Core.Log("WARN", "没有可还原的参数备份");
-            return n;
-        }
-
-        private static bool RestoreOne(string dst, string label, List<string> lines)
-        {
-            string first = dst + ".装之前";
-            string last = dst + ".上一次";
-            string from = File.Exists(first) ? first : (File.Exists(last) ? last : null);
-            if (from == null) { lines.Add(label + "（没有备份，跳过）"); return false; }
-            try
-            {
-                // 还原前把"现在这份"留一份，万一还原错了还能拿回来
-                if (File.Exists(dst)) File.Copy(dst, dst + ".还原前", true);
-                File.Copy(from, dst, true);
-                lines.Add(label + "  已还原自 " + Path.GetFileName(from));
-                Core.Log("OK", label + " 已还原（来源 " + Path.GetFileName(from) + "）");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                lines.Add(label + "  还原失败：" + ex.Message);
-                Core.Log("FAIL", label + " 还原失败: " + ex.Message);
-                return false;
-            }
-        }
-
-        /// <summary>这台机器上有没有备份可还原（用来决定按钮亮不亮）。</summary>
-        public static int RestorableCount(string gameRoot)
-        {
-            int n = 0;
-            if (File.Exists(AutoexecInGame(gameRoot) + ".装之前") || File.Exists(AutoexecInGame(gameRoot) + ".上一次")) n++;
-            if (File.Exists(SkeetoInGame(gameRoot) + ".装之前") || File.Exists(SkeetoInGame(gameRoot) + ".上一次")) n++;
-            return n;
+            Core.Log("OK", label + " 已按存档写入（覆盖）");
         }
 
         public static bool Delete(string name, out string err)
@@ -267,7 +208,7 @@ namespace Installer
         // ------------------------------------------------------------ 自测
 
         /// <summary>
-        /// 在临时目录里造一个假游戏，把 保存 → 套用 → 再套用 → 还原 走一遍。
+        /// 在临时目录里造一个假游戏，把 保存 → 套用 → 再套用 走一遍。
         /// 不碰真游戏目录，也不碰 U 盘上的真存档。返回失败项数。
         /// </summary>
         public static int SelfTest()
@@ -300,23 +241,14 @@ namespace Installer
                 if (err != null) { Core.Log("FAIL", "TWEAKSELF 套用失败: " + err); bad++; }
                 if (File.ReadAllText(cfg) != original) { Core.Log("FAIL", "TWEAKSELF 套用后 autoexec 内容不对"); bad++; }
                 if (File.ReadAllText(sk) != "old_setting=1\r\n") { Core.Log("FAIL", "TWEAKSELF 套用后 skeeto 内容不对"); bad++; }
-                if (!File.Exists(cfg + ".装之前")) { Core.Log("FAIL", "TWEAKSELF 没留 .装之前"); bad++; }
-                else if (File.ReadAllText(cfg + ".装之前") != "// 装机后\r\nbind tab +showscores\r\n")
-                { Core.Log("FAIL", "TWEAKSELF .装之前 内容不对"); bad++; }
+                if (File.Exists(cfg + ".装之前")) { Core.Log("FAIL", "TWEAKSELF 还在留 .装之前 备份"); bad++; }
 
-                // 第二次套用：.装之前 必须还是第一次的那份（原版），不能被子冲掉
+                // 第二次套用：直接覆盖，不留任何副本
                 File.WriteAllText(cfg, "// 第二次装机前\r\n", new UTF8Encoding(false));
                 Apply(game, "自测套", out lines);
-                if (File.ReadAllText(cfg + ".装之前") != "// 装机后\r\nbind tab +showscores\r\n")
-                { Core.Log("FAIL", "TWEAKSELF 第二次套用把 .装之前 冲掉了"); bad++; }
-
-                // 还原
-                int n = Restore(game, out lines);
-                if (n != 2) { Core.Log("FAIL", "TWEAKSELF 还原项数 " + n + "（应为 2）"); bad++; }
-                if (File.ReadAllText(cfg) != "// 装机后\r\nbind tab +showscores\r\n")
-                { Core.Log("FAIL", "TWEAKSELF 还原后 autoexec 不对: " + File.ReadAllText(cfg).Trim()); bad++; }
-                if (!File.Exists(cfg + ".还原前")) { Core.Log("FAIL", "TWEAKSELF 还原前没留底"); bad++; }
-                if (RestorableCount(game) != 2) { Core.Log("FAIL", "TWEAKSELF RestorableCount 不对"); bad++; }
+                if (File.ReadAllText(cfg) != original) { Core.Log("FAIL", "TWEAKSELF 第二次套用没覆盖上"); bad++; }
+                if (Directory.GetFiles(Path.GetDirectoryName(cfg), "autoexec.cfg.*").Length > 0)
+                { Core.Log("FAIL", "TWEAKSELF 套用后留下了副本"); bad++; }
 
                 // 删除：必须是真删（目录没了），不是改个名留在原地
                 string derr;
@@ -324,7 +256,7 @@ namespace Installer
                 if (Exists("自测套")) { Core.Log("FAIL", "TWEAKSELF 删除后还能列出"); bad++; }
                 if (Directory.Exists(DirOf("自测套"))) { Core.Log("FAIL", "TWEAKSELF 删除后目录还在：" + DirOf("自测套")); bad++; }
 
-                Core.Log(bad == 0 ? "OK" : "FAIL", "TWEAKSELF " + (bad == 0 ? "参数保存/套用/还原 全部正常" : (bad + " 项不对")));
+                Core.Log(bad == 0 ? "OK" : "FAIL", "TWEAKSELF " + (bad == 0 ? "参数保存/套用 全部正常" : (bad + " 项不对")));
             }
             catch (Exception ex) { Core.Log("FAIL", "TWEAKSELF 异常: " + ex.Message); bad++; }
             finally
@@ -403,7 +335,7 @@ namespace Installer
         private ListBox lb;
         private TextBox txtPreview;
         private Label lblHead;
-        private FlatButton btnApply, btnSave, btnRestore, btnDel;
+        private FlatButton btnApply, btnSave, btnDel;
 
         /// <summary>关窗时选中的存档名（给主界面记忆用）。</summary>
         public string Chosen = "";
@@ -459,10 +391,7 @@ namespace Installer
             btnApply = new FlatButton(); btnApply.Text = "套用到本机"; btnApply.Primary = true; btnApply.SetBounds(170, 362, 108, Theme.H);
             btnApply.Click += delegate { DoApply(); }; Controls.Add(btnApply);
 
-            btnRestore = new FlatButton(); btnRestore.Text = "还原本机参数"; btnRestore.SetBounds(284, 362, 104, Theme.H);
-            btnRestore.Click += delegate { DoRestore(); }; Controls.Add(btnRestore);
-
-            btnDel = new FlatButton(); btnDel.Text = "删除存档"; btnDel.SetBounds(394, 362, 88, Theme.H);
+            btnDel = new FlatButton(); btnDel.Text = "删除存档"; btnDel.SetBounds(284, 362, 88, Theme.H);
             btnDel.Click += delegate { DoDelete(); }; Controls.Add(btnDel);
 
             FlatButton btnOpen = new FlatButton(); btnOpen.Text = "打开文件夹"; btnOpen.SetBounds(488, 362, 92, Theme.H);
@@ -477,8 +406,8 @@ namespace Installer
             tip.Font = Theme.UISmall;
             tip.ForeColor = Theme.Ink3;
             tip.Text = "左边列表 = U 盘上的存档文件夹（" + Tweaks.Root + "）。\r\n"
-                + "「还原本机参数」只回滚游戏目录里那两个参数文件（用装机时留的 .装之前 备份），不动平台、不动 MOD。\r\n"
-                + "「删除存档」是把 U 盘上那套文件夹整个删掉；同名再存一次时，旧的那份会自动改名留一份 .bak-时间戳。";
+                + "「套用到本机」直接覆盖游戏目录里的那两个参数文件，不留备份 —— 覆盖就是覆盖了。\r\n"
+                + "「删除存档」是把 U 盘上那套文件夹整个删掉；同名再存一次会直接覆盖旧的那套。";
             Controls.Add(tip);
 
             Reload(current);
@@ -538,7 +467,7 @@ namespace Installer
                 + "  skeeto_setting.ini（Skeeto 面板设置）\r\n\r\n"
                 + "给这套起个名字，U 盘存档里会建一个同名文件夹：\r\n"
                 + Tweaks.Root + "\\<名字>\r\n"
-                + "（同名再存一次，旧的那套自动留 .bak，不会丢）",
+                + "（同名再存一次会直接覆盖旧的那套）",
                 "把本机参数存进 U 盘", def);
             if (string.IsNullOrEmpty(name)) return;
             List<string> lines;
@@ -553,7 +482,7 @@ namespace Installer
             string name = Sel();
             if (name == null) return;
             if (gameRoot == null || !Core.TestGame(gameRoot)) { MessageBox.Show("先选对游戏目录。"); return; }
-            if (MessageBox.Show("把「" + name + "」里的参数写入这台机器？\r\n\r\nleft4dead2\\cfg\\autoexec.cfg\r\nskeeto_setting.ini\r\n\r\n现在的这两份会备份成 .装之前 / .上一次（不会丢）。", "套用参数",
+            if (MessageBox.Show("把「" + name + "」里的参数写入这台机器？\r\n\r\nleft4dead2\\cfg\\autoexec.cfg\r\nskeeto_setting.ini\r\n\r\n现在这两份会被直接覆盖，不留副本。", "套用参数",
                                 MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
             List<string> lines;
             string err = Tweaks.Apply(gameRoot, name, out lines);
@@ -561,23 +490,6 @@ namespace Installer
             Applied = true;
             MessageBox.Show("已套用：\r\n" + string.Join("\r\n", lines.ToArray()), "好了");
             ShowInfo();
-        }
-
-        private void DoRestore()
-        {
-            if (gameRoot == null || !Core.TestGame(gameRoot)) { MessageBox.Show("先选对游戏目录。"); return; }
-            int can = Tweaks.RestorableCount(gameRoot);
-            if (can == 0)
-            {
-                MessageBox.Show("这台机器上没有 .装之前 / .上一次 备份，没东西可还原。\r\n（备份是在套用参数、或装机写 cfg 时自动留的）", "没有备份");
-                return;
-            }
-            if (MessageBox.Show("把这两份配置回滚到装机之前的样子？\r\n\r\n" + can + " 项可还原。当前这份会留成 .还原前。", "还原参数",
-                                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-            List<string> lines;
-            int n = Tweaks.Restore(gameRoot, out lines);
-            Applied = true;
-            MessageBox.Show((n > 0 ? "已还原 " + n + " 项：\r\n" : "没有还原成功：\r\n") + string.Join("\r\n", lines.ToArray()), "还原");
         }
 
         private void DoDelete()

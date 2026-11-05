@@ -164,7 +164,7 @@ namespace Installer
         }
 
         // ---------- dxvk ----------
-        public static bool InstallDxvk(string gameRoot, string backupDir)
+        public static bool InstallDxvk(string gameRoot)
         {
             try
             {
@@ -174,7 +174,6 @@ namespace Installer
                     string s = Path.Combine(srcDir, n);
                     string d = Path.Combine(gameRoot, n);
                     if (!File.Exists(s)) { Core.Log("FAIL", "缺 " + s); return false; }
-                    if (File.Exists(d)) File.Copy(d, Path.Combine(backupDir, n + ".装之前"), true);
                     File.Copy(s, d, true);
                     if (new FileInfo(d).Length != new FileInfo(s).Length) { Core.Log("FAIL", n + " 大小不对"); return false; }
                     Core.Log("OK", n + " 到位");
@@ -379,7 +378,6 @@ namespace Installer
 
         private static bool PatchVdf(string path, string value)
         {
-            Core.BackupOnce(path);
             string text = File.ReadAllText(path, Encoding.UTF8);
             int idx = text.IndexOf("\"550\"", StringComparison.Ordinal);
             bool changed = false;
@@ -590,41 +588,34 @@ namespace Installer
         }
 
         // ---------- MOD 库维护 ----------
-        public static string MoveModToRecycle(ModItem m)
+        /// <summary>从库里删掉一个 vpk（真删，不进回收目录）。返回 null = 成功，否则是失败原因。</summary>
+        public static string DeleteMod(ModItem m)
         {
-            // U 盘模式：游戏 addons 里的文件不回收（那是已装的，不是库里的）。
+            // U 盘模式：游戏 addons 里的文件不归库管（那是已装的，不是库里的）。
             // 本地模式：addons 就是库，删它 = 从游戏里卸掉，允许。
-            if (m.FromGame && !Core.IsLocal) return null;
-            return MoveToRecycleDir(m, m.FromGame ? Core.Cfg.GameRoot : null);
+            if (m.FromGame && !Core.IsLocal) return "这个 MOD 在游戏目录里，U 盘模式不动它";
+            return DeleteModFile(m, m.FromGame ? Core.Cfg.GameRoot : null);
         }
 
         /// <summary>
-        /// 把游戏 addons 里的一个 vpk 移到回收目录（不管当前工作模式）。
+        /// 把游戏 addons 里的一个 vpk 直接删掉（不管当前工作模式）。
         /// 「已装 MOD 开关」窗口用它做批量删除；addonlist 里那条登记一并摘掉。
         /// </summary>
-        public static string MoveGameModToRecycle(ModItem m, string gameRoot)
+        public static string DeleteGameMod(ModItem m, string gameRoot)
         {
-            return MoveToRecycleDir(m, gameRoot);
+            return DeleteModFile(m, gameRoot);
         }
 
-        static string MoveToRecycleDir(ModItem m, string addonListRoot)
+        static string DeleteModFile(ModItem m, string addonListRoot)
         {
-            string dir = Core.RecycleDir;
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            string dst = Path.Combine(dir, m.Name);
-            int n = 1;
-            while (File.Exists(dst))
-            {
-                dst = Path.Combine(dir, Path.GetFileNameWithoutExtension(m.Name) + "_" + n + ".vpk");
-                n++;
-            }
-            File.Move(m.FullPath, dst);
+            try { File.Delete(m.FullPath); }
+            catch (Exception ex) { return ex.Message; }
             if (addonListRoot != null && addonListRoot.Length > 0)
             {
                 try { AddonList.Remove(addonListRoot, new string[] { m.Name }); }
                 catch (Exception ex) { Core.Log("WARN", "从 addonlist 摘掉 " + m.Name + " 失败: " + ex.Message); }
             }
-            return dst;
+            return null;
         }
 
         public static string RenameMod(ModItem m, string newName)
@@ -658,7 +649,9 @@ namespace Installer
                 {
                     try
                     {
-                        moved.Add(Path.GetFileName(MoveModToRecycle(kv.Value[i])) + "  (" + kv.Value[i].Cat + " · " + kv.Value[i].Sub + ")");
+                        string err = DeleteMod(kv.Value[i]);
+                        if (err != null) throw new Exception(err);
+                        moved.Add(kv.Value[i].Name + "  (" + kv.Value[i].Cat + " · " + kv.Value[i].Sub + ")");
                         gone.Add(kv.Value[i]);
                     }
                     catch (Exception ex) { Core.Log("WARN", "清理 " + kv.Value[i].Name + " 失败: " + ex.Message); }
@@ -777,48 +770,25 @@ namespace Installer
             }
 
             string mf = Path.Combine(Core.LogDir, "最近一次.ini");
-            string backup = "";
             List<string> added = new List<string>();
             if (File.Exists(mf))
             {
                 foreach (string raw in File.ReadAllLines(mf, Encoding.UTF8))
                 {
                     string t = raw.Trim();
-                    if (t.StartsWith("Backup=")) backup = t.Substring(7);
-                    else if (t.StartsWith("Added=")) added.Add(t.Substring(6));
-                }
-            }
-            if (backup.Length > 0 && Directory.Exists(backup))
-            {
-                string exeBak = Path.Combine(backup, "left4dead2.exe.原版备份");
-                if (File.Exists(exeBak))
-                {
-                    try { File.Copy(exeBak, Path.Combine(gameRoot, "left4dead2.exe"), true); report.Add("left4dead2.exe 已恢复原版"); }
-                    catch (Exception ex) { report.Add("恢复 exe 失败: " + ex.Message); }
-                }
-                foreach (string n in new string[] { "d3d9.dll.装之前", "dxvk.conf.装之前" })
-                {
-                    string b = Path.Combine(backup, n);
-                    if (File.Exists(b))
-                    {
-                        try { File.Copy(b, Path.Combine(gameRoot, n.Replace(".装之前", "")), true); report.Add(n + " 已恢复"); } catch { }
-                    }
+                    if (t.StartsWith("Added=")) added.Add(t.Substring(6));
                 }
             }
 
             string l4d2 = Path.Combine(gameRoot, "left4dead2");
-            string alBak = Path.Combine(l4d2, "addonlist.txt.装之前");
-            if (File.Exists(alBak)) { try { File.Copy(alBak, Path.Combine(l4d2, "addonlist.txt"), true); report.Add("addonlist.txt 已恢复"); } catch { } }
-            string acBak = Path.Combine(l4d2, "cfg\\autoexec.cfg.装之前");
-            if (File.Exists(acBak)) { try { File.Copy(acBak, Path.Combine(l4d2, "cfg\\autoexec.cfg"), true); report.Add("autoexec.cfg 已恢复"); } catch { } }
-
             string addons = Path.Combine(l4d2, "addons");
             int moved = 0;
             foreach (string a in added)
             {
-                try { string p = Path.Combine(addons, a); if (File.Exists(p)) { Bin.Move(gameRoot, p); moved++; } } catch { }
+                try { string p = Path.Combine(addons, a); if (File.Exists(p)) { File.Delete(p); moved++; } } catch { }
             }
-            if (added.Count > 0) report.Add("本次铺的 MOD 挪进回收站 " + moved + " 个");
+            if (added.Count > 0) report.Add("本次铺的 MOD 已删除 " + moved + " 个");
+            report.Add("原版 exe / addonlist / autoexec 没有备份可还原，需要原版请用 Steam 校验文件");
             return report;
         }
 
@@ -1015,14 +985,13 @@ namespace Installer
         // 脚本库冲突已并入 ConflictCheck.DeepAll：同一批 vpk 只解析一遍
 
         // ---------- 装机记录 ----------
-        public static void WriteManifest(string gameRoot, string backupDir, List<string> added)
+        public static void WriteManifest(string gameRoot, List<string> added)
         {
             try
             {
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("GameRoot=" + gameRoot);
                 sb.AppendLine("Time=" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-                sb.AppendLine("Backup=" + backupDir);
                 foreach (string a in added) sb.AppendLine("Added=" + a);
                 File.WriteAllText(Path.Combine(Core.LogDir, "最近一次.ini"), sb.ToString(), new UTF8Encoding(true));
             }
@@ -1100,7 +1069,7 @@ namespace Installer
                 if (files2 != files) { bad++; Console.WriteLine("[FAIL] 全关时文件数变了"); }
                 Console.WriteLine("ADDON 一个都不选：全关=" + f1 + "，用户自己的还开着=" + f2 + "，文件 " + files2 + " 个");
 
-                // 本地模式：从游戏 addons 删一项 → 进回收目录、addonlist 里那条登记一起摘掉
+                // 本地模式：从游戏 addons 删一项 → 文件真删掉、addonlist 里那条登记一起摘掉
                 string savedMode = Core.Cfg.Mode, savedLog = Core.LogDir, savedGame = Core.Cfg.GameRoot;
                 try
                 {
@@ -1111,13 +1080,13 @@ namespace Installer
                     ModItem victim = pool[0];
                     victim.FullPath = Path.Combine(addons, victim.Name);
                     victim.FromGame = true;
-                    string dst = MoveModToRecycle(victim);
-                    bool moved = dst != null && File.Exists(dst) && !File.Exists(victim.FullPath);
+                    string err = DeleteMod(victim);
+                    bool moved = err == null && !File.Exists(victim.FullPath);
                     Dictionary<string, bool> st2 = AddonList.Read(tmp);
                     bool dropped = !st2.ContainsKey(victim.Name);
-                    if (!moved) { bad++; Console.WriteLine("[FAIL] 本地模式删除没进回收目录: " + victim.Name); }
+                    if (!moved) { bad++; Console.WriteLine("[FAIL] 本地模式删除没删掉文件: " + victim.Name + " " + err); }
                     if (!dropped) { bad++; Console.WriteLine("[FAIL] 删除后 addonlist 里还留着: " + victim.Name); }
-                    Console.WriteLine("ADDON 本地模式删除：进回收=" + moved + "，addonlist 摘掉=" + dropped);
+                    Console.WriteLine("ADDON 本地模式删除：文件已删=" + moved + "，addonlist 摘掉=" + dropped);
                 }
                 finally
                 {

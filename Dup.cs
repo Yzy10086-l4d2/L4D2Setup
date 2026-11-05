@@ -156,12 +156,12 @@ namespace Installer
 
     /// <summary>
     /// 重复嫌疑清单。原来只能弹一个文本框，看得见却动不了；现在每一组能：
-    /// 核对内容 / 这次不装 / 移到回收站 / 在列表里定位。
+    /// 核对内容 / 这次不装 / 直接删掉 / 在列表里定位。
     /// 压缩包里的 vpk 装机台不改压缩包，所以只能「这次不装」。
     /// </summary>
     public class DupForm : Form
     {
-        public Func<ModItem, string> OnDelete;         // 移到回收站；返回 null = 成功，否则是错误说明
+        public Func<ModItem, string> OnDelete;         // 真删；返回 null = 成功，否则是错误说明
         public Action<List<ModItem>> OnSkip;           // 这次不装（只影响本次勾选）
         public Action<ModItem> OnLocate;               // 在 MOD 列表里定位
 
@@ -191,7 +191,7 @@ namespace Installer
             hint.Font = Theme.UISmall;
             hint.ForeColor = Theme.Ink2;
             hint.Text = "体积完全相同只是「嫌疑」，不一定是同一个文件 —— 先点「核对内容」再看结论，一样就可以删。\r\n"
-                      + "勾选要处理的（可多选）：这次不装 = 文件还留在 U 盘，只是这次不铺；移到回收站 = 从库里挪走，不真删。";
+                      + "勾选要处理的（可多选）：这次不装 = 文件还留在 U 盘，只是这次不铺；直接删掉 = 从库里真删，删了没法恢复。";
             Controls.Add(hint);
 
             lv = new ListView();
@@ -238,10 +238,10 @@ namespace Installer
             tipsSet(bSkip, "把勾选的从这次的勾选里去掉，文件原样留在 U 盘。");
             Controls.Add(bSkip);
 
-            FlatButton bDel = new FlatButton(); bDel.Text = "移到 _回收的MOD";
-            bDel.SetBounds(222, 470, 140, Theme.H);
+            FlatButton bDel = new FlatButton(); bDel.Text = "直接删掉";
+            bDel.SetBounds(222, 470, 110, Theme.H);
             bDel.Click += delegate { DeleteChecked(); };
-            tipsSet(bDel, "从 U 盘库里挪走（不是真删，想用能从 _回收的MOD 拖回来）。\r\n压缩包里的 vpk 不支持，请用「这次不装」。");
+            tipsSet(bDel, "从 U 盘库里真删（删了没法恢复）。\r\n压缩包里的 vpk 不支持，请用「这次不装」。");
             Controls.Add(bDel);
 
             FlatButton bLoc = new FlatButton(); bLoc.Text = "在列表里定位";
@@ -428,11 +428,11 @@ namespace Installer
 
             // 危险操作：把要动的每一个文件列出来，让人看清楚再点
             if (MessageBox.Show(this,
-                "把下面 " + ok.Count + " 个文件（合计 " + Core.Human(total) + "）从 U 盘库移到 _回收的MOD？\r\n\r\n"
+                "把下面 " + ok.Count + " 个文件（合计 " + Core.Human(total) + "）从 U 盘库直接删掉？\r\n\r\n"
                 + sb.ToString() + "\r\n"
                 + (blocked > 0 ? "另有 " + blocked + " 个在压缩包里，这次不会动。\r\n\r\n" : "")
-                + "不是真删，想用可以从 _回收的MOD 里拖回来。",
-                "确认移到回收站", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                + "删了没法恢复。",
+                "确认删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
 
             int done = 0;
             List<string> errs = new List<string>();
@@ -443,7 +443,7 @@ namespace Installer
                 else errs.Add(m.Name + "：" + err);
             }
             Rebuild();
-            status.Text = "已移到 _回收的MOD " + done + " 个" + (errs.Count > 0 ? "，失败 " + errs.Count + " 个（见日志）" : "") + "。";
+            status.Text = "已删除 " + done + " 个" + (errs.Count > 0 ? "，失败 " + errs.Count + " 个（见日志）" : "") + "。";
             status.ForeColor = errs.Count > 0 ? Theme.Warn : Theme.Ok;
         }
 
