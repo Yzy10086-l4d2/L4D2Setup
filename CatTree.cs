@@ -551,6 +551,7 @@ namespace Installer
         private readonly Label lblExtraTitle;
         private readonly FlatButton btnPick;
         private readonly FlatButton btnCat;                // 未归类页的手动入口：指定「算哪类 + 替换什么」
+        private readonly FlatButton btnDeploy;             // 「只装这里」：只铺当前分支勾上的 vpk
 
         private List<Slot> slots = new List<Slot>();
         private int unmatched;                       // 一个位置都归不上的 MOD 数
@@ -662,6 +663,15 @@ namespace Installer
             btnCat.Click += delegate { mf.SetModCatIn(lv); };
             btnCat.Visible = false;
             Controls.Add(btnCat);
+
+            // 「只装这里」：方案树是按位置看的，经常只想试一处（换个枪模看看像不像），
+            // 不想为这一个 vpk 把整套重铺一遍。这个按钮只动当前位置勾上的文件。
+            btnDeploy = new FlatButton();
+            btnDeploy.Text = "只装这里";
+            btnDeploy.SetBounds(0, 0, 92, Theme.H);
+            btnDeploy.Visible = false;
+            btnDeploy.Click += delegate { DeployHere(); };
+            Controls.Add(btnDeploy);
 
             Resize += delegate { LayoutSelf(); };
             LayoutSelf();
@@ -1079,12 +1089,59 @@ namespace Installer
             }
         }
 
+        /// <summary>
+        /// 「只装这里」：只把这个分支勾上的 vpk 铺进游戏（含同位置的扩展），
+        /// 这个位置以前装、这次没选的候选只翻 addonlist 的开关（文件留着，能开回来）。
+        /// 其它位置、L4N / dxvk / 配置一律不碰。
+        /// </summary>
+        private void DeployHere()
+        {
+            Slot s = Current;
+            if (s == null) return;
+
+            List<ModItem> sel = new List<ModItem>();
+            List<ModItem> off = new List<ModItem>();
+            foreach (ModGroup g in s.Items)
+            {
+                bool on = mf.CountChecked(g) > 0;
+                if (on)
+                {
+                    foreach (ModItem p in g.Parts) sel.Add(p);
+                }
+                else
+                {
+                    // 同一位置是互斥的：以前装的那个要关掉，否则两个模型一起加载会打架
+                    foreach (ModItem p in g.Parts) if (p.Installed) off.Add(p);
+                }
+            }
+            // 扩展可叠加：没勾就不动，别把玩家原来在用的音效 / HUD 顺手关了
+            foreach (ModGroup g in s.Extras)
+                if (mf.CountChecked(g) > 0)
+                    foreach (ModItem p in g.Parts) sel.Add(p);
+
+            if (sel.Count == 0)
+            {
+                MessageBox.Show("这个位置现在没选 MOD。\r\n\r\n先在右边点一个候选（组合装可以双击挑部件），再点「只装这里」。",
+                    "没有可装的东西", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            mf.DeploySlot(sel, off, s.Name);
+        }
+
         private void FillDetail()
         {
-            if (selKey == "#unmatched") { ShowUnmatched(); return; }
+            if (selKey == "#unmatched")
+            {
+                if (btnDeploy != null) btnDeploy.Visible = false;
+                ShowUnmatched();
+                return;
+            }
             lv.Visible = true;
             if (btnCat != null) btnCat.Visible = false;
             Slot s = Current;
+            // 这个位置有选中东西才给「只装这里」；空着就是「留原版」，没什么可装的
+            if (btnDeploy != null)
+                btnDeploy.Visible = s != null && (CheckedGroups(s) + CheckedExtras(s)) > 0;
             lv.BeginUpdate();
             lvExtra.BeginUpdate();
             try
@@ -1391,10 +1448,13 @@ namespace Installer
             }
 
             if (btnPick != null) btnPick.SetBounds(x + 16, H - 34, 76, Theme.H);
-            // 「指定位置…」只在未归类页出现，固定在右下角；脚注给它让出一条路
+            // 右下角两个按钮互斥：「指定位置…」只在未归类页，「只装这里」只在有勾选的槽位
             bool catBtn = btnCat != null && btnCat.Visible;
+            bool depBtn = btnDeploy != null && btnDeploy.Visible;
             if (btnCat != null) btnCat.SetBounds(x + rightW - 116, H - 34, 100, Theme.H);
-            if (lblFoot != null) lblFoot.SetBounds(x + 16, H - 30, Math.Max(60, rightW - 32 - (catBtn ? 112 : 0)), 18);
+            if (btnDeploy != null) btnDeploy.SetBounds(x + rightW - 108, H - 34, 92, Theme.H);
+            if (lblFoot != null)
+                lblFoot.SetBounds(x + 16, H - 30, Math.Max(60, rightW - 32 - (catBtn || depBtn ? 116 : 0)), 18);
             LayoutCols();
         }
 

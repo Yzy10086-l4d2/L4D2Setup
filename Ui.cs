@@ -2436,6 +2436,96 @@ namespace Installer
             catch (Exception ex) { Log("FAIL", "还原失败: " + ex.Message); }
         }
 
+        /// <summary>
+        /// 方案树「只装这里」：只把这个分支选中的 vpk 铺进游戏，别的位置一个都不动。
+        /// 与整机装机的区别：不碰 L4N / dxvk / 素材包 / 参数配置，不改全局勾选，也不写整机清单。
+        /// </summary>
+        internal void DeploySlot(List<ModItem> sel, List<ModItem> off, string slotName)
+        {
+            string root = txtGame.Text.Trim();
+            if (!Core.TestGame(root)) { MessageBox.Show("这个目录里没有 left4dead2.exe，先选对游戏根目录。", "路径不对"); return; }
+            if (!TestWritable(root))
+            {
+                MessageBox.Show("这个游戏目录写不进去（可能只读、被占用或权限不足）。\r\n可以试试以管理员身份运行，或换一个有写权限的目录。", "目录不可写");
+                return;
+            }
+            if (GameRunning())
+            {
+                MessageBox.Show("游戏还开着。先把《求生之路2》完全退出（不是最小化），否则 vpk 被占用，铺不进去。", "游戏正在运行");
+                return;
+            }
+
+            long need = 0;
+            foreach (ModItem it in sel) need += it.Size;
+            string q = "只装「" + slotName + "」这一处：\r\n\r\n"
+                     + "· 铺 " + sel.Count + " 个文件，共 " + Core.Human(need) + "\r\n";
+            if (off.Count > 0)
+                q += "· 关掉这个位置之前装的 " + off.Count + " 个（文件保留，想用回来点一下就行）\r\n";
+            q += "· 其它位置、L4N / dxvk / 参数配置一律不动\r\n\r\n继续吗？";
+            if (MessageBox.Show(q, "只装这个位置", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+
+            bool overwrite = !rdSkip.Checked;
+            SetBusy(true);
+            bar.Style = ProgressBarStyle.Marquee;
+            SetStatus("正在装「" + slotName + "」…");
+            Core.Log("STEP", "只装位置「" + slotName + "」：" + sel.Count + " 个文件"
+                + (off.Count > 0 ? "，同时关掉旧的 " + off.Count + " 个" : ""));
+
+            Thread th = new Thread(delegate()
+            {
+                try
+                {
+                    Work.Overwrite = overwrite;
+                    int copied, skipped;
+                    List<string> added, failed;
+                    Work.CopyMods(root, sel, delegate(long done, long total)
+                    {
+                        int pct = total > 0 ? (int)(done * 1000 / total) : 0;
+                        SetBar(pct);
+                    }, out copied, out skipped, out added, out failed);
+
+                    Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                    foreach (ModItem it in sel) st[it.Name] = true;
+                    foreach (ModItem it in off) st[it.Name] = false;
+                    string bak = AddonList.Write(root, st);
+                    Core.Log("OK", "启用状态已写入（原文件备份 " + Path.GetFileName(bak) + "）");
+                    if (failed.Count > 0)
+                        Core.Log("FAIL", "复制失败 " + failed.Count + " 个：" + string.Join("、", failed.ToArray()));
+
+                    SafeBeginInvoke(delegate
+                    {
+                        // 状态列是现读 addons + addonlist 得出的，装完必须重扫，否则列里还是旧状态
+                        try { Core.ScanMods(); } catch (Exception exs) { Core.Log("WARN", "装完重扫失败: " + exs.Message); }
+                        RefreshMods();
+                        RefreshConflicts(true);
+                        SetBusy(false);
+                        SetBar(0);
+                        SetStatus("就绪");
+                        string tip = "「" + slotName + "」装好了：铺 " + copied + " 个"
+                                   + (skipped > 0 ? "，跳过 " + skipped + " 个已装的" : "")
+                                   + (off.Count > 0 ? "，关掉旧的 " + off.Count + " 个" : "");
+                        Core.Log(failed.Count == 0 ? "OK" : "WARN", tip);
+                        MessageBox.Show(tip
+                            + (failed.Count > 0 ? "\r\n\r\n有 " + failed.Count + " 个复制失败，详见日志。" : "")
+                            + "\r\n\r\n进游戏就能看到；这个位置的其它 MOD 没动。",
+                            failed.Count > 0 ? "部分失败" : "只装这里 · 完成",
+                            MessageBoxButtons.OK, failed.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Core.Log("FAIL", "只装位置失败: " + ex.Message);
+                    SafeBeginInvoke(delegate
+                    {
+                        SetBusy(false); SetBar(0); SetStatus("就绪");
+                        MessageBox.Show("装失败: " + ex.Message, "出错了", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    });
+                }
+            });
+            th.IsBackground = true;
+            th.Start();
+        }
+
         private void DoInstall()
         {
             string root = txtGame.Text.Trim();
