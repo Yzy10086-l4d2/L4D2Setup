@@ -64,6 +64,7 @@ namespace Installer
             bool uiSetCat = false;
             bool uiCatForm = false;
             bool uiAddons = false;
+            bool uiKeys = false;
             string uiFix = null;
             string uiParts = null;
             string uiTweaks = null;
@@ -95,6 +96,7 @@ namespace Installer
                 else if (string.Equals(a, "--uisetcat", StringComparison.OrdinalIgnoreCase)) uiSetCat = true;
                 else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
                 else if (string.Equals(a, "--uiaddons", StringComparison.OrdinalIgnoreCase)) uiAddons = true;
+                else if (string.Equals(a, "--uikeys", StringComparison.OrdinalIgnoreCase)) { uiKeys = true; uiTest = true; }
                 else if (a.StartsWith("--uifix=", StringComparison.OrdinalIgnoreCase)) uiFix = a.Substring(8).Trim('"');
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
@@ -219,6 +221,20 @@ namespace Installer
                 System.IO.File.AppendAllText(System.IO.Path.Combine(Core.LogDir, "copytest.txt"),
                     "第三遍（覆盖模式）: 重写 " + c3 + " 跳过 " + s3 + " 失败 " + f3.Count + " 用时 " + Math.Round(sw3.Elapsed.TotalSeconds, 2) + " 秒" +
                     (c3 == pick.Count && s3 == 0 ? "  [OK 全部重写]\r\n" : "  [FAIL 应该全部重写]\r\n"));
+
+                // 停止语义：在开始前请求停止，复制任务应当一个文件都不开写。
+                string tmpStop = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "copytest-stop");
+                if (System.IO.Directory.Exists(tmpStop)) System.IO.Directory.Delete(tmpStop, true);
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(tmpStop, "left4dead2\\addons"));
+                int cs, ss; System.Collections.Generic.List<string> as1, fs1;
+                Work.CancelRequested = true;
+                Work.CopyMods(tmpStop, pick, null, out cs, out ss, out as1, out fs1);
+                Work.CancelRequested = false;
+                int stopFiles = System.IO.Directory.GetFiles(System.IO.Path.Combine(tmpStop, "left4dead2\\addons")).Length;
+                System.IO.File.AppendAllText(System.IO.Path.Combine(Core.LogDir, "copytest.txt"),
+                    "停止测试: 新装 " + cs + " 跳过 " + ss + " 失败 " + fs1.Count + " 落盘 " + stopFiles + " 个"
+                    + (cs == 0 && stopFiles == 0 ? "  [OK 停止后没有开写]\r\n" : "  [FAIL 停止后仍然复制了文件]\r\n"));
+                System.IO.Directory.Delete(tmpStop, true);
                 System.IO.Directory.Delete(tmp, true);
                 return 0;
             }
@@ -245,6 +261,14 @@ namespace Installer
                         if (i > 20 && f.Ready) break;
                     }
                     System.Windows.Forms.Application.DoEvents();
+                    if (uiKeys)
+                    {
+                        // 键盘路径回归：只按方向键 / Enter / 空格，不看鼠标。失败条数当退出码。
+                        int bad = f.UiTestKeys();
+                        System.Windows.Forms.Application.DoEvents();
+                        Console.WriteLine("keyself failures = " + bad);
+                        return bad == 0 ? 0 : 1;
+                    }
                     if (uiParts != null) { f.UiTestParts(uiParts); System.Windows.Forms.Application.DoEvents(); }
                     if (uiTweaks != null) { f.UiTestTweaks(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiLaunch) { f.UiTestLaunch(); System.Windows.Forms.Application.DoEvents(); }

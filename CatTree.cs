@@ -619,6 +619,20 @@ namespace Installer
             };
             lv.ContextMenuStrip = mf.BuildTreeMenu(lv);
             lv.Resize += delegate { LayoutCols(); };
+            lv.AccessibleName = "当前替换位置的 MOD 候选";
+            lv.KeyDown += delegate(object s, KeyEventArgs e)
+            {
+                if (e.KeyCode != Keys.Enter && e.KeyCode != Keys.Space) return;
+                if (lv.SelectedItems.Count == 0) return;
+                ModGroup g = lv.SelectedItems[0].Tag as ModGroup;
+                if (g == null) return;
+                if (selKey == "#search") RevealGroup(g);
+                else if (Current != null && Current.Pile) TogglePile(g);
+                else Choose(g);
+                FillDetail();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            };
             Controls.Add(lv);
 
             // ---- 右下：可叠加的扩展（开火音效 / 只改第一人称模型 / HUD）----
@@ -632,6 +646,15 @@ namespace Installer
                 ToggleExtra(li.Tag as ModGroup);
             };
             lvExtra.Resize += delegate { LayoutCols(); };
+            lvExtra.AccessibleName = "可叠加扩展";
+            lvExtra.KeyDown += delegate(object s, KeyEventArgs e)
+            {
+                if (e.KeyCode != Keys.Enter && e.KeyCode != Keys.Space) return;
+                if (lvExtra.SelectedItems.Count == 0) return;
+                ToggleExtra(lvExtra.SelectedItems[0].Tag as ModGroup);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            };
             Controls.Add(lvExtra);
 
             lblTitle = new Label();
@@ -699,6 +722,10 @@ namespace Installer
 
             tipApply = new ToolTip();
             tipApply.SetToolTip(btnApply, "把「开关」列里点出来的改动一次性写进 left4dead2\\addonlist.txt（只改 1/0，不动任何 vpk 文件）");
+            // 小标题在窄窗口放不下整句话，完整的解释挂在这里
+            tipApply.SetToolTip(lblExtraTitle,
+                "可叠加的扩展 = 不换本体模型、能和模型同时生效的东西：开火音效、第一人称手部模型、HUD 图标。\r\n"
+                + "这个位置目前还没有这类 MOD；有的话会列在下面，点一下开 / 关，可以多选。");
 
             Resize += delegate { LayoutSelf(); };
             UpdateApplyButton();
@@ -720,7 +747,7 @@ namespace Installer
             v.ShowItemToolTips = true;
             v.HideSelection = false;
             ImageList pad = new ImageList();
-            pad.ImageSize = new Size(1, 24);
+            pad.ImageSize = new Size(1, 28);
             pad.ColorDepth = ColorDepth.Depth32Bit;
             v.SmallImageList = pad;
             v.StateImageList = Dots();
@@ -1371,6 +1398,143 @@ namespace Installer
             return null;
         }
 
+        /// <summary>
+        /// 自测：只走键盘路径 —— ↑↓ 移动焦点、Home/End/PageUp/PageDown 跳转、
+        /// Enter 与空格选中槽位、←→ 折叠展开大类。返回不通过的条数。
+        /// 之所以要单独跑一遍：鼠标路径一直有测，键盘路径以前只有代码没有证据。
+        /// </summary>
+        internal int SelfTestKeys()
+        {
+            int bad = 0;
+            if (slots.Count == 0 || body.RowCount == 0)
+            {
+                Core.Log("WARN", "KEY 库里没有槽位，跳过键盘自测");
+                return 0;
+            }
+            string orig = selKey;
+            Core.Log("INFO", "KEY 开始：行数 " + body.RowCount + "，槽位 " + slots.Count + " 个");
+
+            // 1) 首行 / 上下移动
+            body.TestKey(Keys.Home);
+            if (body.FocusIndex != 0) { bad++; Core.Log("FAIL", "KEY Home 之后焦点在第 " + body.FocusIndex + " 行，应该是第 0 行"); }
+            else Core.Log("INFO", "KEY Home → 第 0 行");
+
+            if (body.RowCount > 2)
+            {
+                body.TestKey(Keys.Down);
+                if (body.FocusIndex != 1) { bad++; Core.Log("FAIL", "KEY ↓ 之后焦点在第 " + body.FocusIndex + " 行，应该是第 1 行"); }
+                else Core.Log("INFO", "KEY ↓ → 第 1 行");
+
+                body.TestKey(Keys.Up);
+                if (body.FocusIndex != 0) { bad++; Core.Log("FAIL", "KEY ↑ 没有回到第 0 行（现在第 " + body.FocusIndex + " 行）"); }
+                else Core.Log("INFO", "KEY ↑ → 第 0 行");
+
+                // 2) End / PageUp / PageDown（越界要夹住，不能跑到行外面）
+                int last = body.RowCount - 1;
+                body.TestKey(Keys.End);
+                if (body.FocusIndex != last) { bad++; Core.Log("FAIL", "KEY End 焦点在第 " + body.FocusIndex + " 行，应该是最后一行 " + last); }
+                else Core.Log("INFO", "KEY End → 最后一行（" + last + "）");
+
+                body.TestKey(Keys.Down);
+                if (body.FocusIndex != last) { bad++; Core.Log("FAIL", "KEY 最后一行再按 ↓ 跑出了范围（第 " + body.FocusIndex + " 行）"); }
+                else Core.Log("INFO", "KEY 最后一行再按 ↓ 仍停在最后一行");
+
+                body.TestKey(Keys.PageUp);
+                int pu = body.FocusIndex;
+                if (pu >= last) { bad++; Core.Log("FAIL", "KEY PageUp 没有往上走（仍在第 " + pu + " 行）"); }
+                else Core.Log("INFO", "KEY PageUp → 第 " + pu + " 行");
+
+                body.TestKey(Keys.PageDown);
+                if (body.FocusIndex <= pu) { bad++; Core.Log("FAIL", "KEY PageDown 没有往下走（仍在第 " + body.FocusIndex + " 行）"); }
+                else Core.Log("INFO", "KEY PageDown → 第 " + body.FocusIndex + " 行");
+            }
+
+            // 3) ←→ 折叠展开：第 0 行是大类
+            body.TestKey(Keys.Home);
+            if (body.FocusedRowIsCat)
+            {
+                int n0 = body.RowCount;
+                body.TestKey(Keys.Left);
+                int n1 = body.RowCount;
+                if (n1 >= n0) { bad++; Core.Log("FAIL", "KEY ← 没折叠第 0 行的大类（行数 " + n0 + " → " + n1 + "）"); }
+                else Core.Log("INFO", "KEY ← 折叠大类：行数 " + n0 + " → " + n1);
+
+                body.TestKey(Keys.Right);
+                int n2 = body.RowCount;
+                if (n2 != n0) { bad++; Core.Log("FAIL", "KEY → 展开后行数是 " + n2 + "，应该回到 " + n0); }
+                else Core.Log("INFO", "KEY → 展开回来：行数 " + n2);
+            }
+            else Core.Log("WARN", "KEY 第 0 行不是大类，跳过折叠测试（树结构可能变了）");
+
+            // 3b) 小分类层也要能收：同一条代码路径，但走的是 SetSubFolded
+            body.TestKey(Keys.Home);
+            bool sawSub = false;
+            for (int i = 0; i < body.RowCount; i++)
+            {
+                if (body.FocusedRowIsSub) { sawSub = true; break; }
+                body.TestKey(Keys.Down);
+            }
+            if (!sawSub) Core.Log("WARN", "KEY 树里没有小分类行，跳过小分类折叠测试");
+            else
+            {
+                int s0 = body.RowCount;
+                body.TestKey(Keys.Left);
+                int s1 = body.RowCount;
+                if (s1 >= s0) { bad++; Core.Log("FAIL", "KEY ← 没折叠小分类（行数 " + s0 + " → " + s1 + "）"); }
+                else Core.Log("INFO", "KEY ← 折叠小分类：行数 " + s0 + " → " + s1);
+                Core.Log("INFO", "KEY 折叠后焦点在第 " + body.FocusIndex + " 行" + (body.FocusedRowIsSub ? "（仍是小分类行）" : "（不是小分类行了）"));
+
+                body.TestKey(Keys.Right);
+                int s2 = body.RowCount;
+                if (s2 != s0) { bad++; Core.Log("FAIL", "KEY → 小分类展开后行数 " + s2 + "，应该回到 " + s0); }
+                else Core.Log("INFO", "KEY → 小分类展开回来：行数 " + s2);
+            }
+
+            // 4) Enter 选中：一路 ↓ 找第一个槽位行
+            body.TestKey(Keys.Home);
+            string k1 = "";
+            for (int i = 0; i < body.RowCount; i++)
+            {
+                if (body.FocusedRowIsSlot) { k1 = body.FocusedSlotKey; break; }
+                body.TestKey(Keys.Down);
+            }
+            if (body.FocusedRowIsSlot && k1.Length == 0) k1 = body.FocusedSlotKey;
+            if (k1.Length == 0)
+            {
+                bad++;
+                Core.Log("FAIL", "KEY 一路按 ↓ 都没落到槽位行上");
+            }
+            else
+            {
+                body.TestKey(Keys.Enter);
+                if (selKey != k1) { bad++; Core.Log("FAIL", "KEY Enter 之后选中「" + selKey + "」，应该是「" + k1 + "」"); }
+                else Core.Log("INFO", "KEY Enter → 选中槽位「" + k1 + "」");
+            }
+
+            // 5) 空格选中另一件：两条键都得能选，不能只有 Enter 好使
+            if (k1.Length > 0)
+            {
+                string k2 = "";
+                for (int i = 0; i < body.RowCount; i++)
+                {
+                    body.TestKey(Keys.Down);
+                    if (body.FocusedRowIsSlot && body.FocusedSlotKey != k1) { k2 = body.FocusedSlotKey; break; }
+                }
+                if (k2.Length == 0) Core.Log("WARN", "KEY 后面没有第二个槽位，跳过空格键测试");
+                else
+                {
+                    body.TestKey(Keys.Space);
+                    if (selKey != k2) { bad++; Core.Log("FAIL", "KEY 空格之后选中「" + selKey + "」，应该是「" + k2 + "」"); }
+                    else Core.Log("INFO", "KEY 空格 → 选中槽位「" + k2 + "」");
+                }
+            }
+
+            // 6) 收尾：把选中恢复成测试前的位置，别改动用户看到的界面状态
+            if (orig.Length > 0 && orig != "#unmatched" && selKey != orig) SelectSlot(orig);
+            Core.Log("INFO", "KEY 结束：不通过 " + bad + " 条");
+            return bad;
+        }
+
         public void SetFolded(string cat, bool on)
         {
             if (on) folded.Add(cat); else folded.Remove(cat);
@@ -1646,8 +1810,9 @@ namespace Installer
                 if (s.Extras.Count == 0)
                 {
                     lvExtra.Visible = false;
-                    lblExtraTitle.Text = "可叠加的扩展：这个位置还没有"
-                                        + "（开火音效 / 只改第一人称模型 / HUD 图标，有就会出现在下面）";
+                    // 窄窗口下这一行只有 330px 左右，写太长会被省略号切掉；
+                    // 完整的说法放在悬停提示里（见 lblExtraTitle 的 ToolTip）。
+                    lblExtraTitle.Text = "可叠加的扩展：这个位置没有（音效 / 第一人称 / HUD）";
                 }
                 else
                 {
@@ -1721,11 +1886,10 @@ namespace Installer
             try
             {
                 lv.Items.Clear();
-                string K = kw.ToLowerInvariant();
                 int n = 0;
                 foreach (ModGroup g in Catalog.Groups)
                 {
-                    if (string.IsNullOrEmpty(g.Name) || g.Name.ToLowerInvariant().IndexOf(K, StringComparison.Ordinal) < 0) continue;
+                    if (string.IsNullOrEmpty(g.Name) || !mf.MatchGroup(g, kw)) continue;
                     ListViewItem li = new ListViewItem(g.Name);
                     ModItem mi = g.Main;
                     li.SubItems.Add(g.Cat + (mi == null || string.IsNullOrEmpty(mi.Sub) ? "" : " · " + mi.Sub));
@@ -1736,7 +1900,7 @@ namespace Installer
                     lv.Items.Add(li);
                     n++;
                 }
-                lblCur.Text = n + " 个名字里带「" + kw + "」的 MOD · 点一行跳到他该在的位置";
+                lblCur.Text = n + " 个匹配「" + kw + "」的 MOD · 名称 / 替换内容 / 位置都参与搜索 · 点一行跳到他该在的位置";
             }
             finally { lv.EndUpdate(); }
             lblFoot.Text = "清空搜索框回到方案树；这一页只找东西，不改勾选。";
@@ -1963,9 +2127,21 @@ namespace Installer
         private static void Cols(ListView v)
         {
             if (v == null || v.Columns.Count < 3) return;
-            int w = v.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8;
-            const int kindW = 100, sizeW = 74, instW = 84, swW = 62;
-            int nameW = Math.Max(120, w - kindW - sizeW - instW - swW);
+            int w = Math.Max(120, v.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8);
+            int kindW, sizeW, instW, swW;
+            if (w >= 440)
+            {
+                kindW = 100; sizeW = 74; instW = 84; swW = 62;
+            }
+            else
+            {
+                // 最小窗口下先把信息量最低的“改了什么”收掉，保住名称、大小、已装、开关。
+                // 不横向滚动：这一栏本来就是窄窗口里最容易被裁掉的区域。
+                kindW = 0;
+                if (w >= 340) { sizeW = 64; instW = 70; swW = 54; }
+                else { sizeW = 56; instW = 60; swW = 46; }
+            }
+            int nameW = Math.Max(90, w - kindW - sizeW - instW - swW);
             v.Columns[0].Width = nameW;
             v.Columns[1].Width = kindW;
             v.Columns[2].Width = sizeW;
@@ -1982,10 +2158,11 @@ namespace Installer
     // ============================================================
     internal sealed class SlotTree : Control
     {
-        private const int RowH = 26;
+        private const int RowH = 28;
         private readonly CatTree owner;
         private readonly List<TreeRow> rows = new List<TreeRow>();
         private int hover = -1;
+        private int focus = -1;
         private readonly ToolTip tip = new ToolTip();
         private int tipRow = -2;
 
@@ -1997,15 +2174,51 @@ namespace Installer
             Font = Theme.UI;
             Cursor = Cursors.Hand;
             TabStop = true;
+            AccessibleRole = AccessibleRole.List;
+            AccessibleName = "MOD 方案树";
+            AccessibleDescription = "用上下方向键移动，左右键展开或折叠，Enter 或空格选择";
         }
 
         public int RowCount { get { return rows.Count; } }
+        internal int FocusIndex { get { return focus; } }
 
         public void SetRows(List<TreeRow> r)
         {
+            // 重建行（折叠 / 展开 / 重新分组）时按住键盘焦点原来那一行。
+            // 以前一律 focus = -1，结果按 ← 收一段之后焦点跳回第 0 行，
+            // 紧接着按 → 展开的就不是刚才那一段了 —— 键盘用户会直接迷路。
+            string keepSlot = null, keepCat = null, keepSub = null;
+            bool keepNote = false;
+            if (focus >= 0 && focus < rows.Count)
+            {
+                TreeRow old = rows[focus];
+                if (old.Slot != null) keepSlot = old.Slot.Key;
+                else if (old.IsSub) { keepCat = old.Cat; keepSub = old.Sub; }
+                else if (old.IsCat) keepCat = old.Cat;
+                else if (old.IsNote) keepNote = true;
+            }
+
             rows.Clear();
             if (r != null) rows.AddRange(r);
             tipRow = -2;
+            focus = -1;
+            if (keepSlot != null || keepCat != null || keepNote)
+            {
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    TreeRow x = rows[i];
+                    // 四种行分别按各自的身份找，别串：小分类行也带着大类名，
+                    // 混着判会先撞上大类标题，焦点就被拽到顶上了。
+                    if (keepSlot != null) { if (x.Slot != null && x.Slot.Key == keepSlot) { focus = i; break; } }
+                    else if (keepSub != null) { if (x.IsSub && x.Cat == keepCat && x.Sub == keepSub) { focus = i; break; } }
+                    else if (keepNote) { if (x.IsNote) { focus = i; break; } }
+                    else if (keepCat != null) { if (x.IsCat && x.Cat == keepCat) { focus = i; break; } }
+                }
+                // 那一行被折叠掉了（子项全收起来），就退回它所属的大类标题，别让焦点凭空消失
+                if (focus < 0 && keepCat != null)
+                    for (int i = 0; i < rows.Count; i++)
+                        if (rows[i].IsCat && rows[i].Cat == keepCat) { focus = i; break; }
+            }
             Height = Math.Max(12, rows.Count * RowH + 6);
             Invalidate();
         }
@@ -2025,6 +2238,7 @@ namespace Installer
                 {
                     TreeRow r = rows[i];
                     int y = i * RowH + 4;
+                    bool focused = Focused && i == focus;
 
                     if (r.IsCat)
                     {
@@ -2162,6 +2376,17 @@ namespace Installer
                             | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                 }
             }
+
+            // 键盘焦点必须看得见；虚线画在整行外沿，不与“已选”左边的红色实条混在一起。
+            if (Focused && focus >= 0 && focus < rows.Count)
+            {
+                int fy = focus * RowH + 4;
+                using (Pen p = new Pen(Theme.Accent, 1f))
+                {
+                    p.DashStyle = DashStyle.Dot;
+                    g.DrawRectangle(p, 1, fy + 1, Math.Max(1, W - 3), RowH - 2);
+                }
+            }
         }
 
         private static void DrawTri(Graphics g, int cx, int cy, bool open)
@@ -2257,29 +2482,143 @@ namespace Installer
             int i = IndexAt(e.Y);
             if (i < 0) return;
             TreeRow r = rows[i];
+            Focus();
+            focus = i;
+            Invalidate();
             // 右键：分支的重命名 / 解散，以及「新建分支…」——这里也是建分支的入口
             if (e.Button == MouseButtons.Right)
             {
                 owner.TreeMenuFor(r, PointToScreen(e.Location));
                 return;
             }
-            if (r.IsCat)
-            {
-                owner.SetFolded(r.Cat, !owner.IsFolded(r.Cat));
-            }
-            else if (r.IsSub)
-            {
-                owner.SetSubFolded(r.Cat, r.Sub, !owner.IsSubFolded(r.Cat, r.Sub));
-            }
-            else if (r.IsNote)
-            {
-                owner.SelectUnmatched();
-            }
-            else if (r.Slot != null)
-            {
-                owner.SelectSlot(r.Slot.Key);
-            }
+            if (e.Button == MouseButtons.Left) ActivateRow(i);
             base.OnMouseDown(e);
+        }
+
+        protected override void OnGotFocus(EventArgs e)
+        {
+            if (focus < 0)
+            {
+                for (int i = 0; i < rows.Count; i++)
+                    if (rows[i].Slot != null && rows[i].Slot.Key == owner.SelectedKey) { focus = i; break; }
+                if (focus < 0 && rows.Count > 0) focus = 0;
+            }
+            Invalidate();
+            base.OnGotFocus(e);
+        }
+
+        protected override void OnLostFocus(EventArgs e)
+        {
+            Invalidate();
+            base.OnLostFocus(e);
+        }
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            Keys k = keyData & Keys.KeyCode;
+            if (k == Keys.Up || k == Keys.Down || k == Keys.Left || k == Keys.Right
+                || k == Keys.PageUp || k == Keys.PageDown || k == Keys.Home || k == Keys.End
+                || k == Keys.Enter || k == Keys.Space) return true;
+            return base.IsInputKey(keyData);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (rows.Count == 0) { base.OnKeyDown(e); return; }
+            if (focus < 0 || focus >= rows.Count) focus = 0;
+
+            Keys k = e.KeyCode;
+            if (k == Keys.Up) MoveFocus(focus - 1);
+            else if (k == Keys.Down) MoveFocus(focus + 1);
+            else if (k == Keys.PageUp) MoveFocus(focus - Math.Max(1, Parent.ClientSize.Height / RowH));
+            else if (k == Keys.PageDown) MoveFocus(focus + Math.Max(1, Parent.ClientSize.Height / RowH));
+            else if (k == Keys.Home) MoveFocus(0);
+            else if (k == Keys.End) MoveFocus(rows.Count - 1);
+            else if (k == Keys.Enter || k == Keys.Space) ActivateRow(focus);
+            else if (k == Keys.Left || k == Keys.Right)
+            {
+                TreeRow r = rows[focus];
+                bool open = r.IsCat ? !owner.IsFolded(r.Cat)
+                          : r.IsSub ? !owner.IsSubFolded(r.Cat, r.Sub)
+                          : false;
+                // 注意：SetFolded 的第二个参数是「折叠」，不是「展开」。
+                // 当前是展开的（open=true）要折叠 → 传 true。以前写成 !open，等于每次都在写回原值，
+                // 按左右键看着像没反应（键盘自测就是这么抓出来的）。
+                if (r.IsCat && ((k == Keys.Left && open) || (k == Keys.Right && !open)))
+                    owner.SetFolded(r.Cat, open);
+                else if (r.IsSub && ((k == Keys.Left && open) || (k == Keys.Right && !open)))
+                    owner.SetSubFolded(r.Cat, r.Sub, open);
+            }
+            else { base.OnKeyDown(e); return; }
+
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+
+        private void MoveFocus(int i)
+        {
+            if (rows.Count == 0) return;
+            int old = focus;
+            focus = Math.Max(0, Math.Min(rows.Count - 1, i));
+            if (old != focus)
+            {
+                InvalidateRow(old);
+                InvalidateRow(focus);
+            }
+            EnsureRowVisible(focus);
+        }
+
+        private void InvalidateRow(int i)
+        {
+            if (i >= 0 && i < rows.Count) Invalidate(new Rectangle(0, i * RowH, Width, RowH + 4));
+        }
+
+        private void EnsureRowVisible(int i)
+        {
+            Panel p = Parent as Panel;
+            if (p == null || !p.VerticalScroll.Visible) return;
+            int y = i * RowH;
+            int h = p.ClientSize.Height;
+            int top = p.VerticalScroll.Value;
+            int bottom = top + h;
+            int v = top;
+            if (y < top + 4) v = Math.Max(0, y - RowH);
+            else if (y + RowH > bottom - 4) v = Math.Min(p.VerticalScroll.Maximum, y - h + RowH * 2);
+            if (v == top) return;
+            p.VerticalScroll.Value = Math.Max(p.VerticalScroll.Minimum, Math.Min(p.VerticalScroll.Maximum, v));
+            p.PerformLayout();
+        }
+
+        private void ActivateRow(int i)
+        {
+            if (i < 0 || i >= rows.Count) return;
+            TreeRow r = rows[i];
+            if (r.IsCat) owner.SetFolded(r.Cat, !owner.IsFolded(r.Cat));
+            else if (r.IsSub) owner.SetSubFolded(r.Cat, r.Sub, !owner.IsSubFolded(r.Cat, r.Sub));
+            else if (r.IsNote) owner.SelectUnmatched();
+            else if (r.Slot != null) owner.SelectSlot(r.Slot.Key);
+        }
+
+        // 自测钩子：验证焦点移动和 Enter 激活走的是同一套键盘路径。
+        internal bool FocusedRowIsSlot
+        {
+            get { return focus >= 0 && focus < rows.Count && rows[focus].Slot != null; }
+        }
+        internal bool FocusedRowIsCat
+        {
+            get { return focus >= 0 && focus < rows.Count && rows[focus].IsCat; }
+        }
+        internal bool FocusedRowIsSub
+        {
+            get { return focus >= 0 && focus < rows.Count && rows[focus].IsSub; }
+        }
+        internal string FocusedSlotKey
+        {
+            get { return FocusedRowIsSlot ? rows[focus].Slot.Key : ""; }
+        }
+        internal void TestKey(Keys k)
+        {
+            OnKeyDown(new KeyEventArgs(k));
         }
 
         /// <summary>把某个位置滚进可视区（搜索跳转、定位用）。</summary>
@@ -2321,6 +2660,15 @@ namespace Installer
 {
     public partial class MainForm
     {
+        /// <summary>自测：切到方案树，只走键盘路径跑一遍。返回不通过条数。</summary>
+        internal int UiTestKeys()
+        {
+            if (viewHost == null) { Core.Log("FAIL", "KEY 没有 viewHost"); return 1; }
+            ShowTree();
+            Application.DoEvents();
+            return treeView.SelfTestKeys();
+        }
+
         /// <summary>自测：切到方案树并选某个槽位（按显示名）；传「未归类」就打开未归类页。</summary>
         internal void UiTestSelect(string slotName)
         {
