@@ -697,7 +697,7 @@ namespace Installer
         private static void AddStateCell(ListViewItem li, ModGroup g)
         {
             Color ink, bg;
-            string s = ModForm.StatusOf(g, out ink, out bg);
+            string s = MainForm.StatusOf(g, out ink, out bg);
             li.SubItems.Add(s);
             li.SubItems[3].ForeColor = ink;
             li.SubItems[3].Font = Theme.UISmall;
