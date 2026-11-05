@@ -411,6 +411,9 @@ namespace Installer
                         using (Stream s = hit.Open()) return ReadTree(s);
                     }
                 }
+                // 7z 拿不到包内文件的字节流：tar 对 LZMA 支持不全，图形版 WinRAR 又不写 stdout。
+                // 7z 包里的 vpk 放弃内容识别，交给路径和文件名去分类。
+                if (container.EndsWith(".7z", StringComparison.OrdinalIgnoreCase)) return null;
                 string rar = Catalog.RarExe();
                 if (string.IsNullOrEmpty(rar)) return null;
                 ProcessStartInfo psi = new ProcessStartInfo(rar, "p -inul -y \"" + container + "\" \"" + inner + "\"");

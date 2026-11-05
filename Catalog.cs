@@ -105,6 +105,49 @@ namespace Installer
             return "";
         }
 
+        static string _tarExe;
+        /// <summary>
+        /// Windows 自带的 bsdtar（Win10 1803 起）。Rar.exe 不认 7z，只有它能读出 7z 的目录表，
+        /// 用来列包里的 vpk。解压仍走 WinRAR（见 WinRarExe），因为 bsdtar 对 LZMA 支持不全。
+        /// </summary>
+        public static string TarExe()
+        {
+            if (_tarExe != null) return _tarExe;
+            List<string> cand = new List<string>();
+            try
+            {
+                string win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+                if (!string.IsNullOrEmpty(win)) cand.Add(Path.Combine(win, "System32\\tar.exe"));
+            }
+            catch { }
+            cand.Add(@"C:\Windows\System32\tar.exe");
+            foreach (string c in cand)
+            {
+                try { if (File.Exists(c)) { _tarExe = c; return c; } } catch { }
+            }
+            _tarExe = "";
+            return "";
+        }
+
+        static string _winRarExe;
+        /// <summary>图形版 WinRAR.exe：7z 只有它解得动（Rar.exe 只处理 rar）。</summary>
+        public static string WinRarExe()
+        {
+            if (_winRarExe != null) return _winRarExe;
+            string rar = RarExe();
+            if (rar.Length > 0)
+            {
+                try
+                {
+                    string w = Path.Combine(Path.GetDirectoryName(rar), "WinRAR.exe");
+                    if (File.Exists(w)) { _winRarExe = w; return w; }
+                }
+                catch { }
+            }
+            _winRarExe = "";
+            return "";
+        }
+
         public static bool IsArchive(string path)
         {
             string e = Path.GetExtension(path).ToLowerInvariant();
@@ -129,7 +172,7 @@ namespace Installer
                 catch (Exception ex) { err = ex.Message; }
                 return list;
             }
-            if (ext == ".7z") { err = "暂不支持 7z"; return list; }
+            if (ext == ".7z") return ListArchive7z(arcPath, out err);
 
             string rar = RarExe();
             if (rar.Length == 0) { err = "找不到 WinRAR（Rar.exe）"; return list; }
@@ -182,6 +225,66 @@ namespace Installer
                     }
                     curName = null;
                 }
+            }
+            if (list.Count == 0 && err == null) err = "包里没有 vpk";
+            return list;
+        }
+
+        /// <summary>
+        /// 7z 的目录表：Rar.exe 不认这个格式，用系统自带的 tar.exe 读。
+        /// 输出照系统代码页走（中文机是 GBK），必须按 936 解，否则中文名全变问号。
+        /// </summary>
+        static List<ArcEntry> ListArchive7z(string arcPath, out string err)
+        {
+            err = null;
+            List<ArcEntry> list = new List<ArcEntry>();
+            string tar = TarExe();
+            if (tar.Length == 0) { err = "找不到 tar.exe（需要 Win10 1803 以上），7z 读不了"; return list; }
+            string text;
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo(tar, "-tvf \"" + arcPath + "\"");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                try { psi.StandardOutputEncoding = Encoding.GetEncoding(936); } catch { }
+                using (Process p = Process.Start(psi))
+                {
+                    // stderr 一起读掉，不然缓冲区满了两个进程互相等
+                    string devNull = null;
+                    System.Threading.Thread th = new System.Threading.Thread(delegate()
+                    {
+                        try { devNull = p.StandardError.ReadToEnd(); } catch { }
+                    });
+                    th.IsBackground = true;
+                    th.Start();
+                    text = p.StandardOutput.ReadToEnd();
+                    if (!p.WaitForExit(60000)) { try { p.Kill(); } catch { } }
+                    th.Join(2000);
+                }
+            }
+            catch (Exception ex) { err = ex.Message; return list; }
+
+            // 每行形如：-rw-rw-rw- 0 0 0 165109710 9月 17 20:47 名字.vpk
+            // 前 5 段固定（权限/链接/属主/属组/大小），之后是日期（中文英文都是 3 段），再往后是文件名
+            foreach (string raw in text.Split('\n'))
+            {
+                string line = raw.TrimEnd('\r').Trim();
+                if (line.Length == 0) continue;
+                string[] p = line.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 8) continue;
+                long size = 0;
+                if (!long.TryParse(p[4], out size)) continue;
+                string name = p.Length > 8 ? string.Join(" ", p, 8, p.Length - 8) : p[p.Length - 1];
+                // 日期不吃 3 段时（ISO 那种）会多啃掉文件名的头一个字，退回最后一段再试
+                if (!name.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
+                {
+                    string alt = p[p.Length - 1];
+                    if (alt.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase)) name = alt;
+                    else continue;
+                }
+                list.Add(new ArcEntry { Inner = name.Replace('/', '\\'), Size = size });
             }
             if (list.Count == 0 && err == null) err = "包里没有 vpk";
             return list;
@@ -391,12 +494,18 @@ namespace Installer
                     Core.Log("INFO", "本地模式：不扫 U 盘库，把游戏目录 addons 当库");
                 else if (Directory.Exists(Core.ModRoot))
                 {
+                    // 库根下的目录全都翻，不再只认 addons 前缀：
+                    // 按自己的习惯命名（skeeto素材、新地图…）也能被认到。
+                    // 唯一的例外是程序自己那一摊（扩展平台：安装包 / 日志 / 源码），
+                    // 里面的 vpk 是平台 payload，不是库里的 MOD。
+                    int scanned = 0;
                     foreach (string dir in Directory.GetDirectories(Core.ModRoot))
                     {
-                        string cat = Path.GetFileName(dir);
-                        if (!cat.StartsWith("addons", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (IsSelfDir(dir)) continue;
                         CollectDir(dir, vpkFiles, arcs);
+                        scanned++;
                     }
+                    Core.Log("INFO", "扫库: 库根下 " + scanned + " 个目录全部参与扫描（程序目录已跳过）");
                 }
                 else Core.Log("WARN", "MOD 根目录不存在: " + Core.ModRoot + "（可用「库文件夹管理…」添加电脑上的任意目录）");
 
@@ -446,6 +555,19 @@ namespace Installer
             catch (Exception ex) { Core.Log("FAIL", "扫 MOD 出错: " + ex.Message); }
             ModIdentify.SaveCache();
             SaveArcCache();
+        }
+
+        /// <summary>是不是程序自己的目录（扩展平台：安装包、日志、源码都在这儿）。</summary>
+        static bool IsSelfDir(string dir)
+        {
+            try
+            {
+                string a = Path.GetFullPath(dir).TrimEnd('\\');
+                string b = Path.GetFullPath(Core.PkgDir).TrimEnd('\\');
+                if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
+                return a.StartsWith(b + "\\", StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
         }
 
         /// <summary>把一个目录树里的 vpk / 压缩包都收进候选（主库和自设库目录共用）。</summary>

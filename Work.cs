@@ -566,8 +566,14 @@ namespace Installer
                 catch (Exception ex) { why = ex.Message; return false; }
             }
 
-            string rar = Catalog.RarExe();
-            if (rar.Length == 0) { why = "找不到 WinRAR（Rar.exe）"; return false; }
+            // 7z 只有图形版 WinRAR.exe 认（Rar.exe 只处理 rar），其余都走 Rar.exe
+            bool is7z = string.Equals(Path.GetExtension(arc), ".7z", StringComparison.OrdinalIgnoreCase);
+            string rar = is7z ? Catalog.WinRarExe() : Catalog.RarExe();
+            if (rar.Length == 0)
+            {
+                why = is7z ? "找不到 WinRAR（WinRAR.exe），7z 解不开" : "找不到 WinRAR（Rar.exe）";
+                return false;
+            }
             string tmp = Path.Combine(Path.GetTempPath(), "l4d2-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             try
             {

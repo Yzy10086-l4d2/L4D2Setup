@@ -865,6 +865,19 @@ namespace Installer
         // ---------------------------------------------------------- 构建
 
         /// <summary>重新分组并铺树。库变了才需要调用。</summary>
+        /// <summary>只在数量变化时记一条，免得每改一次分类就刷一遍日志。</summary>
+        void LogUnmatched()
+        {
+            if (unmatched == _lastUnmatchedLogged) return;
+            _lastUnmatchedLogged = unmatched;
+            if (unmatched <= 0) return;
+            List<string> names = new List<string>();
+            for (int i = 0; i < unmatchedGroups.Count && i < 5; i++) names.Add(unmatchedGroups[i].Name);
+            Core.Log("INFO", "有 " + unmatched + " 个 MOD 没认出位置，收在方案树最底部「未归类」："
+                + string.Join("、", names.ToArray()) + (unmatched > names.Count ? " 等" : ""));
+        }
+        int _lastUnmatchedLogged = -1;
+
         public void Rebuild()
         {
             slots = SlotIndex.Build();
@@ -887,6 +900,7 @@ namespace Installer
             unmatchedGroups.Sort(delegate(ModGroup a, ModGroup b)
             { return string.Compare(a.Name, b.Name, StringComparison.CurrentCulture); });
             unmatched = unmatchedGroups.Count;
+            LogUnmatched();
             BuildRows();
             if (selKey.Length > 0 && selKey != "#unmatched")
             {

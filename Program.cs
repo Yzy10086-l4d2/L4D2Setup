@@ -193,6 +193,25 @@ namespace Installer
                 ModItem arcOne = null;
                 foreach (ModItem m in Core.ModList) if (m.IsArchive && m.Size > 0 && m.Size < 80000000) { arcOne = m; break; }
                 if (arcOne != null) pick.Add(arcOne);
+
+                // 7z 用例：Rar.exe 不认 7z，解包要换图形版 WinRAR.exe，这里真解一次核对字节数
+                string z7line;
+                ModItem seven = null;
+                foreach (ModItem m in Core.ModList)
+                    if (m.IsArchive && m.Size > 0 && m.FullPath != null
+                        && m.FullPath.EndsWith(".7z", StringComparison.OrdinalIgnoreCase)) { seven = m; break; }
+                if (seven == null) z7line = "7z 解包: （库里没有 7z）\r\n";
+                else
+                {
+                    string zDst = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "copytest-7z.vpk");
+                    string zWhy;
+                    bool zOk = Work.ExtractOne(seven, zDst, out zWhy);
+                    long zGot = -1;
+                    try { if (System.IO.File.Exists(zDst)) zGot = new System.IO.FileInfo(zDst).Length; } catch { }
+                    z7line = "7z 解包: " + seven.Inner + " | 期望 " + seven.Size + " | 实得 " + zGot
+                           + (zOk && zGot == seven.Size ? "  [OK]\r\n" : "  [FAIL " + (zWhy ?? "字节数不对") + "]\r\n");
+                    try { if (System.IO.File.Exists(zDst)) System.IO.File.Delete(zDst); } catch { }
+                }
                 string tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "copytest");
                 if (System.IO.Directory.Exists(tmp)) System.IO.Directory.Delete(tmp, true);
                 System.IO.Directory.CreateDirectory(System.IO.Path.Combine(tmp, "left4dead2\\addons"));
@@ -204,6 +223,7 @@ namespace Installer
                     "第一遍: 新装 " + c1 + " 跳过 " + s1 + " 失败 " + f1.Count + " 用时 " + Math.Round(sw.Elapsed.TotalSeconds, 2) + " 秒\r\n" +
                     "落盘 " + System.IO.Directory.GetFiles(System.IO.Path.Combine(tmp, "left4dead2\\addons")).Length + " 个\r\n" +
                     "压缩包项: " + (arcOne == null ? "（没找到可测的）" : (arcOne.Container + " | " + arcOne.Inner + " | 期望 " + arcOne.Size + " 字节")) + "\r\n" +
+                    z7line +
                     "失败项: " + (f1.Count == 0 ? "无" : string.Join("、", f1.ToArray())) + "\r\n");
                 int c2, s2; System.Collections.Generic.List<string> a2, f2;
                 System.Diagnostics.Stopwatch sw2 = System.Diagnostics.Stopwatch.StartNew();
