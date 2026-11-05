@@ -1171,7 +1171,7 @@ namespace Installer
             if (treeView != null)
             {
                 if (treeView.SlotCount == 0) treeView.Rebuild();
-                else if (treeView.Visible) treeView.Sync();   // 正在看树：重扫后状态列、圆点要立刻对上
+                else if (treeView.Visible) treeView.SyncIfSame();   // 正在看树：重扫后状态列、圆点要立刻对上（换了新对象就整棵重建）
             }
             UpdateSel();
             SyncTabs();
@@ -1835,9 +1835,21 @@ namespace Installer
             Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             foreach (ModItem it in sel) st[it.Name] = true;
             AddonList.Write(root, st);
-            Core.Log("OK", title + "：写入 " + copied + " 个、跳过 " + skipped + " 个（平台/启动项/参数都没动）");
+            // 状态列是从 addons + addonlist 现读的，装完得重扫一次，否则列表还显示旧状态
+            try { Core.ScanMods(); } catch (Exception exs) { Core.Log("WARN", "装完重扫失败: " + exs.Message); }
+            RefreshMods();
+            if (copied == 0)
+            {
+                // 全都已经在游戏目录里：这条路上一个文件都不用动，只改开关
+                Core.Log("OK", title + "：全部已在游戏目录里，只把开关写成「开」，没有复制文件");
+                MessageBox.Show("这些 MOD 本来就在游戏目录里，这次没有复制、移动任何文件。\r\n\r\n"
+                    + "只把 addonlist 里它们的开关写成「开」（" + skipped + " 个），进游戏就生效。\r\n"
+                    + "其它 MOD 的开关状态没动，平台、启动项、参数也没动。", title);
+                return;
+            }
+            Core.Log("OK", title + "：写入 " + copied + " 个、跳过 " + skipped + " 个（已在游戏里的只切开关，平台/启动项/参数都没动）");
             MessageBox.Show("装好了：" + what + "，共 " + copied + " 个文件"
-                + (skipped > 0 ? "（已是同样大小，跳过 " + skipped + " 个）" : "") + "。\r\n\r\n"
+                + (skipped > 0 ? "（另有 " + skipped + " 个已在游戏里，只切了开关）" : "") + "。\r\n\r\n"
                 + "已经写进 addonlist，进游戏就生效。\r\n"
                 + "其它 MOD 的开关状态没动，平台、启动项、参数也没动。", title);
         }
@@ -2495,47 +2507,89 @@ namespace Installer
                 MessageBox.Show("这个游戏目录写不进去（可能只读、被占用或权限不足）。\r\n可以试试以管理员身份运行，或换一个有写权限的目录。", "目录不可写");
                 return;
             }
-            if (GameRunning())
+            // 先分清：哪些已经在游戏根目录里（只切开关就够），哪些确实要拷进去。
+            // 判「已装」只看同名 + 同字节大小，和列表「已装」列同一套判定；
+            // 不用 Core.SameFile（它连 mtime 一起比），否则时间戳差一点就白拷一遍 ——
+            // 已装的 MOD 只该动 addonlist 的 1/0，不该把文件重新搬一次。
+            string addonsDir = Path.Combine(Path.Combine(root, "left4dead2"), "addons");
+            HashSet<string> selNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<ModItem> inPlace = new List<ModItem>();
+            List<ModItem> needCopy = new List<ModItem>();
+            foreach (ModItem it in sel)
             {
-                MessageBox.Show("游戏还开着。先把《求生之路2》完全退出（不是最小化），否则 vpk 被占用，铺不进去。", "游戏正在运行");
+                if (!selNames.Add(it.Name)) continue;                   // 同名只算一次
+                string d = Path.Combine(addonsDir, it.Name);
+                bool here = false;
+                try { here = it.FromGame || (File.Exists(d) && new FileInfo(d).Length == it.Size); }
+                catch { here = it.FromGame; }
+                if (here) inPlace.Add(it); else needCopy.Add(it);
+            }
+            // 要关掉的旧 MOD：本位置里已经进游戏的都算（库里认识的和只在游戏目录里的都一样），
+            // 但本次选中的不能关 —— 选中的永远赢。
+            List<ModItem> offReal = new List<ModItem>();
+            if (off != null)
+                foreach (ModItem it in off)
+                    if (!selNames.Contains(it.Name)) offReal.Add(it);
+
+            // 纯切开关不动文件，游戏开着也能改（进游戏才读 addonlist）；要拷文件就必须先退游戏
+            if (needCopy.Count > 0 && GameRunning())
+            {
+                MessageBox.Show("这次要往游戏目录里拷 " + needCopy.Count + " 个 vpk，游戏还开着，文件被占用。\r\n\r\n"
+                    + "先把《求生之路2》完全退出（不是最小化）。\r\n"
+                    + "如果只是想改开关，把勾选改成已经装好的那些，就不用退游戏。", "游戏正在运行");
                 return;
             }
 
             long need = 0;
-            foreach (ModItem it in sel) need += it.Size;
-            string q = "只装「" + slotName + "」这一处：\r\n\r\n"
-                     + "· 铺 " + sel.Count + " 个文件，共 " + Core.Human(need) + "\r\n";
-            if (off.Count > 0)
-                q += "· 关掉这个位置之前装的 " + off.Count + " 个（文件保留，想用回来点一下就行）\r\n";
+            foreach (ModItem it in needCopy) need += it.Size;
+            string q = "只装「" + slotName + "」这一处：\r\n\r\n";
+            if (inPlace.Count > 0)
+                q += "· 已在游戏里：" + inPlace.Count + " 个 → 只改开关，不复制、不移动、不删除文件\r\n";
+            if (needCopy.Count > 0)
+                q += "· 需要拷进去：" + needCopy.Count + " 个，共 " + Core.Human(need) + "\r\n";
+            if (offReal.Count > 0)
+                q += "· 关掉这个位置之前装的 " + offReal.Count + " 个（文件留在原地，只把开关写成 0）\r\n";
             if (extra != null && extra.Count > 0)
                 q += "· 另有 " + extra.Count + " 处开关改动一并写入 addonlist\r\n";
-            q += "· 其它位置、L4N / dxvk / 参数配置一律不动\r\n\r\n继续吗？";
+            q += "· 其它位置、L4N / dxvk / 参数配置一律不动\r\n";
+            if (needCopy.Count == 0) q += "\r\n这次不复制任何文件，只写 addonlist.txt。";
+            q += "\r\n\r\n继续吗？";
             if (MessageBox.Show(q, "只装这个位置", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
 
             bool overwrite = !rdSkip.Checked;
             SetBusy(true);
             bar.Style = ProgressBarStyle.Marquee;
-            SetStatus("正在装「" + slotName + "」…");
-            Core.Log("STEP", "只装位置「" + slotName + "」：" + sel.Count + " 个文件"
-                + (off.Count > 0 ? "，同时关掉旧的 " + off.Count + " 个" : ""));
+            SetStatus(needCopy.Count == 0 ? "正在改开关「" + slotName + "」…" : "正在装「" + slotName + "」…");
+            Core.Log("STEP", "只装位置「" + slotName + "」：已在游戏里 " + inPlace.Count + " 个（只切开关，不动文件）"
+                + (needCopy.Count > 0 ? "，需要拷入 " + needCopy.Count + " 个" : "，不复制任何文件")
+                + (offReal.Count > 0 ? "，同时关掉旧的 " + offReal.Count + " 个" : ""));
 
             Thread th = new Thread(delegate()
             {
                 try
                 {
                     Work.Overwrite = overwrite;
-                    int copied, skipped;
-                    List<string> added, failed;
-                    Work.CopyMods(root, sel, delegate(long done, long total)
+                    // 只把「游戏里还没有的」交给复制；已在游戏里的一个都不碰，省得重新搬一遍
+                    int copied = 0, skipped = inPlace.Count;
+                    List<string> added = new List<string>(), failed = new List<string>();
+                    if (needCopy.Count > 0)
                     {
-                        int pct = total > 0 ? (int)(done * 1000 / total) : 0;
-                        SetBar(pct);
-                    }, out copied, out skipped, out added, out failed);
+                        int c2 = 0, s2 = 0;
+                        List<string> a2, f2;
+                        Work.CopyMods(root, needCopy, delegate(long done, long total)
+                        {
+                            int pct = total > 0 ? (int)(done * 1000 / total) : 0;
+                            SetBar(pct);
+                        }, out c2, out s2, out a2, out f2);
+                        copied = c2; skipped += s2;
+                        if (a2 != null) added.AddRange(a2);
+                        if (f2 != null) failed.AddRange(f2);
+                    }
 
                     Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                     if (extra != null) foreach (KeyValuePair<string, bool> kv in extra) st[kv.Key] = kv.Value;
-                    foreach (ModItem it in sel) st[it.Name] = true;
-                    foreach (ModItem it in off) st[it.Name] = false;
+                    foreach (ModItem it in offReal) st[it.Name] = false;     // 先关旧的
+                    foreach (ModItem it in sel) st[it.Name] = true;          // 选中的最后写，永远赢
                     string bak = AddonList.Write(root, st);
                     Core.Log("OK", "启用状态已写入（原文件备份 " + Path.GetFileName(bak) + "）");
                     if (failed.Count > 0)
@@ -2551,9 +2605,11 @@ namespace Installer
                         SetBusy(false);
                         SetBar(0);
                         SetStatus("就绪");
-                        string tip = "「" + slotName + "」装好了：铺 " + copied + " 个"
-                                   + (skipped > 0 ? "，跳过 " + skipped + " 个已装的" : "")
-                                   + (off.Count > 0 ? "，关掉旧的 " + off.Count + " 个" : "");
+                        string tip = "「" + slotName + "」已更新：";
+                        if (copied > 0) tip += "拷入 " + copied + " 个";
+                        if (skipped > 0) tip += (copied > 0 ? "，" : "") + skipped + " 个已在游戏里，只切了开关";
+                        if (offReal.Count > 0) tip += (copied > 0 || skipped > 0 ? "，" : "") + "关掉旧的 " + offReal.Count + " 个";
+                        if (copied == 0) tip += "\r\n\r\n没有复制、移动或删除任何文件，只写了 addonlist.txt。";
                         Core.Log(failed.Count == 0 ? "OK" : "WARN", tip);
                         MessageBox.Show(tip
                             + (failed.Count > 0 ? "\r\n\r\n有 " + failed.Count + " 个复制失败，详见日志。" : "")

@@ -1093,6 +1093,23 @@ namespace Installer
             FillDetail();
         }
 
+        /// <summary>
+        /// 重扫过后 Catalog.Groups 是新建的一批对象，槽位里还攥着旧的 —— 那样状态列会一直显示旧值。
+        /// 这里探一下引用是否还新鲜：换了就整棵重建，没换就只重画（搜索打字不该重排列表）。
+        /// </summary>
+        public void SyncIfSame()
+        {
+            if (slots.Count == 0) { Rebuild(); return; }
+            ModGroup probe = null;
+            foreach (Slot s in slots)
+            {
+                if (s.Items.Count > 0) { probe = s.Items[0]; break; }
+                if (s.Extras.Count > 0) { probe = s.Extras[0]; break; }
+            }
+            if (probe != null && Catalog.Groups.IndexOf(probe) < 0) { Rebuild(); return; }
+            Sync();
+        }
+
         public void SelectUnmatched()
         {
             if (selKey == "#unmatched") return;
@@ -1170,8 +1187,9 @@ namespace Installer
                 }
                 else
                 {
-                    // 同一位置是互斥的：以前装的那个要关掉，否则两个模型一起加载会打架
-                    foreach (ModItem p in g.Parts) if (p.Installed) off.Add(p);
+                    // 同一位置互斥：以前装过的（库里的、或只在游戏目录里的）只把开关写成 0，文件一律不动。
+                    // 只在游戏目录里的那些（FromGame）以前漏了，会导致同一位置两个 MOD 同时开着。
+                    foreach (ModItem p in g.Parts) if (p.Installed || p.FromGame) off.Add(p);
                 }
             }
             // 扩展可叠加：没勾就不动，别把玩家原来在用的音效 / HUD 顺手关了

@@ -468,10 +468,13 @@ namespace Installer
                     continue;
                 }
                 string d = Path.Combine(addons, it.Name);
-                // 压缩包里的项没有独立文件可对比，按「已经有个同大小的同名 vpk」算装上
-                bool same = it.IsArchive
-                    ? (File.Exists(d) && new FileInfo(d).Length == it.Size)
-                    : Core.SameFile(it.FullPath, d);
+                // 判「已装」只看同名 + 同字节大小，和列表「已装」列同一套判定。
+                // 以前用 Core.SameFile（还比 mtime），从别处拷来的同名同大小文件会被当成没装、白拷一遍；
+                // 已装的 MOD 只该动 addonlist 的开关，不该把文件重新搬一次。
+                // 勾了「覆盖重装」才强制重写，那是修坏文件的路径。
+                bool same = false;
+                try { same = File.Exists(d) && new FileInfo(d).Length == it.Size; }
+                catch { same = false; }
                 if (same && !Overwrite) { s++; done += it.Size; }
                 else todo.Add(it);
             }
