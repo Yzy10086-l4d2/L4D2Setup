@@ -1034,12 +1034,28 @@ namespace Installer
             cms.Items.Add("选择部件…（模型+材质+颜色的组合装）", null, delegate { PickPartsIn(lv); });
             cms.Items.Add(new ToolStripSeparator());
             cms.Items.Add("只装这个 MOD（不动平台/启动项）", null, delegate { InstallThisOne(lv); });
+            cms.Items.Add("开 / 关这个 MOD（只改 addonlist 的 1/0，不动文件）", null, delegate { ToggleSwitchIn(lv); });
             cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
             cms.Items.Add("删除这个 MOD → 回收目录（可反悔）", null, delegate { DeleteInTree(lv); });
             cms.Items.Add(new ToolStripSeparator());
             cms.Items.Add("设置 MOD 分类…（算哪一类 / 替换什么）", null, delegate { SetModCatIn(lv); });
             cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
             return cms;
+        }
+
+        /// <summary>
+        /// 右键菜单的「开 / 关这个 MOD」：和点列表最右边「开关 ⇄」列是同一个动作
+        /// （攒进 pending，最后统一按「应用改动」写 addonlist；文件一个都不动）。
+        /// 开关列那一小格不好点中，右键这条是给鼠标手抖的人留的第二条路。
+        /// </summary>
+        internal void ToggleSwitchIn(ListView lv)
+        {
+            ListViewItem li = RowTarget(lv);
+            if (li == null) { MessageBox.Show("先右键点一行 MOD。"); return; }
+            ModGroup g = li.Tag as ModGroup;
+            if (g == null) { MessageBox.Show("这一行不是 MOD（标题行或「留原版」没有开关）。"); return; }
+            if (treeView == null) return;
+            treeView.ToggleFromMenu(g);
         }
 
         /// <summary>
