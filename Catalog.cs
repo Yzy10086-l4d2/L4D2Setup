@@ -57,7 +57,7 @@ namespace Installer
         public const string CAT_MISC = "杂项";
         public const string CAT_SPRAY = "喷漆";
 
-        // 大类的顺序只有一份：CatPrefs 里那份（页签、方案树都按它排）。
+        // 大类的顺序只有一份：CatPrefs 里那份（方案树按它排）。
         // 内建六类永远在里面，用户新建的分类跟在后面，可以上下移。
         public static string[] Cats { get { return CatPrefs.CatsArray(); } }
 
@@ -639,7 +639,7 @@ namespace Installer
             string[] segs0 = DirSegs(it);
 
             // 0) 放在「三方地图」目录下的一律算地图：路径比包里的东西可靠
-            //    （有个「叛乱」地图包里带了人物模型，之前被判成人物，进不了地图页签）
+            //    （有个「叛乱」地图包里带了人物模型，之前被判成人物，进不了「地图」那一堆）
             int iMap0 = IndexOfContain(segs0, "三方地图");
             if (iMap0 >= 0)
             {
@@ -857,7 +857,7 @@ namespace Installer
 
         /// <summary>
         /// 人工分类落到数据上：改过分类的 MOD 直接换 Cat。
-        /// 页签、方案树、搜索都读 Cat，所以一处改完全局跟着走 —— 不再另有一套「标签」。
+        /// 方案树、搜索都读 Cat，所以一处改完全局跟着走 —— 不再另有一套「标签」。
         /// </summary>
         public static void ApplyCats()
         {
@@ -884,7 +884,7 @@ namespace Installer
 
         /// <summary>
         /// 大类改名：原来归在这一类的 MOD 一起搬过去。
-        /// 不搬的话，自动分类的那批（没人指定过的）Cat 还是旧名，旧名又已从分类表里删掉 —— 它们会掉出页签。
+        /// 不搬的话，自动分类的那批（没人指定过的）Cat 还是旧名，旧名又已从分类表里删掉 —— 它们会掉出树。
         /// </summary>
         public static void AdoptCatRename(string oldCat, string newCat)
         {

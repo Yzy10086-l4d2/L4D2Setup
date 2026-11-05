@@ -607,7 +607,7 @@ namespace Installer
                 if (e.Button == MouseButtons.Right) SelectRow(lv, e);
             };
             // 双击套装行 = 挑部件（医疗包那种「模型 + 基础材质 + 选一个颜色」的组合）。
-            // 单击已经套了默认部件；想换颜色只能走这里，不能让这条路只剩老页签里那条。
+            // 单击已经套了默认部件；想换颜色只能走这里，不能让这条路只剩右键菜单里那条。
             lv.DoubleClick += delegate
             {
                 if (lv.SelectedItems.Count == 0) return;
@@ -904,7 +904,7 @@ namespace Installer
             AddPile("喷漆", "喷漆", "喷漆", delegate(ModGroup g) { return g.Cat == "喷漆"; });
 
             // 我的分支：就算一个分支都没有，也留一行「＋ 新建分支…」，
-            // 否则用户永远不知道有这个功能（页签删掉之后，这是唯一入口）。
+            // 否则用户永远不知道有这个功能（没有别的入口）。
             MyBranch.Ensure();
             foreach (string nm in MyBranch.Names())
             {
@@ -1541,8 +1541,8 @@ namespace Installer
 
         private void FillDetail()
         {
-            UpdateApplyButton();               // 攒着的开关改动跨位置、跨页签都算，跟着按钮显示数量
-            // 搜索优先：搜了词就只看结果（页签删掉以后，搜索只剩这一条路可走）
+            UpdateApplyButton();               // 攒着的开关改动跨位置都算，跟着按钮显示数量
+            // 搜索优先：搜了词就只看结果（搜索只剩这一条路可走）
             string kw = mf.SearchText;
             if (kw.Length > 0) { ShowSearch(kw); return; }
             if (selKey == "#unmatched")
@@ -1707,7 +1707,7 @@ namespace Installer
 
         /// <summary>
         /// 搜索结果页：搜了词就只列名字里带这个词的 MOD，点一行跳回它在树里的位置。
-        /// 页签删掉之后，搜索框原来只筛类列表，现在筛这里。
+        /// 搜索框搜出来的东西直接铺在树右边，点一行跳回它的位置。
         /// </summary>
         private void ShowSearch(string kw)
         {
@@ -2257,7 +2257,7 @@ namespace Installer
             int i = IndexAt(e.Y);
             if (i < 0) return;
             TreeRow r = rows[i];
-            // 右键：分支的重命名 / 解散，以及「新建分支…」——页签去掉以后，这里也是建分支的入口
+            // 右键：分支的重命名 / 解散，以及「新建分支…」——这里也是建分支的入口
             if (e.Button == MouseButtons.Right)
             {
                 owner.TreeMenuFor(r, PointToScreen(e.Location));
@@ -2615,7 +2615,7 @@ namespace Installer
             ModGroup t1 = miss != null ? miss : known;
             string autoCatOfT1 = t1.Cat;
             CatPrefs.Assign(t1, "测试分类", "测试位置");
-            Catalog.ApplyCats();                 // 分类落到 ModGroup.Cat 上：页签 / 搜索一起变
+            Catalog.ApplyCats();                 // 分类落到 ModGroup.Cat 上：树 / 搜索一起变
             treeView.Rebuild();
             bool inSlot = false, catOk = false;
             foreach (Slot s in SlotIndex.Build())
@@ -2623,9 +2623,9 @@ namespace Installer
                 { inSlot = true; catOk = s.Cat == "测试分类"; }
             Core.Log(inSlot && catOk ? "OK" : "FAIL", "SETCAT 全人工：" + t1.Name + " → 测试分类 / 测试位置，进树=" + inSlot + " 归类=" + catOk);
             Core.Log(t1.Cat == "测试分类" ? "OK" : "FAIL",
-                "SETCAT 分类落到数据上：ModGroup.Cat=" + t1.Cat + "（页签跟着走）");
+                "SETCAT 分类落到数据上：ModGroup.Cat=" + t1.Cat + "（树跟着走）");
             Core.Log(Array.IndexOf(Catalog.Cats, "测试分类") >= 0 ? "OK" : "FAIL",
-                "SETCAT 页签分类表里有「测试分类」：" + string.Join(" / ", Catalog.Cats));
+                "SETCAT 分类表里有「测试分类」：" + string.Join(" / ", Catalog.Cats));
 
             List<string> order = CatPrefs.Cats();
             Core.Log(order[order.Count - 1] == "测试分类" ? "OK" : "FAIL",
@@ -2655,7 +2655,7 @@ namespace Installer
             Core.Log(treeView.SlotCount == before ? "OK" : "FAIL",
                 "SETCAT 槽位数回到 " + treeView.SlotCount + "（原 " + before + "）");
 
-            // 大类改名：整类跟着搬，不能因为旧名字从分类表里消失就掉出页签
+            // 大类改名：整类跟着搬，不能因为旧名字从分类表里消失就掉出树
             int medBefore = 0;
             foreach (ModGroup x in Catalog.Groups) if (x.Cat == "药品") medBefore++;
             CatPrefs.RenameCat("药品", "测试改名类");
@@ -2664,7 +2664,7 @@ namespace Installer
             foreach (ModGroup x in Catalog.Groups) if (x.Cat == "测试改名类") medAfter++;
             bool inTabs = Array.IndexOf(Catalog.Cats, "测试改名类") >= 0 && Array.IndexOf(Catalog.Cats, "药品") < 0;
             Core.Log(medBefore == medAfter && inTabs ? "OK" : "FAIL",
-                "SETCAT 大类改名：药品 " + medBefore + " 个 → 测试改名类 " + medAfter + " 个，页签跟上了=" + inTabs);
+                "SETCAT 大类改名：药品 " + medBefore + " 个 → 测试改名类 " + medAfter + " 个，树跟上了=" + inTabs);
 
             if (backup == null) { try { System.IO.File.Delete(f); } catch { } }
             else System.IO.File.WriteAllText(f, backup, new System.Text.UTF8Encoding(true));

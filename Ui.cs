@@ -68,7 +68,7 @@ namespace Installer
             // 版本只写在 AssemblyInfo 里，标题跟着走，省得两处对不上
             Version ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             Text = "网吧装机台  v" + ver.Major + "." + ver.Minor;
-            // 一开始就开够大：右栏要放下方案树和一整张类列表，940 宽时列挤得没地方
+            // 一开始就开够大：右栏要放下方案树（左边位置 + 右边候选），窄了列会挤成一团
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
             int w0 = Math.Min(1440, Math.Max(1120, wa.Width - 100));
             int h0 = Math.Min(940, Math.Max(740, wa.Height - 80));
@@ -279,7 +279,7 @@ namespace Installer
             gl.Controls.Add(txtLog);
 
             // ---- 右栏：MOD 库 ----
-            // 两样东西叠在同一块区域里，靠顶部页签切换：方案树 / 任意一个大类的列表。
+            // 只有一屏：方案树。左边是「能替换的东西」的位置，右边是它的候选。
             // 不另开窗口，勾选、搜索、方案下拉始终在视线里，关窗口把进程留在后台这种事也不会再发生。
             int modH = CH - 56 - 116;                        // 到下方按钮行为止，中间全给 MOD 库
             Section gm = new Section();
@@ -294,7 +294,7 @@ namespace Installer
 
             Label l9 = new Label(); l9.Text = "搜"; l9.SetBounds(12, 66, 24, 20); Theme.Dress(l9); gm.Controls.Add(l9);
             txtSearch = new TextBox(); txtSearch.SetBounds(50, 62, rightW - 62, 24); Theme.Dress(txtSearch); txtSearch.TextChanged += delegate { searchTimer.Stop(); searchTimer.Start(); }; gm.Controls.Add(txtSearch);
-            tips.SetToolTip(txtSearch, "按名字或标签过滤。停止输入 250 ms 自动筛，页签和当前这一类的列表一起跟着变。");
+            tips.SetToolTip(txtSearch, "搜名字 / 替换了什么 / 位置名。停止输入 250 ms 自动筛，树右边换成搜索结果，点一行跳回它在树里的位置。");
 
             // 方案分布：一行说完这套在各类里放了几个
             lblScheme = new Label();
@@ -974,7 +974,7 @@ namespace Installer
             treeView.PickRow(li);
         }
 
-        /// <summary>设置这个 MOD 算哪一类、替换什么。分类只有一份：页签 / 方案树一起跟着变。</summary>
+        /// <summary>设置这个 MOD 算哪一类、替换什么。分类只有一份：方案树跟着变。</summary>
         internal void SetModCatIn(ListView lv)
         {
             ModGroup g = FirstSelectedGroup(lv);
@@ -986,7 +986,7 @@ namespace Installer
                         + (f.ResultSlot.Length > 0 ? " / " + f.ResultSlot : ""));
             }
             // 窗口里还可能新建/改名/排序过分类，取消也要同步一次
-            Catalog.ApplyCats();          // 人工分类落到 ModGroup.Cat 上：页签、方案树、搜索全跟着走
+            Catalog.ApplyCats();          // 人工分类落到 ModGroup.Cat 上：树、搜索全跟着走
             if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
             RefreshMods();
         }

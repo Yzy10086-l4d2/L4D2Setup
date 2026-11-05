@@ -13,7 +13,7 @@ namespace Installer
     //    · 大类排第几（新建的分类也能排）
     //    · 这个 MOD 算哪一类
     //    · 它替换的是哪个位置（AK-47 / 医疗包 …）
-    //  只影响方案树的分组，不动上面的页签 —— 页签是固定六类，
+    //  只影响方案树的分组 —— 分类是数据里那几张表，
     //  树才是「一个位置一个 MOD」那张表。
     // ============================================================
 
@@ -83,7 +83,7 @@ namespace Installer
                             if (c.Length > 0 && c != "-")
                             {
                                 modCat[k] = c;
-                                if (!cats.Contains(c)) cats.Add(c);   // 手改 ini 漏了 cat= 也不会让 MOD 掉出页签
+                                if (!cats.Contains(c)) cats.Add(c);   // 手改 ini 漏了 cat= 也不会让 MOD 掉出树
                             }
                             if (sl.Length > 0 && sl != "-") modSlot[k] = sl;
                         }
@@ -127,7 +127,7 @@ namespace Installer
             return new List<string>(cats);
         }
 
-        /// <summary>给 Catalog.Cats 用：整套分类顺序（页签、树都按这个走）。</summary>
+        /// <summary>给 Catalog.Cats 用：整套分类顺序（树按这个走）。</summary>
         public static string[] CatsArray()
         {
             Ensure();
@@ -188,7 +188,7 @@ namespace Installer
             if (!cats.Contains(cat)) { cats.Add(cat); Touch(); }
         }
 
-        /// <summary>兜底：分类表里没有这一栏就补上，别让 MOD 掉出页签。</summary>
+        /// <summary>兜底：分类表里没有这一栏就补上，别让 MOD 掉出树。</summary>
         public static void EnsureCat(string cat)
         {
             Ensure();
@@ -411,8 +411,8 @@ namespace Installer
             lblTip.SetBounds(12, 436, 656, 54);
             lblTip.Font = Theme.UISmall;
             lblTip.ForeColor = Theme.Ink3;
-            lblTip.Text = "分类只有这一套：页签、方案树、搜索都按它走，改一处三处一起变。\r\n"
-                        + "新建分类 → 页签会多出一栏；地图 / 喷漆不进树（它们能叠好几张）。\r\n"
+            lblTip.Text = "分类只有这一套：方案树、搜索都按它走，改一处两处一起变。\r\n"
+                        + "新建分类 → 树上会多一层；地图 / 喷漆归「一堆」（它们能叠好几张）。\r\n"
                         + "位置选「自动」= 只改分类，位置仍按识别结果。";
             Controls.Add(lblTip);
 
@@ -524,7 +524,7 @@ namespace Installer
             string slot = curSlot.Length > 0 ? curSlot : "自动（" + (autoSlot.Length > 0 ? autoSlot : "认不出来") + "）";
             lblSlotHd.Text = "替换什么 · " + curCat;
             lblTip.Text = "这个 MOD：" + (resetMode ? "恢复全自动" : curCat + " · " + slot) + "\r\n"
-                        + "分类只有这一套：页签 / 方案树 / 搜索一起变；新建分类会多一栏。\r\n"
+                        + "分类只有这一套：方案树 / 搜索一起变；新建分类树上会多一层。\r\n"
                         + "位置决定它和谁「只能留一个」，同名的位置会并成一行。";
         }
 
@@ -553,7 +553,7 @@ namespace Installer
             n = n.Trim();
             if (n.Length == 0 || n == old) return;
             CatPrefs.RenameCat(old, n);
-            Catalog.AdoptCatRename(old, n);      // 原来在这一类的 MOD 跟着搬，不然会掉出页签
+            Catalog.AdoptCatRename(old, n);      // 原来在这一类的 MOD 跟着搬，不然会掉出树
             curCat = n;
             FillCats();
             FillSlots();
