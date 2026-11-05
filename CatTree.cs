@@ -689,7 +689,18 @@ namespace Installer
             v.Columns.Add(firstCol, 380);
             v.Columns.Add("改了什么", 100);
             v.Columns.Add("大小", 74).TextAlign = HorizontalAlignment.Right;
+            v.Columns.Add("状态", 78);                       // 装了没 / 装了但关着
             return v;
+        }
+
+        /// <summary>候选行的「状态」格：和分类列表同一套判定，只上字色不上底色（方案树有自绘选中行）。</summary>
+        private static void AddStateCell(ListViewItem li, ModGroup g)
+        {
+            Color ink, bg;
+            string s = ModForm.StatusOf(g, out ink, out bg);
+            li.SubItems.Add(s);
+            li.SubItems[3].ForeColor = ink;
+            li.SubItems[3].Font = Theme.UISmall;
         }
 
         private static void SelectRow(ListView v, MouseEventArgs e)
@@ -1106,6 +1117,7 @@ namespace Installer
                     ListViewItem li = new ListViewItem(g.Name);
                     li.SubItems.Add(KindsOf(g));
                     li.SubItems.Add(Core.Human(g.Size));
+                    AddStateCell(li, g);
                     li.StateImageIndex = on ? 1 : 0;
                     if (on) li.Font = Theme.UIBold;
                     li.Tag = g;
@@ -1176,6 +1188,7 @@ namespace Installer
                         ListViewItem li = new ListViewItem(g.Name);
                         li.SubItems.Add(KindsOf(g));
                         li.SubItems.Add(Core.Human(g.Size));
+                        AddStateCell(li, g);
                         li.StateImageIndex = on ? 1 : 0;
                         if (on) li.Font = Theme.UIBold;
                         li.Tag = g;
@@ -1250,6 +1263,7 @@ namespace Installer
             ListViewItem li = new ListViewItem((inClan ? "└ " : "") + g.Name);
             li.SubItems.Add(KindsOf(g));
             li.SubItems.Add(Core.Human(g.Size));
+            AddStateCell(li, g);
             li.StateImageIndex = on ? 1 : 0;
             if (on) li.Font = Theme.UIBold;
             li.Tag = g;
@@ -1394,10 +1408,12 @@ namespace Installer
         {
             if (v == null || v.Columns.Count < 3) return;
             int w = v.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8;
-            const int kindW = 100, sizeW = 74;
-            v.Columns[0].Width = Math.Max(160, w - kindW - sizeW);
+            const int kindW = 100, sizeW = 74, stateW = 78;
+            int nameW = Math.Max(140, w - kindW - sizeW - stateW);
+            v.Columns[0].Width = nameW;
             v.Columns[1].Width = kindW;
             v.Columns[2].Width = sizeW;
+            if (v.Columns.Count >= 4) v.Columns[3].Width = stateW;
         }
     }
 

@@ -1168,7 +1168,11 @@ namespace Installer
             foreach (CatView v in vs) v.Fill();
             // 方案树是常驻第一屏：万一扫库还没完就点进来了，树会是空的，扫完这里补一次；
             // 树有内容时只刷新状态点，不重建（搜索打字不至于反复重排）
-            if (treeView != null && treeView.SlotCount == 0) treeView.Rebuild();
+            if (treeView != null)
+            {
+                if (treeView.SlotCount == 0) treeView.Rebuild();
+                else if (treeView.Visible) treeView.Sync();   // 正在看树：重扫后状态列、圆点要立刻对上
+            }
             UpdateSel();
             SyncTabs();
             UpdateModCaption();
