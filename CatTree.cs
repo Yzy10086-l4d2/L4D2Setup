@@ -546,7 +546,8 @@ namespace Installer
     internal sealed class CatTree : UserControl
     {
         private readonly MainForm mf;
-        private readonly Panel scroll;
+        private readonly ScrollHost scroll;
+        private ColHead headMain, headExtra;
         private readonly SlotTree body;
         private readonly ListView lv;
         private readonly ListView lvExtra;                 // 下半：可叠加的扩展
@@ -570,6 +571,31 @@ namespace Installer
         public string SelectedKey { get { return selKey; } }
         public bool IsFolded(string cat) { return folded.Contains(cat); }
 
+        /// <summary>换主题后重建状态点：位图里存的是旧颜色，不重建会留在深底上看不清。</summary>
+        internal void OnThemeChanged()
+        {
+            try
+            {
+                if (lv != null)
+                {
+                    ImageList old = lv.StateImageList;
+                    lv.StateImageList = Dots();
+                    if (old != null) old.Dispose();
+                }
+                if (lvExtra != null)
+                {
+                    ImageList old = lvExtra.StateImageList;
+                    lvExtra.StateImageList = Dots();
+                    if (old != null) old.Dispose();
+                }
+                if (scroll != null) scroll.BackColor = Theme.TreeBg;
+                BackColor = Theme.Surface;
+                body.BackColor = Theme.TreeBg;
+                Invalidate(true);
+            }
+            catch { }
+        }
+
         public CatTree(MainForm owner)
         {
             mf = owner;
@@ -577,15 +603,13 @@ namespace Installer
             Font = Theme.UI;
 
             // ---- 左：树 ----
-            scroll = new Panel();
-            scroll.BackColor = Color.FromArgb(247, 249, 251);
-            scroll.AutoScroll = true;
-            scroll.BorderStyle = BorderStyle.None;
+            scroll = new ScrollHost();
+            scroll.BackColor = Theme.TreeBg;
             Controls.Add(scroll);
 
             body = new SlotTree(this);
-            body.BackColor = Theme.SurfaceAlt;
-            scroll.Controls.Add(body);
+            body.BackColor = Theme.TreeBg;
+            scroll.Attach(body);
 
             // ---- 右上：换本体的候选 ----
             lv = NewCandList("MOD");
@@ -634,6 +658,8 @@ namespace Installer
                 e.SuppressKeyPress = true;
             };
             Controls.Add(lv);
+            headMain = new ColHead(lv);
+            Controls.Add(headMain);
 
             // ---- 右下：可叠加的扩展（开火音效 / 只改第一人称模型 / HUD）----
             lvExtra = NewCandList("扩展");
@@ -656,6 +682,8 @@ namespace Installer
                 e.SuppressKeyPress = true;
             };
             Controls.Add(lvExtra);
+            headExtra = new ColHead(lvExtra);
+            Controls.Add(headExtra);
 
             lblTitle = new Label();
             lblTitle.Font = Theme.UIBold;
@@ -743,7 +771,7 @@ namespace Installer
             v.BackColor = Theme.Surface;
             v.ForeColor = Theme.Ink;
             v.Font = Theme.UI;
-            v.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+            v.HeaderStyle = ColumnHeaderStyle.None;   // 原生表头在深色下永远是一块白，改由 ColHead 自绘
             v.ShowItemToolTips = true;
             v.HideSelection = false;
             ImageList pad = new ImageList();
@@ -855,10 +883,10 @@ namespace Installer
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.Clear(Color.Transparent);
-                using (Pen p = new Pen(on ? Theme.Accent : Color.FromArgb(184, 192, 200), 1.5f))
+                using (Pen p = new Pen(on ? Theme.Mark : (Theme.IsDark ? Color.FromArgb(96, 103, 112) : Color.FromArgb(184, 192, 200)), 1.5f))
                     g.DrawEllipse(p, 2.5f, 2.5f, 8f, 8f);
                 if (on)
-                    using (SolidBrush br = new SolidBrush(Theme.Accent))
+                    using (SolidBrush br = new SolidBrush(Theme.Mark))
                         g.FillEllipse(br, 5f, 5f, 4f, 4f);
             }
             return b;
@@ -2093,7 +2121,7 @@ namespace Installer
             int treeW = Math.Min(430, Math.Max(260, W * 46 / 100));
             if (scroll != null) scroll.SetBounds(0, 0, treeW, H);
             // Dock 让树体宽度自动跟着可视区走（含竖直滚动条出现/消失），不然右边「n 个」会被裁掉
-            if (body != null && body.Dock != DockStyle.Top) body.Dock = DockStyle.Top;
+            if (scroll != null) scroll.Relayout();
 
             int x = treeW + 1;
             int rightW = Math.Max(120, W - x);
@@ -2109,13 +2137,32 @@ namespace Installer
             int mainH = hasEx ? Math.Max(110, avail * 56 / 100) : Math.Max(110, avail - gap);
             int exTop = top + mainH + gap;
             int exH = Math.Max(0, bottom - exTop);
-            if (lv != null) lv.SetBounds(x + 4, top, rightW - 8, mainH);
+            const int headH = 26;
+            if (headMain != null)
+            {
+                headMain.SetBounds(x + 4, top, rightW - 8, headH);
+                headMain.Visible = lv != null && lv.Visible;
+            }
+            if (lv != null) lv.SetBounds(x + 4, top + headH, rightW - 8, Math.Max(40, mainH - headH));
             if (lblExtraTitle != null)
                 lblExtraTitle.SetBounds(x + 16, Math.Max(top + 8, exTop - 20), Math.Max(80, rightW - 32), 18);
             if (lvExtra != null)
             {
-                if (exH >= 40) lvExtra.SetBounds(x + 4, exTop, rightW - 8, exH);
-                else lvExtra.Visible = false;
+                if (exH >= 40)
+                {
+                    lvExtra.SetBounds(x + 4, exTop + headH, rightW - 8, Math.Max(40, exH - headH));
+                    lvExtra.Visible = true;
+                    if (headExtra != null)
+                    {
+                        headExtra.SetBounds(x + 4, exTop, rightW - 8, headH);
+                        headExtra.Visible = true;
+                    }
+                }
+                else
+                {
+                    lvExtra.Visible = false;
+                    if (headExtra != null) headExtra.Visible = false;
+                }
             }
 
             if (btnPick != null) btnPick.SetBounds(x + 16, H - 34, 76, Theme.H);
@@ -2138,6 +2185,8 @@ namespace Installer
         {
             Cols(lv);
             Cols(lvExtra);
+            if (headMain != null) headMain.Invalidate();
+            if (headExtra != null) headExtra.Invalidate();
         }
 
         private static void Cols(ListView v)
@@ -2166,6 +2215,184 @@ namespace Installer
                 v.Columns[3].Width = instW;
                 v.Columns[4].Width = swW;
             }
+        }
+    }
+
+    /// <summary>
+    /// 候选列表的表头。原生 ListView 表头在深色主题下始终是白色的一条
+    /// （给表头窗口换主题也不生效），所以干脆不用它，按列宽自己画一条。
+    /// </summary>
+    internal sealed class ColHead : Control
+    {
+        private readonly ListView lv;
+
+        public ColHead(ListView owner)
+        {
+            lv = owner;
+            TabStop = false;
+            Font = Theme.UISmall;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                   | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Theme.Surface);
+            if (lv == null || lv.Columns.Count == 0) return;
+
+            int x = 2;
+            for (int i = 0; i < lv.Columns.Count; i++)
+            {
+                ColumnHeader c = lv.Columns[i];
+                int w = c.Width;
+                if (w <= 0) continue;
+                TextFormatFlags f = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
+                                  | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
+                f |= c.TextAlign == HorizontalAlignment.Right ? TextFormatFlags.Right : TextFormatFlags.Left;
+                Rectangle r = new Rectangle(x + 4, 1, Math.Max(8, w - 8), Height - 2);
+                TextRenderer.DrawText(g, c.Text, Font, r, Theme.Ink3, f);
+                x += w;
+            }
+
+            using (Pen p = new Pen(Theme.Line))
+                g.DrawLine(p, 0, Height - 1, Width, Height - 1);
+        }
+    }
+
+    /// <summary>
+    /// 自己画的滚动容器。系统的滚动条在深色主题下始终是一条白轨（换窗口主题、
+    /// 打 DWM 深色标记都不管用），树本身又是自绘的，索性把整条滚动条也自己画：
+    /// 10px 宽、跟主题同色、能滚轮、能拖、点轨道翻页。
+    /// </summary>
+    internal sealed class ScrollHost : Panel
+    {
+        private const int BarW = 10;
+        private Control body;
+        private int offset;
+        private bool dragging, hoverBar;
+        private int dragY, dragOffset;
+
+        public ScrollHost()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                   | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        }
+
+        public void Attach(Control b)
+        {
+            body = b;
+            Controls.Add(b);
+            Relayout();
+        }
+
+        private int MaxOffset { get { return body == null ? 0 : Math.Max(0, body.Height - ClientSize.Height); } }
+        internal bool CanScroll { get { return MaxOffset > 0; } }
+        internal int Offset { get { return offset; } }
+
+        internal void ScrollTo(int v)
+        {
+            int nv = Math.Max(0, Math.Min(MaxOffset, v));
+            if (nv == offset) return;
+            offset = nv;
+            if (body != null) body.Top = -offset;
+            Invalidate();
+        }
+
+        internal void Relayout()
+        {
+            if (body == null) return;
+            offset = Math.Max(0, Math.Min(offset, MaxOffset));
+            bool bar = MaxOffset > 0;
+            int w = Math.Max(20, ClientSize.Width - (bar ? BarW : 0));
+            body.SetBounds(0, -offset, w, body.Height);
+            Invalidate();
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            Relayout();
+        }
+
+        private Rectangle Thumb()
+        {
+            int h = ClientSize.Height;
+            if (body == null || h <= 0) return new Rectangle(Width - BarW, 0, BarW, 0);
+            int th = Math.Max(36, (int)((long)h * h / Math.Max(1, body.Height)));
+            th = Math.Min(h - 2, th);
+            int travel = Math.Max(0, h - th - 2);
+            int pos = MaxOffset == 0 ? 0 : (int)((long)travel * offset / MaxOffset);
+            return new Rectangle(Width - BarW + 3, 1 + pos, BarW - 6, th);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(BackColor);
+            if (!CanScroll) return;
+            Rectangle t = Thumb();
+            using (GraphicsPath p = Theme.Round(t, (BarW - 6) / 2))
+            using (SolidBrush b = new SolidBrush(dragging ? Theme.Ink3 : (hoverBar ? Theme.Ink3 : Theme.Line)))
+                g.FillPath(b, p);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (dragging)
+            {
+                int travel = Math.Max(1, ClientSize.Height - Thumb().Height - 2);
+                int d = e.Y - dragY;
+                ScrollTo(dragOffset + (int)((long)d * MaxOffset / travel));
+                return;
+            }
+            bool hot = e.X >= Width - BarW && CanScroll;
+            if (hot != hoverBar) { hoverBar = hot; Invalidate(); }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            hoverBar = false;
+            Invalidate();
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (!CanScroll || e.X < Width - BarW) return;
+            Rectangle t = Thumb();
+            if (t.Contains(e.Location))
+            {
+                dragging = true;
+                dragY = e.Y;
+                dragOffset = offset;
+            }
+            else
+            {
+                // 点轨道 = 翻一屏
+                ScrollTo(offset + (e.Y < t.Top ? -ClientSize.Height : ClientSize.Height));
+            }
+            Invalidate();
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (!dragging) return;
+            dragging = false;
+            Invalidate();
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            if (CanScroll)
+            {
+                ScrollTo(offset - e.Delta);
+                return;
+            }
+            base.OnMouseWheel(e);
         }
     }
 
@@ -2236,19 +2463,21 @@ namespace Installer
                         if (rows[i].IsCat && rows[i].Cat == keepCat) { focus = i; break; }
             }
             Height = Math.Max(12, rows.Count * RowH + 6);
+            ScrollHost host = Parent as ScrollHost;
+            if (host != null) host.Relayout();
             Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            g.Clear(Color.FromArgb(247, 249, 251));
+            g.Clear(Theme.TreeBg);
             int W = Width;
             if (W <= 0) return;
 
-            using (Pen branch = new Pen(Color.FromArgb(198, 206, 215)))
-            using (SolidBrush selBg = new SolidBrush(Color.FromArgb(250, 240, 239)))
-            using (SolidBrush hovBg = new SolidBrush(Color.FromArgb(238, 242, 246)))
+            using (Pen branch = new Pen(Theme.TreeBranch))
+            using (SolidBrush selBg = new SolidBrush(Theme.TreeSel))
+            using (SolidBrush hovBg = new SolidBrush(Theme.TreeHover))
             {
                 for (int i = 0; i < rows.Count; i++)
                 {
@@ -2322,7 +2551,7 @@ namespace Installer
                     bool sel = s.Key == owner.SelectedKey;
                     if (sel) g.FillRectangle(selBg, 0, y, W, RowH);
                     else if (i == hover) g.FillRectangle(hovBg, 0, y, W, RowH);
-                    if (sel) using (SolidBrush b = new SolidBrush(Theme.Accent)) g.FillRectangle(b, 0, y + 3, 2, RowH - 6);
+                    if (sel) using (SolidBrush b = new SolidBrush(Theme.Mark)) g.FillRectangle(b, 0, y + 3, 2, RowH - 6);
 
                     // 分支线：竖线 + 一根横线（位置层缩进到小分类下面）
                     bool nextSame = (i + 1 < rows.Count) && !rows[i + 1].IsCat && !rows[i + 1].IsSub
@@ -2335,11 +2564,11 @@ namespace Installer
                     // 「一堆」（地图 / 我的分支）里勾好几个是正常事，别用橙色报警
                     int cnt = owner.CheckedGroups(s);
                     int ecnt = owner.CheckedExtras(s);
-                    Color dot = s.Pile ? (cnt > 0 ? Theme.Ok : Color.FromArgb(210, 216, 223))
+                    Color dot = s.Pile ? (cnt > 0 ? Theme.Ok : Theme.TreeBranch)
                               : cnt > 1 ? Theme.Warn
                               : cnt == 1 ? Theme.Ok
                               : ecnt > 0 ? Theme.Info
-                              : Color.FromArgb(210, 216, 223);
+                              : Theme.TreeBranch;
                     using (SolidBrush b = new SolidBrush(dot)) g.FillEllipse(b, bx + 17, y + RowH / 2 - 3, 6, 6);
 
                     int nx = bx + 30;
@@ -2393,11 +2622,11 @@ namespace Installer
                 }
             }
 
-            // 键盘焦点必须看得见；虚线画在整行外沿，不与“已选”左边的红色实条混在一起。
+            // 键盘焦点必须看得见；虚线画在整行外沿，不与“已选”左边的实条混在一起。
             if (Focused && focus >= 0 && focus < rows.Count)
             {
                 int fy = focus * RowH + 4;
-                using (Pen p = new Pen(Theme.Accent, 1f))
+                using (Pen p = new Pen(Theme.Ink, 1f))
                 {
                     p.DashStyle = DashStyle.Dot;
                     g.DrawRectangle(p, 1, fy + 1, Math.Max(1, W - 3), RowH - 2);
@@ -2407,7 +2636,7 @@ namespace Installer
 
         private static void DrawTri(Graphics g, int cx, int cy, bool open)
         {
-            using (SolidBrush b = new SolidBrush(Color.FromArgb(140, 150, 160)))
+            using (SolidBrush b = new SolidBrush(Theme.Ink3))
             {
                 if (open)
                 {
@@ -2593,18 +2822,17 @@ namespace Installer
 
         private void EnsureRowVisible(int i)
         {
-            Panel p = Parent as Panel;
-            if (p == null || !p.VerticalScroll.Visible) return;
+            ScrollHost p = Parent as ScrollHost;
+            if (p == null || !p.CanScroll) return;
             int y = i * RowH;
             int h = p.ClientSize.Height;
-            int top = p.VerticalScroll.Value;
+            int top = p.Offset;
             int bottom = top + h;
             int v = top;
             if (y < top + 4) v = Math.Max(0, y - RowH);
-            else if (y + RowH > bottom - 4) v = Math.Min(p.VerticalScroll.Maximum, y - h + RowH * 2);
+            else if (y + RowH > bottom - 4) v = y - h + RowH * 2;
             if (v == top) return;
-            p.VerticalScroll.Value = Math.Max(p.VerticalScroll.Minimum, Math.Min(p.VerticalScroll.Maximum, v));
-            p.PerformLayout();
+            p.ScrollTo(v);
         }
 
         private void ActivateRow(int i)
@@ -2645,28 +2873,23 @@ namespace Installer
             for (int i = 0; i < rows.Count; i++)
             {
                 if (rows[i].Slot == null || rows[i].Slot.Key != key) continue;
-                Panel p = Parent as Panel;
-                if (p == null || !p.VerticalScroll.Visible) return;
+                ScrollHost p = Parent as ScrollHost;
+                if (p == null || !p.CanScroll) return;
                 int y = i * RowH;
                 int h = p.ClientSize.Height;
-                int top = p.VerticalScroll.Value;
+                int top = p.Offset;
                 if (y >= top && y + RowH <= top + h) return;              // 已经在视野里
-                int v = Math.Max(0, Math.Min(p.VerticalScroll.Maximum, y - h / 3));
-                p.VerticalScroll.Value = v;
-                p.PerformLayout();
+                p.ScrollTo(Math.Max(0, y - h / 3));
                 return;
             }
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)
         {
-            Panel p = Parent as Panel;
-            if (p != null && p.VerticalScroll.Visible)
+            ScrollHost p = Parent as ScrollHost;
+            if (p != null && p.CanScroll)
             {
-                int v = p.VerticalScroll.Value - e.Delta;
-                v = Math.Max(p.VerticalScroll.Minimum, Math.Min(p.VerticalScroll.Maximum, v));
-                p.VerticalScroll.Value = v;
-                p.PerformLayout();
+                p.ScrollTo(p.Offset - e.Delta);
                 return;
             }
             base.OnMouseWheel(e);

@@ -56,6 +56,7 @@ namespace Installer
             bool copyTest = false;
             string uiSize = "1280x900";
             string modeOverride = null;
+            string themeOverride = null;
             string uiFilter = null;
             string uiDeep = null;
             bool uiProfile = false;
@@ -89,6 +90,7 @@ namespace Installer
                 if (string.Equals(a, "--selftest", StringComparison.OrdinalIgnoreCase)) selfTest = true;
                 else if (string.Equals(a, "--uitest", StringComparison.OrdinalIgnoreCase)) uiTest = true;
                 else if (a.StartsWith("--mode=", StringComparison.OrdinalIgnoreCase)) modeOverride = a.Substring(7).Trim();
+                else if (a.StartsWith("--theme=", StringComparison.OrdinalIgnoreCase)) themeOverride = a.Substring(8).Trim();
                 else if (string.Equals(a, "--copytest", StringComparison.OrdinalIgnoreCase)) copyTest = true;
                 else if (a.StartsWith("--uitsize=", StringComparison.OrdinalIgnoreCase)) uiSize = a.Substring(10);
                 else if (a.StartsWith("--uifilter=", StringComparison.OrdinalIgnoreCase)) uiFilter = a.Substring(11);
@@ -132,6 +134,9 @@ namespace Installer
             }
 
             Core.Init();
+            Theme.Init();
+            // 诊断用：临时覆盖外观，不写回配置
+            if (!string.IsNullOrEmpty(themeOverride)) Theme.SetMode(Theme.Parse(themeOverride));
             // 诊断用：临时覆盖工作模式，不写回配置
             if (!string.IsNullOrEmpty(modeOverride))
             {

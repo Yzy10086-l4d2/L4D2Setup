@@ -88,11 +88,20 @@ namespace Installer
             txtGame.SelectionLength = 0;
             // 都没配好也不在这里找：找游戏要遍历所有盘（含只读虚拟卷），放到 BeginInit 的后台线程做
 
-            // 重活放到窗口显示之后做，避免启动干等
-            Load += delegate { BeginInit(); };
+            // 重活放到窗口显示之后做，避免启动干等；标题栏深浅要等窗口句柄存在
+            Load += delegate
+            {
+                Theme.ApplyChrome(this);
+                // 表头、滚动条这些由系统绘制的部件，句柄一建好就要打招呼，
+                // 拖到 Shown 有些情况下已经画过一帧了
+                Theme.DeepNative(this);
+                BeginInit();
+            };
             // ComboBox 显示后拿到焦点会全选文本（看着像"等你重新输入"），等激活完再把选区收掉
             Shown += delegate
             {
+                Theme.ApplyChrome(this);
+                Theme.DeepNative(this);
                 BeginInvoke((MethodInvoker)delegate
                 {
                     txtGame.SelectionStart = txtGame.Text.Length;
@@ -401,7 +410,7 @@ namespace Installer
             btnOpen.SetBounds(W - Theme.M - 104, CH - 104, 104, Theme.HP);
             btnOpen.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", txtGame.Text); } catch { } }; Controls.Add(btnOpen);
 
-            bar = new ProgressBar(); bar.SetBounds(Theme.M, CH - 56, 440, 12); Controls.Add(bar);
+            bar = new ProgressBar(); bar.SetBounds(Theme.M, CH - 56, 440, 12); bar.Visible = false; Controls.Add(bar);
             btnCancel = new FlatButton();
             btnCancel.Text = "停止剩余";
             btnCancel.SetBounds(Theme.M + 452, CH - 60, 92, 24);
@@ -2458,6 +2467,8 @@ namespace Installer
                 btnSwitch.Enabled = !busy;
                 btnFind.Enabled = !busy;
                 btnBrowse.Enabled = !busy;
+                // 空闲时不摆一条空进度条：深色主题下它是一道白条，看着像没画完
+                if (bar != null) bar.Visible = busy;
             });
         }
 
