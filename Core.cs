@@ -94,13 +94,28 @@ namespace Installer
             UsbRoot = WalkUp(Here);
             ModRoot = Path.Combine(Path.Combine(UsbRoot, "游戏内容"), "求生之路2各项MOD");
             DefaultModRoot = ModRoot;
-            CfgPath = Path.Combine(PkgDir, "装机台.配置.ini");
+            CfgPath = Path.Combine(PkgDir, "L4D2MOD管理工具.配置.ini");
             LogDir = Path.Combine(PkgDir, "_装机记录");
             if (!Directory.Exists(LogDir)) Directory.CreateDirectory(LogDir);
             LogFile = Path.Combine(LogDir, "log-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");
             PruneLogs();
+            MigrateLegacyConfig();
             LoadConfig();
             ApplyConfiguredLibraryRoot();
+        }
+
+        // v2.39 换了产品名，配置文件跟着改名。老文件还在就搬过去，用户原来的设置不丢；
+        // 搬不动（被占用、只读）就退回默认值，至少程序还能起来。
+        private static void MigrateLegacyConfig()
+        {
+            try
+            {
+                string legacy = Path.Combine(PkgDir, "装机台.配置.ini");
+                if (File.Exists(CfgPath) || !File.Exists(legacy)) return;
+                File.Move(legacy, CfgPath);
+                Log("INFO", "配置已改名为 " + Path.GetFileName(CfgPath) + "（沿用原有设置）");
+            }
+            catch (Exception ex) { Log("WARN", "老配置改名失败，改用新文件重建默认值: " + ex.Message); }
         }
 
         // 包目录：exe 旁边就有包就用旁边；否则在 U 盘里找带「防闪退」或「Skeeto+MQCam」的目录
@@ -264,7 +279,7 @@ namespace Installer
             try
             {
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine("# 装机台配置（勾选记忆）。删掉这个文件 = 恢复默认。");
+                sb.AppendLine("# L4D2 MOD 管理工具 配置（勾选记忆）。删掉这个文件 = 恢复默认。");
                 sb.AppendLine("[general]");
                 sb.AppendLine("GameRoot=" + Cfg.GameRoot);
                 sb.AppendLine("LastRun=" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));

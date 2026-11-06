@@ -45,7 +45,7 @@ namespace Installer
             string s = Clean(raw);
             if (HasSlot(s))
                 Core.Log("WARN", "启动项里的 -skeeto_particle_platform 还是 0/1，按原样写进去了；"
-                       + "要去 Steam 里改成 0 或 1 才生效（装机台的「…」按钮可以直接换）");
+                       + "要去 Steam 里改成 0 或 1 才生效（本工具的「…」按钮可以直接换）");
             return s;
         }
 

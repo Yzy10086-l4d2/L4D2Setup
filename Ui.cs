@@ -68,7 +68,7 @@ namespace Installer
         {
             // 版本只写在 AssemblyInfo 里，标题跟着走，省得两处对不上
             Version ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-            Text = "网吧装机台  v" + ver.Major + "." + ver.Minor;
+            Text = "L4D2 MOD 管理工具  v" + ver.Major + "." + ver.Minor;
             // 一开始就开够大：右栏要放下方案树（左边位置 + 右边候选），窄了列会挤成一团
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
             int w0 = Math.Min(1440, Math.Max(1120, wa.Width - 100));
@@ -1091,7 +1091,7 @@ namespace Installer
 
             foreach (ModItem it in parts)
             {
-                if (it.IsArchive) { MessageBox.Show("「" + it.Name + "」在压缩包里（" + it.Container + "），\r\n装机台不会去改压缩包。想删请自己在资源管理器里处理。", "不能删除"); return; }
+                if (it.IsArchive) { MessageBox.Show("「" + it.Name + "」在压缩包里（" + it.Container + "），\r\n本工具不会去改压缩包。想删请自己在资源管理器里处理。", "不能删除"); return; }
                 if (it.FromGame && !Core.IsLocal) { MessageBox.Show("「" + it.Name + "」在游戏目录 addons 里。\r\nU 盘模式不动游戏目录的文件；要删它，把右上角切到「本地模式」再来。", "不能删除"); return; }
             }
             string tail = parts.Count > 1 ? "（整套 " + parts.Count + " 个 vpk）" : "";
@@ -1531,7 +1531,7 @@ namespace Installer
                 System.Text.StringBuilder sb = new System.Text.StringBuilder();
                 for (int i = 0; i < others.Count; i++) sb.AppendLine((i + 1) + ". " + others[i]);
                 sb.AppendLine();
-                sb.AppendLine("这些不是体积重复，装机台不自动处理：");
+                sb.AppendLine("这些不是体积重复，本工具不自动处理：");
                 sb.AppendLine("· 同名文件：右键菜单「清理同名重复」可以每个名字只留第一个");
                 sb.AppendLine("· 已装文件：勾「覆盖重装」或「换整套」再装一次就清掉了");
                 MessageBox.Show(this, sb.ToString(), "其它提示 · " + others.Count + " 条", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1571,7 +1571,7 @@ namespace Installer
         /// <summary>把库里的一个 vpk 直接删掉。返回 null 表示成功。</summary>
         private string DeleteModFromLibrary(ModItem m)
         {
-            if (m.IsArchive) return "在压缩包里，装机台不改压缩包";
+            if (m.IsArchive) return "在压缩包里，本工具不改压缩包";
             try
             {
                 string err = Work.DeleteMod(m);

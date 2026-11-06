@@ -71,7 +71,7 @@ namespace Installer
             string f = FileOf();
             if (string.IsNullOrEmpty(f)) return;
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("# 我的分支：用户自己拉的分组（装机台自己写，手改也行）");
+            sb.AppendLine("# 我的分支：用户自己拉的分组（本工具自己写，手改也行）");
             sb.AppendLine("# branch=分支名 / mod=分支名 <TAB> vpk 文件名");
             foreach (string n in names) sb.AppendLine("branch=" + n);
             foreach (string n in names)

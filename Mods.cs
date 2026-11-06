@@ -789,7 +789,7 @@ namespace Installer
             if (MessageBox.Show(
                 "把「关闭」状态的 MOD 从游戏 addons 里挪回 U 盘？\r\n\r\n"
                 + "· 只动已经关掉的\r\n"
-                + "· 开着的、以及不是装机台装的，一概不碰\r\n"
+                + "· 开着的、以及不是本工具装的，一概不碰\r\n"
                 + "· 挪走的以后要用会自动重新复制\r\n\r\n"
                 + "先把上面的开关写进去，再清理。", "清理关着的 MOD",
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;

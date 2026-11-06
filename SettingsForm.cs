@@ -52,7 +52,7 @@ namespace Installer
             this.owner = owner;
             pendingRoot = Core.ModRoot;
 
-            Text = "设置 · 网吧装机台";
+            Text = "设置 · L4D2 MOD 管理工具";
             ClientSize = new Size(620, 676);
             Font = Theme.UI;
             BackColor = Theme.Bg;

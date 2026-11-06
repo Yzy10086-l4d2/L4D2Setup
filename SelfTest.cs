@@ -143,7 +143,7 @@ public static class SelfTest
             if (leaveRunning)
             {
                 r.Message = "启动成功，玩了 " + used + " 秒没崩。\r\n"
-                    + "游戏不用关，直接玩就行；后面的时间装机台还在后台盯着，真崩了会弹提示。";
+                    + "游戏不用关，直接玩就行；后面的时间本工具还在后台盯着，真崩了会弹提示。";
                 WatchAfterLaunch(p, rep, beforeTime, modCount, onCrash);
             }
             else

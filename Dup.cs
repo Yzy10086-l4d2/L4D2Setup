@@ -167,7 +167,7 @@ namespace Installer
     /// <summary>
     /// 重复嫌疑清单。原来只能弹一个文本框，看得见却动不了；现在每一组能：
     /// 核对内容 / 这次不装 / 直接删掉 / 在列表里定位。
-    /// 压缩包里的 vpk 装机台不改压缩包，所以只能「这次不装」。
+    /// 压缩包里的 vpk 本工具不改压缩包，所以只能「这次不装」。
     /// </summary>
     public class DupForm : Form
     {
@@ -225,7 +225,7 @@ namespace Installer
                 if (it == null) return;
                 // 压缩包里的勾上也没用（不能删），但允许「这次不装」，所以不拦，只给提示
                 if (it.IsArchive && e.NewValue == CheckState.Checked)
-                    status.Text = "「" + it.Name + "」在压缩包里，只能「这次不装」，不能删（装机台不改压缩包）";
+                    status.Text = "「" + it.Name + "」在压缩包里，只能「这次不装」，不能删（本工具不改压缩包）";
             };
             lv.ItemSelectionChanged += delegate { UpdateButtons(); };
             Controls.Add(lv);
@@ -432,7 +432,7 @@ namespace Installer
             {
                 MessageBox.Show(this,
                     "勾选的全在压缩包里（" + blocked + " 个）。\r\n\r\n"
-                    + "装机台不改 U 盘上的压缩包，所以删不掉里面的单个 vpk。\r\n"
+                    + "本工具不改 U 盘上的压缩包，所以删不掉里面的单个 vpk。\r\n"
                     + "能用的是「这次不装」；真要删，只能解开压缩包重新打一个。", "不能删除",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;

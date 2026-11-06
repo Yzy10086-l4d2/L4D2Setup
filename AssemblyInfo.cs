@@ -1,9 +1,9 @@
 using System.Reflection;
 
-[assembly: AssemblyTitle("网吧装机台")]
-[assembly: AssemblyDescription("求生之路2 平台 + MOD 库 一键装机（L4N / Skeeto / MQCam / dxvk）")]
-[assembly: AssemblyProduct("网吧装机台")]
+[assembly: AssemblyTitle("L4D2 MOD 管理工具")]
+[assembly: AssemblyDescription("求生之路 2 MOD 管理工具：批量装机、开关、冲突检查与一键还原")]
+[assembly: AssemblyProduct("L4D2 MOD 管理工具")]
 [assembly: AssemblyCompany("L4D2 扩展平台")]
 [assembly: AssemblyCopyright("")]
-[assembly: AssemblyVersion("2.38.0.0")]
-[assembly: AssemblyFileVersion("2.38.0.0")]
+[assembly: AssemblyVersion("2.39.0.0")]
+[assembly: AssemblyFileVersion("2.39.0.0")]

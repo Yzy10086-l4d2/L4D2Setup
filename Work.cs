@@ -25,7 +25,7 @@ namespace Installer
         public static int SelfTest(string gameRootHint)
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("=== 装机台 自检 " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " ===");
+            sb.AppendLine("=== L4D2 MOD 管理工具 自检 " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " ===");
             sb.AppendLine("程序位置 : " + Core.Here);
             sb.AppendLine("U 盘根   : " + Core.UsbRoot);
             sb.AppendLine("工作模式 : " + (Core.IsLocal ? "本地模式（只扫游戏目录 addons）" : "U 盘模式（主库 + 附加目录）"));

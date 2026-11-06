@@ -98,7 +98,7 @@ namespace Installer
         {
             Ensure();
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("# 方案树分类：大类顺序 / 每个 MOD 的人工归属（装机台自己写，手改也行）");
+            sb.AppendLine("# 方案树分类：大类顺序 / 每个 MOD 的人工归属（本工具自己写，手改也行）");
             foreach (string c in cats) sb.AppendLine("cat=" + c);
             foreach (KeyValuePair<string, List<string>> kv in slotsOfCat)
                 foreach (string s in kv.Value) sb.AppendLine("slot=" + kv.Key + "\t" + s);
