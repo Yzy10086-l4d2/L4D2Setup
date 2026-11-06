@@ -47,9 +47,8 @@ namespace Installer
             if (gMod == null) return;
             int sc = treeView == null ? 0 : treeView.SlotCount;
             int sk = treeView == null ? 0 : treeView.SlotCheckedCount;
-            gMod.Caption = "方案树　" + sc + " 个可替换的位置 · 已选 " + sk
-                         + (treeView != null && treeView.Unmatched > 0 ? " · " + treeView.Unmatched + " 个未归类" : "")
-                         + "　点一个位置，右边列它的候选";
+            gMod.Caption = "方案树 · " + sc + " 个位置 · 已选 " + sk
+                         + (treeView != null && treeView.Unmatched > 0 ? " · " + treeView.Unmatched + " 个未归类" : "");
         }
     }
 }

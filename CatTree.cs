@@ -762,6 +762,8 @@ namespace Installer
         /// <summary>两列状态：3=已装（在不在游戏里）、4=开关（1/0，可点）。同一条判定给分类列表也用了。</summary>
         private void AddStateCells(ListViewItem li, ModGroup g)
         {
+            // 每一列保留自己的状态色和字号；否则整行样式会盖住「已装 / 开关」列。
+            li.UseItemStyleForSubItems = false;
             li.SubItems.Add("");
             li.SubItems.Add("");
             ApplyStateCells(li, g);
@@ -1694,7 +1696,7 @@ namespace Installer
             string want = n > 0 ? "应用改动 " + n : "应用改动";
             if (btnApply.Text != want) btnApply.Text = want;
             bool on = n > 0;
-            if (btnApply.Primary != on) { btnApply.Primary = on; btnApply.Invalidate(); }
+            btnApply.Primary = on;
         }
 
         private void ApplyHere()
@@ -2444,7 +2446,9 @@ namespace Installer
 
         private int IndexAt(int y)
         {
-            int i = y / RowH;
+            // 绘制时第一行从 y=4 开始，命中区也必须扣除同样的顶部偏移。
+            if (y < 4) return -1;
+            int i = (y - 4) / RowH;
             return (i >= 0 && i < rows.Count) ? i : -1;
         }
 

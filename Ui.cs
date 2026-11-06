@@ -12,7 +12,7 @@ namespace Installer
         private ComboBox txtGame;
         private ComboBox cboMode;          // 工作模式：U 盘模式 / 本地模式
         private bool modeSync;             // 回填下拉时别触发重扫
-        private FlatButton btnBrowse, btnFind, btnInstall, btnRestore, btnOpen, btnSwitch, btnCancel;
+        private FlatButton btnBrowse, btnFind, btnInstall, btnRestore, btnOpen, btnSwitch, btnCancel, btnClearSearch;
         private CheckBox chkL4N, chkSkeeto, chkAsset, chkMqcam, chkDxvk, chkLaunch, chkCfg, chkSwap, chkStrict;
         private RadioButton rdSkip, rdOver;
         private ComboBox cboTweak;
@@ -75,6 +75,7 @@ namespace Installer
             ClientSize = new Size(Math.Min(w0, wa.Width - 20), Math.Min(h0, wa.Height - 20));
             Font = Theme.UI;
             DoubleBuffered = true;
+            KeyPreview = true;
             StartPosition = FormStartPosition.CenterScreen;
             BuildUi();
             Core.Sink = AppendLog;
@@ -256,7 +257,7 @@ namespace Installer
             Label l5 = new Label(); l5.Text = "已装的"; l5.SetBounds(12, 80, 56, 20); Theme.Dress(l5); gOpt.Controls.Add(l5);
             rdSkip = new RadioButton(); rdSkip.Text = "跳过"; rdSkip.SetBounds(70, 78, 66, 22); Theme.Dress(rdSkip); gOpt.Controls.Add(rdSkip);
             rdOver = new RadioButton(); rdOver.Text = "覆盖重装"; rdOver.SetBounds(140, 78, 96, 22); Theme.Dress(rdOver); gOpt.Controls.Add(rdOver);
-            Label l6 = new Label(); l6.Text = "跳过已有 / 全部重写"; l6.SetBounds(240, 80, leftW - 240 - 12, 18); l6.Font = Theme.UISmall; l6.ForeColor = Theme.Ink3; Theme.Dress(l6); gOpt.Controls.Add(l6);
+            Label l6 = new Label(); l6.Text = "跳过已有 / 全部重写"; l6.SetBounds(240, 80, leftW - 240 - 12, 18); l6.Font = Theme.UISmall; Theme.Dress(l6); l6.ForeColor = Theme.Ink3; gOpt.Controls.Add(l6);
             tips.SetToolTip(rdSkip, "平台、Skeeto、素材包、MQCam、MOD 只要已经装过且大小一致就跳过。\r\n装得快，适合新机器或者上次已经装好了。");
             tips.SetToolTip(rdOver, "不管装没装过，全都重新写一遍。\r\n用来修「装了一半」「文件被删/被改」的机器，慢一些但最干净。");
 
@@ -310,11 +311,16 @@ namespace Installer
             btnSaveProfile = new FlatButton(); btnSaveProfile.Text = "存为方案"; btnSaveProfile.SetBounds(262, 28, 84, Theme.H); btnSaveProfile.Click += delegate { SaveProfile(); }; gm.Controls.Add(btnSaveProfile);
             btnApplyProfile = new FlatButton(); btnApplyProfile.Text = "套用"; btnApplyProfile.SetBounds(354, 28, 58, Theme.H); btnApplyProfile.Click += delegate { ApplyProfile(); }; gm.Controls.Add(btnApplyProfile);
             tips.SetToolTip(btnApplyProfile, "把选中的方案套用到当前勾选；如果会覆盖现有选择，会先确认。");
-            btnManage = new FlatButton(); btnManage.Text = "管理…"; btnManage.SetBounds(rightW - 12 - 68, 28, 68, Theme.H); btnManage.Click += delegate { ManageProfiles(); }; gm.Controls.Add(btnManage);
+            btnManage = new FlatButton(); btnManage.Text = "方案管理…"; btnManage.SetBounds(rightW - 12 - 88, 28, 88, Theme.H); btnManage.Click += delegate { ManageProfiles(); }; gm.Controls.Add(btnManage);
 
-            Label l9 = new Label(); l9.Text = "搜"; l9.SetBounds(12, 66, 24, 20); Theme.Dress(l9); gm.Controls.Add(l9);
-            txtSearch = new TextBox(); txtSearch.SetBounds(50, 62, rightW - 62, 24); Theme.Dress(txtSearch); txtSearch.TextChanged += delegate { searchTimer.Stop(); searchTimer.Start(); }; gm.Controls.Add(txtSearch);
-            tips.SetToolTip(txtSearch, "搜名字 / 替换了什么 / 位置名。停止输入 250 ms 自动筛，树右边换成搜索结果，点一行跳回它在树里的位置。");
+            Label l9 = new Label(); l9.Text = "搜索"; l9.SetBounds(12, 66, 34, 20); Theme.Dress(l9); gm.Controls.Add(l9);
+            txtSearch = new TextBox(); txtSearch.SetBounds(50, 62, rightW - 126, 24); txtSearch.AccessibleName = "搜索 MOD"; Theme.Dress(txtSearch); txtSearch.TextChanged += delegate { searchTimer.Stop(); searchTimer.Start(); }; gm.Controls.Add(txtSearch);
+            tips.SetToolTip(txtSearch, "搜名字 / 替换了什么 / 位置名。Ctrl+F 快速聚焦，Esc 清空并返回方案树。\r\n停止输入 250 ms 自动筛；点搜索结果可跳回它在树里的位置。");
+            btnClearSearch = new FlatButton(); btnClearSearch.Text = "清空"; btnClearSearch.SetBounds(rightW - 68, 62, 56, 24);
+            btnClearSearch.AccessibleName = "清空搜索并返回方案树";
+            btnClearSearch.Click += delegate { txtSearch.Clear(); RefreshMods(); txtSearch.Focus(); };
+            tips.SetToolTip(btnClearSearch, "清空搜索并返回方案树（Esc）");
+            gm.Controls.Add(btnClearSearch);
 
             // 方案分布：一行说完这套在各类里放了几个
             lblScheme = new Label();
@@ -363,16 +369,18 @@ namespace Installer
             gm.Controls.Add(lblConflict);
 
             // ---- 底部动作区：主操作只有一个 ----
-            btnInstall = new FlatButton(); btnInstall.Text = "开始装"; btnInstall.Primary = true;
+            btnInstall = new FlatButton(); btnInstall.Text = "开始安装"; btnInstall.Primary = true;
+            btnInstall.AccessibleName = "开始安装所选组件和 MOD";
             btnInstall.Font = new Font(Theme.UI, FontStyle.Bold);
             btnInstall.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112, CH - 104, 112, Theme.HP);
             btnInstall.Click += delegate { DoInstall(); }; Controls.Add(btnInstall);
-            btnSwitch = new FlatButton(); btnSwitch.Text = "已装 MOD 开关";
+            btnSwitch = new FlatButton(); btnSwitch.Text = "管理已装 MOD";
             btnSwitch.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116, CH - 104, 116, Theme.HP);
             btnSwitch.Click += delegate { DoSwitch(); }; Controls.Add(btnSwitch);
-            btnRestore = new FlatButton(); btnRestore.Text = "一键还原";
+            btnRestore = new FlatButton(); btnRestore.Text = "一键还原"; btnRestore.Danger = true;
             btnRestore.SetBounds(W - Theme.M - 104 - 8 - 96, CH - 104, 96, Theme.HP);
             btnRestore.Click += delegate { DoRestore(); }; Controls.Add(btnRestore);
+            tips.SetToolTip(btnRestore, "危险操作：移除本次安装的平台文件和 MOD。执行前会再次确认。");
             btnOpen = new FlatButton(); btnOpen.Text = "打开游戏目录";
             btnOpen.SetBounds(W - Theme.M - 104, CH - 104, 104, Theme.HP);
             btnOpen.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", txtGame.Text); } catch { } }; Controls.Add(btnOpen);
@@ -417,6 +425,27 @@ namespace Installer
             searchTimer.Tick += delegate(object s2, EventArgs e2) { searchTimer.Stop(); RefreshMods(); };
             Resize += delegate { ApplyResponsive(); };
             ApplyResponsive();
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == (Keys.Control | Keys.F))
+            {
+                if (txtSearch != null)
+                {
+                    txtSearch.Focus();
+                    txtSearch.SelectAll();
+                }
+                return true;
+            }
+            if (keyData == Keys.Escape && txtSearch != null && txtSearch.Text.Length > 0)
+            {
+                txtSearch.Clear();
+                RefreshMods();
+                txtSearch.Focus();
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         private CheckBox AddChk(Section p, string text, int x, int y, bool chk, bool enabled)
@@ -2113,8 +2142,9 @@ namespace Installer
             lblSel.Width = rightW - 24;
             lblConflict.Width = rightW - 24;
 
-            txtSearch.Width = rightW - 62;
-            btnManage.Left = rightW - 12 - 68;
+            txtSearch.Width = rightW - 126;
+            btnClearSearch.Left = rightW - 68;
+            btnManage.Left = rightW - 12 - 88;
 
             // 顶部
             const int modeW = 104;

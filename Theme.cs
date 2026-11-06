@@ -31,6 +31,8 @@ namespace Installer
         public static readonly Color Accent = Color.FromArgb(179, 38, 30);
         public static readonly Color AccentHover = Color.FromArgb(156, 31, 25);
         public static readonly Color AccentDown = Color.FromArgb(135, 26, 21);
+        public static readonly Color DangerHover = Color.FromArgb(255, 244, 243);
+        public static readonly Color DangerDown = Color.FromArgb(250, 235, 234);
         public static readonly Color Warn = Color.FromArgb(169, 97, 0);
         public static readonly Color Ok = Color.FromArgb(46, 125, 50);
         // 信息蓝：表示「这里有可叠加的东西」，中性提示，不用红——红容易让人误以为装冲突了。
@@ -96,7 +98,7 @@ namespace Installer
                 cb.BackColor = Surface;
                 cb.ForeColor = Ink;
             }
-            else if (c is CheckBox)
+            else if (c is CheckBox || c is RadioButton)
             {
                 c.BackColor = Color.Transparent;
                 c.ForeColor = Ink;
@@ -115,7 +117,29 @@ namespace Installer
     /// </summary>
     internal class FlatButton : Button
     {
-        public bool Primary;
+        private bool primary, danger;
+        public bool Primary
+        {
+            get { return primary; }
+            set
+            {
+                if (primary == value) return;
+                primary = value;
+                SetFace(TargetFace());
+                Invalidate();
+            }
+        }
+        public bool Danger
+        {
+            get { return danger; }
+            set
+            {
+                if (danger == value) return;
+                danger = value;
+                SetFace(TargetFace());
+                Invalidate();
+            }
+        }
         private bool hover, down;
         private readonly Timer anim;
         private Color shownFace;
@@ -151,13 +175,22 @@ namespace Installer
         protected override void OnMouseLeave(EventArgs e) { hover = false; down = false; AnimateFace(); Invalidate(); base.OnMouseLeave(e); }
         protected override void OnMouseDown(MouseEventArgs e) { down = true; SetFace(TargetFace()); Invalidate(); base.OnMouseDown(e); }
         protected override void OnMouseUp(MouseEventArgs e) { down = false; AnimateFace(); Invalidate(); base.OnMouseUp(e); }
-        protected override void OnEnabledChanged(EventArgs e) { SetFace(TargetFace()); Invalidate(); base.OnEnabledChanged(e); }
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            Cursor = Enabled ? Cursors.Hand : Cursors.Default;
+            SetFace(TargetFace());
+            Invalidate();
+            base.OnEnabledChanged(e);
+        }
 
         private Color TargetFace()
         {
             if (Primary)
-                return !Enabled ? Color.FromArgb(203, 187, 186)
+                return !Enabled ? Theme.LineSoft
                      : (down ? Theme.AccentDown : (hover ? Theme.AccentHover : Theme.Accent));
+            if (Danger)
+                return !Enabled ? Theme.SurfaceAlt
+                     : (down ? Theme.DangerDown : (hover ? Theme.DangerHover : Theme.Surface));
             return !Enabled ? Theme.SurfaceAlt
                  : (down ? Theme.BtnDown : (hover ? Theme.BtnHover : Theme.Surface));
         }
@@ -212,8 +245,13 @@ namespace Installer
             Color face = shownFace;
             if (Primary)
             {
-                ink = Color.White;
+                ink = Enabled ? Color.White : Theme.Ink2;
                 edge = face;
+            }
+            else if (Danger)
+            {
+                ink = Enabled ? Theme.Accent : Theme.Ink3;
+                edge = Enabled ? Theme.Accent : Theme.Line;
             }
             else
             {
@@ -264,8 +302,10 @@ namespace Installer
             g.Clear(Theme.Surface);
             using (Pen pen = new Pen(Theme.LineSoft))
                 g.DrawLine(pen, 0, 22, Width, 22);
-            TextRenderer.DrawText(g, caption, Theme.UIBold, new Rectangle(0, 0, Width, 22), Theme.Ink2,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            using (SolidBrush mark = new SolidBrush(Theme.Accent))
+                g.FillRectangle(mark, 0, 6, 3, 10);
+            TextRenderer.DrawText(g, caption, Theme.UIBold, new Rectangle(10, 0, Math.Max(0, Width - 10), 22), Theme.Ink,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
         }
     }
 }
