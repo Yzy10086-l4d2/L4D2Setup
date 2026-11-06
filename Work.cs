@@ -28,7 +28,8 @@ namespace Installer
             sb.AppendLine("=== 装机台 自检 " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " ===");
             sb.AppendLine("程序位置 : " + Core.Here);
             sb.AppendLine("U 盘根   : " + Core.UsbRoot);
-            sb.AppendLine("MOD 根   : " + Core.ModRoot);
+            sb.AppendLine("工作模式 : " + (Core.IsLocal ? "本地模式（只扫游戏目录 addons）" : "U 盘模式（主库 + 附加目录）"));
+            sb.AppendLine("MOD 主库 : " + Core.ModRoot);
             bool okPack;
             sb.AppendLine("--- 包检查 ---");
             foreach (string l in Core.CheckPackages(out okPack)) sb.AppendLine("  " + l);

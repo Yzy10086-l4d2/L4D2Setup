@@ -56,6 +56,7 @@ namespace Installer
         public string TweakSet = "";        // 套用哪套参数存档（空 = 不套）
         public bool ReduceMotion = false;   // true = 关闭轻量过渡，直接显示最终状态
         public string Mode = "usb";         // 工作模式：usb = U 盘库是主（默认）；local = 游戏目录 addons 当库
+        public string LibraryRoot = "";     // U 盘模式的主库根；空 = 跟随程序所在盘
         public List<string> ModDirs = new List<string>();   // 额外的 MOD 库文件夹（任意电脑上的任意目录）
         public List<string> Recent = new List<string>();
         public List<string> Mods = new List<string>();
@@ -66,6 +67,7 @@ namespace Installer
         public static string Here;
         public static string UsbRoot;
         public static string ModRoot;
+        public static string DefaultModRoot;
         public static string PkgDir;
         public static string CfgPath;
         public static string LogDir;
@@ -91,12 +93,14 @@ namespace Installer
             PkgDir = ResolvePkgDir(Here);
             UsbRoot = WalkUp(Here);
             ModRoot = Path.Combine(Path.Combine(UsbRoot, "游戏内容"), "求生之路2各项MOD");
+            DefaultModRoot = ModRoot;
             CfgPath = Path.Combine(PkgDir, "装机台.配置.ini");
             LogDir = Path.Combine(PkgDir, "_装机记录");
             if (!Directory.Exists(LogDir)) Directory.CreateDirectory(LogDir);
             LogFile = Path.Combine(LogDir, "log-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");
             PruneLogs();
             LoadConfig();
+            ApplyConfiguredLibraryRoot();
         }
 
         // 包目录：exe 旁边就有包就用旁边；否则在 U 盘里找带「防闪退」或「Skeeto+MQCam」的目录
@@ -246,6 +250,7 @@ namespace Installer
                     else if (k == "TweakSet") Cfg.TweakSet = v;
                     else if (k == "ReduceMotion") Cfg.ReduceMotion = (v == "1");
                     else if (k == "Mode") Cfg.Mode = v;
+                    else if (k == "LibraryRoot") Cfg.LibraryRoot = v;
                     else if (k == "ModDir") Cfg.ModDirs.Add(v);
                     else if (k == "Recent") Cfg.Recent.Add(v);
                     else if (k.StartsWith("Mod:")) Cfg.Mods.Add(k.Substring(4));
@@ -276,6 +281,7 @@ namespace Installer
                 sb.AppendLine("TweakSet=" + Cfg.TweakSet);
                 sb.AppendLine("ReduceMotion=" + (Cfg.ReduceMotion ? "1" : "0"));
                 sb.AppendLine("Mode=" + Cfg.Mode);
+                sb.AppendLine("LibraryRoot=" + Cfg.LibraryRoot);
                 foreach (string d in Cfg.ModDirs) sb.AppendLine("ModDir=" + d);
                 foreach (string rp in Cfg.Recent) sb.AppendLine("Recent=" + rp);
                 sb.AppendLine("[mods]");
@@ -283,6 +289,42 @@ namespace Installer
                 File.WriteAllText(CfgPath, sb.ToString(), new UTF8Encoding(true));
             }
             catch (Exception ex) { Log("WARN", "配置写不进去: " + ex.Message); }
+        }
+
+        /// <summary>启动时套用配置里的主库；盘符暂时不在就回退到程序所在盘，不把配置抹掉。</summary>
+        private static void ApplyConfiguredLibraryRoot()
+        {
+            if (string.IsNullOrEmpty(Cfg.LibraryRoot)) return;
+            string p = Cfg.LibraryRoot.Trim().TrimEnd('\\');
+            if (Directory.Exists(p))
+            {
+                ModRoot = p;
+                return;
+            }
+            Log("WARN", "指定的 MOD 主库当前不可用: " + p + "；本次先跟随程序使用 " + DefaultModRoot);
+        }
+
+        /// <summary>
+        /// 切换 U 盘模式的主库。传程序所在盘的默认库时会清空覆盖项，
+        /// 这样 U 盘换盘符后仍能自动跟随，而不是记死旧盘符。
+        /// </summary>
+        public static bool SetLibraryRoot(string path, bool save)
+        {
+            string p = string.IsNullOrEmpty(path) ? DefaultModRoot : path.Trim().TrimEnd('\\');
+            if (!Directory.Exists(p)) return false;
+
+            if (string.Equals(p, DefaultModRoot.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            {
+                ModRoot = DefaultModRoot;
+                Cfg.LibraryRoot = "";
+            }
+            else
+            {
+                ModRoot = p;
+                Cfg.LibraryRoot = p;
+            }
+            if (save) SaveConfig();
+            return true;
         }
 
         // ---------------- 找游戏 ----------------

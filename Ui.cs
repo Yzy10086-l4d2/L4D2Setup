@@ -12,13 +12,14 @@ namespace Installer
         private ComboBox txtGame;
         private ComboBox cboMode;          // 工作模式：U 盘模式 / 本地模式
         private bool modeSync;             // 回填下拉时别触发重扫
-        private FlatButton btnBrowse, btnFind, btnInstall, btnRestore, btnOpen, btnSwitch, btnCancel, btnClearSearch;
+        private FlatButton btnBrowse, btnFind, btnSettings, btnInstall, btnRestore, btnOpen, btnSwitch, btnCancel, btnClearSearch;
         private CheckBox chkL4N, chkSkeeto, chkAsset, chkMqcam, chkDxvk, chkLaunch, chkCfg, chkSwap, chkStrict;
         private RadioButton rdSkip, rdOver;
         private ComboBox cboTweak;
         private FlatButton btnTweak;
-        private FlatButton btnLaunchEdit;
+        private FlatButton btnLaunchEdit, btnLaunchCopy;
         private TextBox txtLaunch;
+        private readonly System.Windows.Forms.Timer copyTimer = new System.Windows.Forms.Timer();
         private ComboBox cboProfile;
         // 最近套用/保存过的方案名（空=没套方案）：自检结果写回它
         private string appliedProfile = "";
@@ -190,17 +191,30 @@ namespace Installer
             // ---- 顶部：游戏目录 ----
             Label l1 = new Label(); l1.Text = "游戏目录"; l1.SetBounds(Theme.M, 20, 56, 20); Theme.Dress(l1); Controls.Add(l1);
             const int modeW = 104;
-            int modeX = W - Theme.M - 84 - 8 - 84 - 8 - modeW;
+            const int findW = 76;
+            const int browseW = 76;
+            const int settingsW = 60;
+            const int topGap = 8;
+            int settingsX = W - Theme.M - settingsW;
+            int findX = settingsX - topGap - findW;
+            int browseX = findX - topGap - browseW;
+            int modeX = browseX - topGap - modeW;
             txtGame = new ComboBox(); txtGame.SetBounds(76, 18, modeX - 8 - 76, 24);
             txtGame.DropDownStyle = ComboBoxStyle.DropDown; Theme.Dress(txtGame); Controls.Add(txtGame);
             cboMode = new ComboBox(); cboMode.SetBounds(modeX, 18, modeW, 24);
             cboMode.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboMode);
             cboMode.Items.Add("U 盘模式"); cboMode.Items.Add("本地模式");
             cboMode.SelectedIndexChanged += delegate { OnModeChanged(); };
-            tips.SetToolTip(cboMode, "U 盘模式：U 盘库是主，装 MOD = 从库里复制到游戏。\r\n游戏目录里和库里同名同大小的那份会合并显示（标「已装」），不再重复列。\r\n本地模式：不扫 U 盘库，游戏目录 addons 直接当库；删除 = 从游戏里卸掉（文件真删）。");
+            tips.SetToolTip(cboMode, "U 盘模式：所选主库是主，装 MOD = 从库里复制到游戏。\r\n游戏目录里和库里同名同大小的那份会合并显示（标「已装」），不再重复列。\r\n本地模式：只看游戏目录 addons，不扫主库和附加目录；删除 = 从游戏里卸掉（文件真删）。");
             Controls.Add(cboMode);
-            btnBrowse = new FlatButton(); btnBrowse.Text = "浏览…"; btnBrowse.SetBounds(W - Theme.M - 84 - 8 - 84, 16, 84, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
-            btnFind = new FlatButton(); btnFind.Text = "自动找"; btnFind.SetBounds(W - Theme.M - 84, 16, 84, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
+            btnBrowse = new FlatButton(); btnBrowse.Text = "浏览…"; btnBrowse.SetBounds(browseX, 16, browseW, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
+            btnFind = new FlatButton(); btnFind.Text = "自动找"; btnFind.SetBounds(findX, 16, findW, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
+            btnSettings = new FlatButton(); btnSettings.Text = "设置";
+            btnSettings.SetBounds(settingsX, 16, settingsW, Theme.H);
+            btnSettings.AccessibleName = "打开设置";
+            btnSettings.Click += delegate { ShowSettings(); };
+            tips.SetToolTip(btnSettings, "工作模式、动效、MOD 库目录，以及配置和日志位置。");
+            Controls.Add(btnSettings);
 
             // ---- 左栏上：装什么 ----
             Section gp = new Section();
@@ -229,15 +243,31 @@ namespace Installer
             chkCfg = AddChk(gp, "写参数配置（L4N 按键 + Skeeto 设置）", 12, 172, true, true);
             tips.SetToolTip(chkCfg, "从 U 盘的参数存档里取出你调好的 autoexec.cfg 和 skeeto_setting.ini，\r\n直接写进这台机器。换机器装机就不用再手调了。\r\n下面那行选套用哪一套；没有存档就退回旧做法（搬 U 盘根目录的 autoexec.cfg）。");
             Label l4 = new Label(); l4.Text = "启动项"; l4.SetBounds(12, 198, 44, 20); Theme.Dress(l4); gp.Controls.Add(l4);
-            txtLaunch = new TextBox(); txtLaunch.SetBounds(60, 196, leftW - 60 - 12 - 30, 24); Theme.Dress(txtLaunch); gp.Controls.Add(txtLaunch);
+            txtLaunch = new TextBox(); txtLaunch.SetBounds(60, 196, 246, 24); Theme.Dress(txtLaunch); gp.Controls.Add(txtLaunch);
             // 一行输入框放不下 130 个字符：外面只给个预览，真正的编辑交给「…」里的放大窗口
             txtLaunch.TextChanged += delegate { UpdateLaunchTip(); };
             txtLaunch.DoubleClick += delegate { EditLaunch(); };
+
+            // 复制 / 放大：两个按钮都靠右，位置统一由 LayoutLaunchRow 算，拖动窗口也不会错位
+            btnLaunchCopy = new FlatButton(); btnLaunchCopy.Text = "复制";
+            btnLaunchCopy.SetBounds(310, 196, 44, 24);
+            btnLaunchCopy.Click += delegate { CopyLaunch(); };
+            tips.SetToolTip(btnLaunchCopy, "把当前启动项整段复制到剪贴板，方便贴到 Steam、记事本或发给别人。");
+            gp.Controls.Add(btnLaunchCopy);
+            copyTimer.Interval = 1400;
+            copyTimer.Tick += delegate(object s2, EventArgs e2)
+            {
+                copyTimer.Stop();
+                if (btnLaunchCopy != null) btnLaunchCopy.Text = "复制";
+            };
+
             btnLaunchEdit = new FlatButton(); btnLaunchEdit.Text = "…"; btnLaunchEdit.Font = Theme.UIBold;
-            btnLaunchEdit.SetBounds(leftW - 12 - 26, 196, 26, 24);
+            btnLaunchEdit.SetBounds(358, 196, 26, 24);
             btnLaunchEdit.Click += delegate { EditLaunch(); };
             tips.SetToolTip(btnLaunchEdit, "放大编辑启动项（可换行、可恢复默认、可把 0/1 换成 0 或 1）。双击输入框也能打开。");
             gp.Controls.Add(btnLaunchEdit);
+
+            LayoutLaunchRow(leftW);
             UpdateLaunchTip();
 
             // ---- 左栏中：安装选项（原来挤在 MOD 列表底部，语义上属于"怎么装"，跟"挑什么"分开）----
@@ -273,21 +303,7 @@ namespace Installer
             // ---- 左栏下：日志 ----
             Section gl = new Section();
             gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, CH - 438 - 116); Controls.Add(gl);
-            FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68 - 6 - 52, 1, 68, 20); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
-            FlatButton btnEnv = new FlatButton(); btnEnv.Text = "环境"; btnEnv.SetBounds(leftW - 12 - 52, 1, 52, 20); btnEnv.Font = Theme.UISmall; btnEnv.Click += delegate { ShowEnv(); }; gl.Controls.Add(btnEnv);
-            FlatButton btnMotion = new FlatButton();
-            btnMotion.Text = Core.Cfg.ReduceMotion ? "动效 关" : "动效 开";
-            btnMotion.SetBounds(leftW - 12 - 68 - 6 - 52 - 6 - 68, 1, 68, 20);
-            btnMotion.Font = Theme.UISmall;
-            tips.SetToolTip(btnMotion, "只控制按钮悬停等轻量过渡。关闭后直接显示最终状态，更适合低性能机器或减少动态干扰。");
-            btnMotion.Click += delegate
-            {
-                Core.Cfg.ReduceMotion = !Core.Cfg.ReduceMotion;
-                Core.SaveConfig();
-                btnMotion.Text = Core.Cfg.ReduceMotion ? "动效 关" : "动效 开";
-                Core.Log("INFO", Core.Cfg.ReduceMotion ? "已关闭轻量动效" : "已开启轻量动效");
-            };
-            gl.Controls.Add(btnMotion);
+            FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68, 1, 68, 20); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
             txtLog = new TextBox();
             txtLog.SetBounds(12, 30, leftW - 24, Math.Max(60, CH - 438 - 116 - 34));   // 日志框撑满卡片
             txtLog.Multiline = true; txtLog.ScrollBars = ScrollBars.Both; txtLog.WordWrap = false; txtLog.ReadOnly = true;
@@ -559,18 +575,61 @@ namespace Installer
                 : ("装机时写入：" + Tweaks.DirOf(n)));
         }
 
+        /// <summary>启动项一行：输入框 + 复制 + 放大编辑。位置只在这里算，构建和重排共用。</summary>
+        private void LayoutLaunchRow(int leftW)
+        {
+            const int editW = 26, copyW = 44, gap = 4;
+            int editX = leftW - 12 - editW;
+            int copyX = editX - gap - copyW;
+            if (btnLaunchEdit != null) btnLaunchEdit.Left = editX;
+            if (btnLaunchCopy != null) btnLaunchCopy.Left = copyX;
+            if (txtLaunch != null) txtLaunch.Width = Math.Max(80, copyX - gap - 60);
+        }
+
+        /// <summary>一键复制启动项：复制清洗后的整段，还带 0/1 占位会额外提醒。</summary>
+        private void CopyLaunch()
+        {
+            string s = LaunchArgs.Clean(txtLaunch.Text);
+            if (s.Length == 0)
+            {
+                FlashCopy("空");
+                Log("启动项是空的，没有可复制的内容");
+                return;
+            }
+            try { Clipboard.SetText(s); }
+            catch (Exception ex)
+            {
+                FlashCopy("失败");
+                Log("复制启动项失败：" + ex.Message);
+                return;
+            }
+            FlashCopy("已复制");
+            Log("启动项已复制（" + LaunchArgs.CountSwitches(s) + " 个开关，" + s.Length + " 个字符）");
+            if (LaunchArgs.HasSlot(s))
+                Log("WARN", "复制的内容里还有 0/1 占位，贴到 Steam 前要改成 0 或 1");
+        }
+
+        /// <summary>按钮上的短反馈，1.4 秒后自动变回「复制」。</summary>
+        private void FlashCopy(string text)
+        {
+            if (btnLaunchCopy == null) return;
+            btnLaunchCopy.Text = text;
+            copyTimer.Stop();
+            copyTimer.Start();
+        }
+
         /// <summary>启动项输入框只有 ~300px，鼠标悬停看全文，改内容进放大窗口。</summary>
         private void UpdateLaunchTip()
         {
             string s = LaunchArgs.Clean(txtLaunch.Text);
             string tip;
-            if (s.Length == 0) tip = "现在是空的：不会写启动项，Steam 里已有的启动项也不会被清掉。\r\n点右边的「…」或双击这里编辑。";
+            if (s.Length == 0) tip = "现在是空的：不会写启动项，Steam 里已有的启动项也不会被清掉。\r\n右边「复制」可整段拷到剪贴板；点「…」或双击这里编辑。";
             else
             {
                 tip = s + "\r\n\r\n" + (LaunchArgs.HasSlot(s)
                         ? "注意：-skeeto_particle_platform 还是 0/1，要改成 0 或 1 才生效。"
                         : "共 " + LaunchArgs.CountSwitches(s) + " 个开关。")
-                    + "\r\n点右边的「…」或双击这里放大编辑。";
+                    + "\r\n右边「复制」可整段拷到剪贴板；点「…」或双击这里放大编辑。";
             }
             tips.SetToolTip(txtLaunch, tip);
         }
@@ -613,6 +672,58 @@ namespace Installer
             // 启动仍然保留上次工作选择，必须点「套用」才覆盖。
             LoadSchemeKeys();
             RefreshMods();
+        }
+
+        /// <summary>
+        /// 自测用：一键复制走一遍真实按钮路径 —— 有内容时原样进剪贴板；
+        /// 空内容只提示「空」，不能把用户原来的剪贴板覆盖掉。返回失败条数。
+        /// </summary>
+        internal int UiTestCopy()
+        {
+            int bad = 0;
+            string keep = txtLaunch.Text;
+            string sample = "-novid -windowed";
+
+            // 自测不该留在别人的剪贴板里：先备份，结束时原样放回去
+            string backup = "";
+            bool hadBackup = false;
+            try { backup = Clipboard.GetText(); hadBackup = true; }
+            catch { }
+
+            txtLaunch.Text = sample;
+            Application.DoEvents();
+            CopyLaunch();
+            Application.DoEvents();
+            string got = "";
+            try { got = Clipboard.GetText(); }
+            catch { got = "(读不到剪贴板)"; }
+            bool ok1 = string.Equals(got, sample, StringComparison.Ordinal);
+            Core.Log(ok1 ? "OK" : "FAIL", "COPYTEST 有内容：" + (ok1 ? "剪贴板与输入框一致" : "剪贴板=" + got));
+            if (!ok1) bad++;
+
+            txtLaunch.Text = "";
+            Application.DoEvents();
+            CopyLaunch();
+            Application.DoEvents();
+            string got2 = "";
+            try { got2 = Clipboard.GetText(); } catch { }
+            bool ok2 = string.Equals(got2, sample, StringComparison.Ordinal);
+            Core.Log(ok2 ? "OK" : "FAIL", "COPYTEST 空内容：" + (ok2 ? "没覆盖剪贴板" : "剪贴板被改成其他内容"));
+            if (!ok2) bad++;
+
+            txtLaunch.Text = keep;
+            Application.DoEvents();
+            UpdateLaunchTip();
+
+            try
+            {
+                if (hadBackup && backup.Length > 0) Clipboard.SetText(backup);
+                else Clipboard.Clear();
+            }
+            catch { }
+
+            Core.Log("INFO", "COPYTEST 结束：失败 " + bad + " 条（剪贴板已还原）");
+            return bad;
         }
 
         /// <summary>自测用：打开「启动项」放大编辑并截图，同时核对默认值与清洗结果。</summary>
@@ -1745,6 +1856,12 @@ namespace Installer
         // 压缩包内容识别：第一次把每个 rar 里的 vpk 目录表读一遍，结果落缓存
         internal void ProbeArchivesUi()
         {
+            if (Core.IsLocal)
+            {
+                MessageBox.Show("本地模式只扫描游戏目录 addons，不读取主库里的压缩包。\r\n\r\n要识别 U 盘库里的压缩包，请先切回 U 盘模式。",
+                    "识别压缩包内容", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             if (MessageBox.Show("会在后台把库里每个压缩包打开看一眼（只读前几百 KB，不解压整包），用来按内容判类型。\r\n\r\n第一次可能要几十秒，之后走缓存不再重复。开始吗？",
                 "识别压缩包内容", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
             int done = 0;
@@ -1811,6 +1928,12 @@ namespace Installer
         /// <summary>库文件夹管理：把电脑上任意目录加进/移出扫描范围。工具不再只服务 U 盘布局。</summary>
         internal void ManageModDirs()
         {
+            if (Core.IsLocal)
+            {
+                MessageBox.Show("本地模式只扫描游戏目录 addons，附加库目录不参与。\r\n\r\n要管理附加目录，请先在设置里切回 U 盘模式。",
+                    "库文件夹管理", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             using (LibraryDirsForm f = new LibraryDirsForm())
             {
                 f.ShowDialog(this);
@@ -1849,14 +1972,14 @@ namespace Installer
                 top.SetBounds(12, 10, 536, 52);
                 top.Font = Theme.UISmall;
                 top.ForeColor = Theme.Ink2;
-                top.Text = "下面的文件夹都会被扫描（vpk / rar / zip 全认）。游戏目录 addons 里的已装 MOD 自动识别，不用加。\r\n"
-                         + "在这里加目录只是「原地扫描」，不复制不移动任何文件。";
+                top.Text = "下面的文件夹只在 U 盘模式下扫描（vpk / rar / zip 全认）。游戏目录 addons 里的已装 MOD 自动识别，不用加。\r\n"
+                         + "在这里加目录只是「原地扫描」，不复制不移动任何文件；本地模式不会读取它们。";
                 Controls.Add(top);
 
                 lblMain.SetBounds(12, 66, 536, 20);
                 lblMain.Font = Theme.UIBold;
                 lblMain.ForeColor = Theme.Ink2;
-                lblMain.Text = "主库（跟着程序走的默认库）：" + Core.ModRoot;
+                lblMain.Text = "U 盘模式主库：" + Core.ModRoot;
                 Controls.Add(lblMain);
 
                 lb.SetBounds(12, 92, 536, 220);
@@ -2106,6 +2229,7 @@ namespace Installer
             sb.AppendLine("进度条    : " + bar.Left + "," + bar.Top + " " + bar.Width + " x " + bar.Height);
             sb.AppendLine("按钮行    : 顶=" + btnInstall.Top + " 左=" + btnInstall.Left);
             sb.AppendLine("启动项框  : " + txtLaunch.Left + "," + txtLaunch.Top + " " + txtLaunch.Width + " x " + txtLaunch.Height
+                          + "  复制按钮 " + btnLaunchCopy.Left + "," + btnLaunchCopy.Top + " " + btnLaunchCopy.Width + "x" + btnLaunchCopy.Height
                           + "  编辑按钮 " + btnLaunchEdit.Left + "," + btnLaunchEdit.Top + " " + btnLaunchEdit.Width + "x" + btnLaunchEdit.Height);
             sb.AppendLine("启动项值  : " + LaunchArgs.Clean(txtLaunch.Text)
                           + (LaunchArgs.HasSlot(txtLaunch.Text) ? "   [含 0/1 占位]" : ""));
@@ -2129,8 +2253,7 @@ namespace Installer
             gOpt.Width = leftW;
             gLog.Width = leftW;
             txtLog.Width = leftW - 24;
-            txtLaunch.Width = leftW - 60 - 12 - 30;
-            btnLaunchEdit.Left = leftW - 12 - 26;
+            LayoutLaunchRow(leftW);
             chkSwap.Width = leftW - 24;
             chkStrict.Width = leftW - 24;
             cboTweak.Width = Math.Max(120, leftW - 24 - 70 - 90 - 8);
@@ -2146,14 +2269,22 @@ namespace Installer
             btnClearSearch.Left = rightW - 68;
             btnManage.Left = rightW - 12 - 88;
 
-            // 顶部
+            // 顶部：游戏目录 / 模式 / 浏览 / 自动找 / 设置
             const int modeW = 104;
-            int modeX = W - Theme.M - 84 - 8 - 84 - 8 - modeW;
+            const int findW = 76;
+            const int browseW = 76;
+            const int settingsW = 60;
+            const int topGap = 8;
+            int settingsX = W - Theme.M - settingsW;
+            int findX = settingsX - topGap - findW;
+            int browseX = findX - topGap - browseW;
+            int modeX = browseX - topGap - modeW;
             txtGame.Width = modeX - 8 - 76;
             cboMode.Left = modeX;
             cboMode.Top = 18;
-            btnBrowse.Left = W - Theme.M - 84 - 8 - 84;
-            btnFind.Left = W - Theme.M - 84;
+            btnBrowse.Left = browseX;
+            btnFind.Left = findX;
+            btnSettings.Left = settingsX;
 
             // 底部（按钮整组贴右下）
             btnOpen.Left = W - Theme.M - 104;
@@ -2184,7 +2315,7 @@ namespace Installer
             catch { return false; }
         }
 
-        private void ShowEnv()
+        internal void ShowEnv()
         {
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("系统      : " + Environment.OSVersion.VersionString + (Environment.Is64BitOperatingSystem ? "  64 位" : "  32 位"));

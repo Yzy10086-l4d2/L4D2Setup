@@ -55,9 +55,11 @@ namespace Installer
             bool uiTest = false;
             bool copyTest = false;
             string uiSize = "1280x900";
+            string modeOverride = null;
             string uiFilter = null;
             string uiDeep = null;
             bool uiProfile = false;
+            bool uiSettings = false;
             bool uiDeps = false;
             bool uiTree = false;
             string uiSelect = null;
@@ -69,6 +71,7 @@ namespace Installer
             string uiParts = null;
             string uiTweaks = null;
             bool uiLaunch = false;
+            bool uiCopy = false;
             bool uiDup = false;
             bool dupSelf = false;
             bool launchSelf = false;
@@ -85,11 +88,13 @@ namespace Installer
                 string a = args[i];
                 if (string.Equals(a, "--selftest", StringComparison.OrdinalIgnoreCase)) selfTest = true;
                 else if (string.Equals(a, "--uitest", StringComparison.OrdinalIgnoreCase)) uiTest = true;
+                else if (a.StartsWith("--mode=", StringComparison.OrdinalIgnoreCase)) modeOverride = a.Substring(7).Trim();
                 else if (string.Equals(a, "--copytest", StringComparison.OrdinalIgnoreCase)) copyTest = true;
                 else if (a.StartsWith("--uitsize=", StringComparison.OrdinalIgnoreCase)) uiSize = a.Substring(10);
                 else if (a.StartsWith("--uifilter=", StringComparison.OrdinalIgnoreCase)) uiFilter = a.Substring(11);
                 else if (a.StartsWith("--uideep=", StringComparison.OrdinalIgnoreCase)) uiDeep = a.Substring(9);
                 else if (string.Equals(a, "--uiprofile", StringComparison.OrdinalIgnoreCase)) uiProfile = true;
+                else if (string.Equals(a, "--uisettings", StringComparison.OrdinalIgnoreCase)) { uiSettings = true; uiTest = true; }
                 else if (string.Equals(a, "--uideps", StringComparison.OrdinalIgnoreCase)) uiDeps = true;
                 else if (string.Equals(a, "--uitree", StringComparison.OrdinalIgnoreCase)) uiTree = true;
                 else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
@@ -101,6 +106,7 @@ namespace Installer
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
                 else if (string.Equals(a, "--launch", StringComparison.OrdinalIgnoreCase)) uiLaunch = true;
+                else if (string.Equals(a, "--copy", StringComparison.OrdinalIgnoreCase)) { uiCopy = true; uiTest = true; }
                 else if (string.Equals(a, "--dup", StringComparison.OrdinalIgnoreCase)) uiDup = true;
                 else if (string.Equals(a, "--dupself", StringComparison.OrdinalIgnoreCase)) dupSelf = true;
                 else if (string.Equals(a, "--launchself", StringComparison.OrdinalIgnoreCase)) launchSelf = true;
@@ -126,6 +132,13 @@ namespace Installer
             }
 
             Core.Init();
+            // 诊断用：临时覆盖工作模式，不写回配置
+            if (!string.IsNullOrEmpty(modeOverride))
+            {
+                if (string.Equals(modeOverride, "local", StringComparison.OrdinalIgnoreCase)) Core.Cfg.Mode = "local";
+                else if (string.Equals(modeOverride, "usb", StringComparison.OrdinalIgnoreCase)) Core.Cfg.Mode = "usb";
+                else Core.Log("WARN", "未知的 --mode 值: " + modeOverride + "（只认 local / usb）");
+            }
             InstallCrashHandlers();
             if (vpkFile != null)
             {
@@ -291,6 +304,14 @@ namespace Installer
                     }
                     if (uiParts != null) { f.UiTestParts(uiParts); System.Windows.Forms.Application.DoEvents(); }
                     if (uiTweaks != null) { f.UiTestTweaks(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiCopy)
+                    {
+                        // 一键复制回归：只碰剪贴板，不动配置和游戏目录。失败条数当退出码。
+                        int bad = f.UiTestCopy();
+                        System.Windows.Forms.Application.DoEvents();
+                        Console.WriteLine("copyself failures = " + bad);
+                        return bad == 0 ? 0 : 1;
+                    }
                     if (uiLaunch) { f.UiTestLaunch(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDup) { f.UiTestDup(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
@@ -301,6 +322,7 @@ namespace Installer
                     if (uiAddons) { f.UiTestAddonSwitch(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFix != null) { f.UiFixProfile(uiFix); System.Windows.Forms.Application.DoEvents(); }
                     if (uiProfile) { f.UiTestProfileForm(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiSettings) { f.UiTestSettings(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeep != null) { f.UiTestFilter(uiDeep); System.Windows.Forms.Application.DoEvents(); f.UiTestDeep(); System.Windows.Forms.Application.DoEvents(); }
                     System.IO.File.WriteAllText(System.IO.Path.Combine(Core.LogDir, "uitest.txt"), f.LayoutDump(), new System.Text.UTF8Encoding(true));

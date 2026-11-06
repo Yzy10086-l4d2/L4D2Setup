@@ -491,26 +491,38 @@ namespace Installer
 
                 // 1) 主库：老结构 <库根>\游戏内容\求生之路2各项MOD\addons*（U 盘布局）
                 if (Core.IsLocal)
-                    Core.Log("INFO", "本地模式：不扫 U 盘库，把游戏目录 addons 当库");
-                else if (Directory.Exists(Core.ModRoot))
                 {
-                    // 库根下的目录全都翻，不再只认 addons 前缀：
-                    // 按自己的习惯命名（skeeto素材、新地图…）也能被认到。
-                    // 唯一的例外是程序自己那一摊（扩展平台：安装包 / 日志 / 源码），
-                    // 里面的 vpk 是平台 payload，不是库里的 MOD。
-                    int scanned = 0;
-                    foreach (string dir in Directory.GetDirectories(Core.ModRoot))
-                    {
-                        if (IsSelfDir(dir)) continue;
-                        CollectDir(dir, vpkFiles, arcs);
-                        scanned++;
-                    }
-                    Core.Log("INFO", "扫库: 库根下 " + scanned + " 个目录全部参与扫描（程序目录已跳过）");
+                    // 本地模式只认游戏根目录：主库、附加目录都不参与，避免把 U 盘上的东西混进来
+                    Core.Log("INFO", "本地模式：只扫游戏目录 addons，不扫主库和附加目录");
                 }
-                else Core.Log("WARN", "MOD 根目录不存在: " + Core.ModRoot + "（可用「库文件夹管理…」添加电脑上的任意目录）");
+                else
+                {
+                    if (Directory.Exists(Core.ModRoot))
+                    {
+                        // 库根下的目录全都翻，不再只认 addons 前缀：
+                        // 按自己的习惯命名（skeeto素材、新地图…）也能被认到。
+                        // 唯一的例外是程序自己那一摊（扩展平台：安装包 / 日志 / 源码），
+                        // 里面的 vpk 是平台 payload，不是库里的 MOD。
+                        // 主库根目录直接平铺的文件也要认：用户选盘后经常直接指到一个装 vpk 的文件夹
+                        foreach (string f in Directory.GetFiles(Core.ModRoot, "*.vpk", SearchOption.TopDirectoryOnly))
+                            vpkFiles.Add(f);
+                        foreach (string f in Directory.GetFiles(Core.ModRoot, "*", SearchOption.TopDirectoryOnly))
+                            if (IsArchive(f)) arcs.Add(f);
 
-                // 2) 自设的库文件夹：整棵树都扫，工具不再只服务 U 盘布局
-                foreach (string d in Core.Cfg.ModDirs) CollectDir(d, vpkFiles, arcs);
+                        int scanned = 0;
+                        foreach (string dir in Directory.GetDirectories(Core.ModRoot))
+                        {
+                            if (IsSelfDir(dir)) continue;
+                            CollectDir(dir, vpkFiles, arcs);
+                            scanned++;
+                        }
+                        Core.Log("INFO", "扫库: 主库 " + Core.ModRoot + " 根目录文件 + " + scanned + " 个子目录（程序目录已跳过）");
+                    }
+                    else Core.Log("WARN", "MOD 主库不存在: " + Core.ModRoot + "（可在设置里换盘，或用「库文件夹管理…」添加目录）");
+
+                    // 2) 自设的库文件夹：只在 U 盘模式生效，整棵树都扫
+                    foreach (string d in Core.Cfg.ModDirs) CollectDir(d, vpkFiles, arcs);
+                }
 
                 foreach (string f in vpkFiles) AddVpk(f);
 
@@ -710,6 +722,7 @@ namespace Installer
             it.RelPath = RelOf(f);
             it.Key = it.RelPath;
             it.Category = Core.RelDir(it.RelPath).Split('\\')[0];
+            if (it.Category.Length == 0) it.Category = "未分类";
             try { it.Size = new FileInfo(f).Length; } catch { it.Size = 0; }
             Classify(it);
             ModIdentify.Result ir = ModIdentify.AnalyzeCached(it.RelPath, f);
