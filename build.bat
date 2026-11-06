@@ -13,7 +13,13 @@ if not exist "%CSC%" (
   exit /b 1
 )
 
-set "OUT=%~dp0..\..\..\..\L4D2Setup.exe"
+rem  Where to put the exe. In the USB kit layout the exe lives at the drive
+rem  root (4 levels up: src\pkg\mods\<drive>). A standalone clone has no such
+rem  parent, so fall back to building next to this script -- "clone and
+rem  double-click" then still works. Check is ASCII-only on purpose.
+set "ROOT=%~dp0..\..\..\.."
+for %%I in ("%ROOT%") do set "ROOT=%%~fI"
+if "%ROOT:~2%"=="\" (set "OUT=%ROOT%L4D2Setup.exe") else (set "OUT=%~dp0L4D2Setup.exe")
 set "ICONARG="
 if exist "%~dp0app.ico" set "ICONARG=/win32icon:%~dp0app.ico"
 "%CSC%" /nologo /codepage:65001 /target:winexe /optimize+ /out:"%OUT%" %ICONARG% ^
