@@ -6,3 +6,10 @@ _bak-*/
 *.tmp
 Thumbs.db
 desktop.ini
+
+# 开发过程文档：本地保留，不进仓库（仓库只留 README / LICENSE）
+改动说明_*.md
+优化建议_*.md
+界面评审_*.md
+AI聚类研究报告_*.md
+cluster_lab.py
