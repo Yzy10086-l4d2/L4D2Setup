@@ -1510,6 +1510,16 @@ namespace Installer
         internal bool MoveCatTo(string name, string target, bool after)
         {
             if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(target)) return false;
+            // 已经在那个位置上 = 明确告诉用户「没挪」，别让他以为拖动坏了
+            List<string> cur = CatPrefs.Cats();
+            int ci = cur.IndexOf(name), ti = cur.IndexOf(target);
+            if (ci >= 0 && ti >= 0 && ((after && ci == ti + 1) || (!after && ci == ti - 1)))
+            {
+                lblFoot.Text = "「" + name + "」本来就在「" + target + "」" + (after ? "后面" : "前面")
+                    + " —— 位置没变。拖到隔一个以上的大类（比如 枪械 / 杂项）才看得出挪动";
+                Core.Log("INFO", "DRAGAPPLY 「" + name + "」本来就在「" + target + "」" + (after ? "后面" : "前面") + "，位置没变");
+                return true;
+            }
             if (!CatPrefs.MoveCatTo(name, target, after)) return false;
             Rebuild();
             // 把刚拖的那个大类滚回视野内
@@ -2131,6 +2141,50 @@ namespace Installer
                             {
                                 bad++;
                                 Core.Log("FAIL", "CATDRAG 大类拖到自己身上居然成功了");
+                            }
+                        }
+                    }
+
+                    // 展开状态下把大类拖到别的分类的内容行上：必须自动归到所属大类再落位
+                    // （用户实测：树展开后满屏内容行，旧版松在内容行上无声取消）
+                    int tk = FindCatRow("人物");
+                    if (tk < 0) Core.Log("WARN", "CATDRAG 树里没有「人物」，跳过内容行落点用例");
+                    else
+                    {
+                        SetFolded("人物", false);
+                        Rebuild();
+                        // 人物的小分类（一代/二代/其他人物）可能整段收起，内容行可能全是小标题行 ——
+                        // 落点解析对小标题行和位置行一视同仁（都向上归到大类），所以随便挑一行非大类行就够
+                        int contentRow = (tk + 1 < body.RowCount && !body.RowIsCat(tk + 1)) ? tk + 1 : -1;
+                        if (contentRow < 0) Core.Log("WARN", "CATDRAG 「人物」展开后没有内容行，跳过");
+                        else
+                        {
+                            List<string> beforeC = CatPrefs.Cats();
+                            string src = beforeC[0] == "人物" ? beforeC[1] : beforeC[0];
+                            int fromRow = FindCatRow(src);
+                            if (fromRow < 0) { bad++; Core.Log("FAIL", "CATDRAG 树里找不到源大类「" + src + "」"); }
+                            else
+                            {
+                                string stC;
+                                body.SimulateRealDrag(fromRow, contentRow, 2, out stC);
+                                Core.Log("INFO", "CATDRAG 内容行路径 " + stC);
+                                List<string> afterC = CatPrefs.Cats();
+                                int xa = afterC.IndexOf(src), xb = afterC.IndexOf("人物");
+                                if (xb < 0) { bad++; Core.Log("FAIL", "CATDRAG 内容行落点后找不到「人物」"); }
+                                else if (xa != xb + 1) { bad++; Core.Log("FAIL", "CATDRAG 松在内容行上没归到大类：源=" + src + "(" + xa + ") 人物(" + xb + ")"); }
+                                else Core.Log("INFO", "CATDRAG 松在「人物」的内容行上 → 自动归到「人物」后面，顺序生效");
+
+                                // 「本来就在」用例：此刻近战就在人物后面，再挪一次必须明确返回、顺序不变
+                                // （用户实测场景：把大类拖到紧邻的邻居上，看起来就像「没反应」）
+                                List<string> snapB = CatPrefs.Cats();
+                                bool r2 = MoveCatTo("近战", "人物", true);
+                                List<string> snapA = CatPrefs.Cats();
+                                bool same = snapB.Count == snapA.Count;
+                                if (same)
+                                    for (int i = 0; i < snapB.Count; i++)
+                                        if (snapB[i] != snapA[i]) { same = false; break; }
+                                if (r2 && same) Core.Log("INFO", "CATDRAG 「本来就在」用例：重复挪到同一位置 → 明确提示没挪，顺序不变");
+                                else { bad++; Core.Log("FAIL", "CATDRAG 「本来就在」用例异常 r2=" + r2 + " 顺序变了=" + !same); }
                             }
                         }
                     }
@@ -3153,6 +3207,7 @@ namespace Installer
         private int dropRow = -1;     // 落点行（-1 = 没有落点，松手就当放弃）
         private int dropMode;         // 1=插前面 2=插后面 3=放进它下面
         private Point dragPt;         // 跟随鼠标的小标签画在这儿
+        private int lastMoveLog;      // DRAGIN 按住未起拖时的移动日志节流
 
         public SlotTree(CatTree o)
         {
@@ -3394,6 +3449,19 @@ namespace Installer
                 }
             }
 
+            // 按下还没拖动的瞬间：先把要搬的那行描出来 —— 用户按下去就知道抓住的是哪行，
+            // 而不是拖了一半啥都没有
+            if (pressArm && !dragging && pressRow >= 0 && pressRow < rows.Count)
+            {
+                int py = pressRow * RowH + 4;
+                using (SolidBrush fill = new SolidBrush(Color.FromArgb(40, Theme.Info)))
+                using (Pen p = new Pen(Theme.Info, 2f))
+                {
+                    g.FillRectangle(fill, 1, py, Math.Max(1, W - 3), RowH);
+                    g.DrawRectangle(p, 1, py + 1, Math.Max(1, W - 4), RowH - 2);
+                }
+            }
+
             // 拖动中的反馈：落点行先铺一层底色，再画线 / 框 —— 光一条线看不出落到哪一行
             if (dragging)
             {
@@ -3440,6 +3508,7 @@ namespace Installer
         private void DrawDragTag(Graphics g, int W)
         {
             string to;
+            bool bad = dropMode <= 0;          // 没有合法落点：标签转红，把话说透
             if (dropRow >= 0 && dropRow < rows.Count)
             {
                 TreeRow dr = rows[dropRow];
@@ -3457,6 +3526,7 @@ namespace Installer
                 else to = " → 松手取消";
             }
             else to = " → 松手取消";
+            if (bad) to = " → 松手取消（这里放不了，看底部提示）";
             string txt = dragName + to;
             Size sz = TextRenderer.MeasureText(txt, Theme.UISmall, new Size(2000, 40),
                 TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
@@ -3466,7 +3536,7 @@ namespace Installer
             Rectangle box = new Rectangle(x, y, w, h);
             using (GraphicsPath p = Theme.Round(box, 4))
             using (SolidBrush b = new SolidBrush(Theme.Surface))
-            using (Pen pen = new Pen(Theme.Info, 1f))
+            using (Pen pen = new Pen(bad ? Theme.Accent : Theme.Info, bad ? 2f : 1f))
             {
                 g.FillPath(b, p);
                 g.DrawPath(pen, p);
@@ -3536,11 +3606,18 @@ namespace Installer
                 {
                     if (dragKind == 2)
                     {
-                        // 大类拖大类：只能插到别的大类前 / 后，没有「放进」
-                        if (rows[t].IsCat && !string.Equals(rows[t].Cat, dragName, StringComparison.OrdinalIgnoreCase))
+                        // 大类拖大类：只能插到别的大类前 / 后，没有「放进」。
+                        // 悬在位置行 / 小分类行上时，归到它所属的大类行 —— 整个大类的地盘都是合法落点，
+                        // 不然树一展开满屏都是位置行，松手十有八九落在「无效」上（用户实测踩过）。
+                        int ct = t;
+                        while (ct >= 0 && !rows[ct].IsCat) ct--;
+                        // 未归类 / 我的分支是合成分类，不在分类表里，接不住排序 —— 不当落点
+                        if (ct >= 0 && rows[ct].Cat != "未归类" && rows[ct].Cat != "我的分支"
+                            && !string.Equals(rows[ct].Cat, dragName, StringComparison.OrdinalIgnoreCase))
                         {
-                            int ry = (e.Y - 4) - t * RowH;
+                            int ry = (e.Y - 4) - ct * RowH;
                             mode = ry < RowH / 2 ? 1 : 2;
+                            t = ct;
                         }
                     }
                     else if (rows[t].Slot != null && CatTree.IsBranchSlot(rows[t].Slot)
@@ -3548,6 +3625,46 @@ namespace Installer
                     {
                         int ry = (e.Y - 4) - t * RowH;
                         mode = ry < RowH * 30 / 100 ? 1 : ry > RowH * 70 / 100 ? 2 : 3;
+                    }
+                    else if (rows[t].Slot != null && string.Equals(rows[t].Slot.Cat, "我的分支", StringComparison.Ordinal))
+                    {
+                        // 分支拖到「我的分支」地盘的位置行上：找上面最近的分支行，插到它后面
+                        int bt = t;
+                        while (bt >= 0 && !(rows[bt].Slot != null && CatTree.IsBranchSlot(rows[bt].Slot))) bt--;
+                        if (bt >= 0 && !string.Equals(rows[bt].Slot.Name, dragName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            t = bt;
+                            mode = 2;
+                        }
+                    }
+                    // 都没接住：吸附到最近的合法落点，让随便松哪儿都有个确定的结果，
+                    // 而不是无声取消 —— 用户三次反馈「拖不动」全是这条路上的无声失败
+                    if (mode == 0)
+                    {
+                        if (dragKind == 2)
+                        {
+                            int up = -1, down = -1;
+                            for (int k = t - 1; k >= 0; k--)
+                                if (rows[k].IsCat && rows[k].Cat != "未归类" && rows[k].Cat != "我的分支"
+                                    && !string.Equals(rows[k].Cat, dragName, StringComparison.OrdinalIgnoreCase)) { up = k; break; }
+                            for (int k = t + 1; k < rows.Count; k++)
+                                if (rows[k].IsCat && rows[k].Cat != "未归类" && rows[k].Cat != "我的分支"
+                                    && !string.Equals(rows[k].Cat, dragName, StringComparison.OrdinalIgnoreCase)) { down = k; break; }
+                            if (up >= 0 && (down < 0 || t - up <= down - t)) { t = up; mode = 2; }
+                            else if (down >= 0) { t = down; mode = 1; }
+                        }
+                        else
+                        {
+                            int up = -1, down = -1;
+                            for (int k = t - 1; k >= 0; k--)
+                                if (rows[k].Slot != null && CatTree.IsBranchSlot(rows[k].Slot)
+                                    && !string.Equals(rows[k].Slot.Name, dragName, StringComparison.OrdinalIgnoreCase)) { up = k; break; }
+                            for (int k = t + 1; k < rows.Count; k++)
+                                if (rows[k].Slot != null && CatTree.IsBranchSlot(rows[k].Slot)
+                                    && !string.Equals(rows[k].Slot.Name, dragName, StringComparison.OrdinalIgnoreCase)) { down = k; break; }
+                            if (up >= 0 && (down < 0 || t - up <= down - t)) { t = up; mode = 2; }
+                            else if (down >= 0) { t = down; mode = 1; }
+                        }
                     }
                 }
                 if (t != dropRow || mode != dropMode) { dropRow = t; dropMode = mode; }
@@ -3557,7 +3674,7 @@ namespace Installer
             // 按住分支行 / 大类标题行挪开几个像素 = 开始拖动（不是点击）
             if (pressArm && pressRow >= 0 && pressRow < rows.Count
                 && (e.Button & MouseButtons.Left) == MouseButtons.Left
-                && Math.Abs(e.X - pressPt.X) + Math.Abs(e.Y - pressPt.Y) >= 5)
+                && Math.Abs(e.X - pressPt.X) + Math.Abs(e.Y - pressPt.Y) >= 4)
             {
                 dragging = true;
                 dragKind = rows[pressRow].IsCat ? 2 : 1;
@@ -3568,11 +3685,33 @@ namespace Installer
                 Cursor = Cursors.SizeAll;
                 tip.RemoveAll();
                 tipRow = -2;
+                Core.Log("INFO", "DRAGIN 开始拖动 「" + dragName + "」");
+                if (dragKind == 1 && MyBranch.Names().Count < 2)
+                    owner.KeepFoot("「我的分支」里只有这一个分支，拖它没有可去的位置 —— 想试拖动，先右键空白处新建一个分支，或者拖上面的大类试试");
                 Invalidate();
                 return;
             }
+            // 诊断：按住还没拖成时，每 ~150ms 记一次真实移动 —— 真机输入到没到，一看便知
+            if (pressArm && !dragging && (e.Button & MouseButtons.Left) == MouseButtons.Left)
+            {
+                int now = Environment.TickCount;
+                if (now - lastMoveLog >= 150)
+                {
+                    lastMoveLog = now;
+                    Core.Log("INFO", "DRAGIN 按住未起拖 位移="
+                        + (Math.Abs(e.X - pressPt.X) + Math.Abs(e.Y - pressPt.Y)) + " 键=" + e.Button);
+                }
+            }
             int i = IndexAt(e.Y);
-            if (i != hover) { hover = i; Invalidate(); UpdateTip(i); }
+            if (i != hover)
+            {
+                hover = i;
+                // 悬停在可拖行上时给个十字光标：不用按下去就知道这儿能拖
+                bool canDrag = i >= 0 && i < rows.Count
+                    && (rows[i].IsCat || (rows[i].Slot != null && CatTree.IsBranchSlot(rows[i].Slot)));
+                Cursor = canDrag ? Cursors.SizeAll : Cursors.Hand;
+                Invalidate(); UpdateTip(i);
+            }
             base.OnMouseMove(e);
         }
 
@@ -3620,6 +3759,7 @@ namespace Installer
 
         protected override void OnMouseLeave(EventArgs e)
         {
+            if (!dragging && !pressArm) Cursor = Cursors.Hand;
             if (hover != -1) { hover = -1; Invalidate(); }
             tipRow = -2;
             base.OnMouseLeave(e);
@@ -3653,6 +3793,14 @@ namespace Installer
                 // 大类行单击 = 折叠 / 展开，但这个动作推迟到 MouseUp：
                 // 不然按下的瞬间行就重建了，拖动根本起不来
                 if (!r.IsCat) ActivateRow(i);
+                // 可拖行按下立刻高亮（OnPaint 里画），并把真实输入记进日志：
+                // 有用户反馈「拖不动又看不出抓没抓住」，这两样是远程定位的唯一手段
+                if (pressArm)
+                {
+                    Core.Log("INFO", "DRAGIN 按下 行=" + i + " " + (r.IsCat ? "大类「" + r.Cat + "」" : "分支「" + r.Slot.Name + "」") + " 键=" + e.Button);
+                    Cursor = Cursors.SizeAll;
+                    InvalidateRow(i);
+                }
             }
             base.OnMouseDown(e);
         }
@@ -3665,14 +3813,16 @@ namespace Installer
                 string nm = dragName;
                 int kind = dragKind, row = dropRow, mode = dropMode;
                 ResetDrag();
+                Core.Log("INFO", "DRAGIN 松手 「" + nm + "」 落点行=" + row + " 模式=" + mode);
                 if (!ApplyDrop(nm, kind, row, mode))
                     owner.KeepFoot(kind == 2
-                        ? "没挪动：把大类拖到另一个大类行的上半 / 下半（换顺序）"
-                        : "没挪动：把分支行拖到另一行的上半 / 下半（换顺序）或中间（变成子分支）");
+                        ? "没挪动：拖到别的大类的地盘上（上半 = 移到它前面，下半 = 移到它后面）"
+                        : "没挪动：拖到另一个分支行附近（上半 / 下半 = 换顺序，中间 = 变成子分支）");
                 return;
             }
             if (pressArm && pressRow >= 0 && pressRow < rows.Count && rows[pressRow].IsCat)
                 ActivateRow(pressRow);          // 没拖成的大类单击：补做折叠 / 展开
+            if (pressArm) { Cursor = Cursors.Hand; InvalidateRow(pressRow); }   // 撤掉按下高亮
             pressArm = false;
             pressRow = -1;
             base.OnMouseUp(e);
@@ -3689,20 +3839,51 @@ namespace Installer
 
         internal bool ApplyDrop(string name, int kind, int row, int mode)
         {
-            if (string.IsNullOrEmpty(name) || row < 0 || row >= rows.Count || mode <= 0) return false;
-            TreeRow tr = rows[row];
-            if (kind == 2)
+            try
             {
-                // 大类：只能插到别的大类前 / 后
-                if (!tr.IsCat || string.Equals(tr.Cat, name, StringComparison.OrdinalIgnoreCase)) return false;
-                return owner.MoveCatTo(name, tr.Cat, mode == 2);
+                if (string.IsNullOrEmpty(name) || row < 0 || row >= rows.Count || mode <= 0)
+                {
+                    Core.Log("INFO", "DRAGAPPLY 拒绝 「" + name + "」 行=" + row + " 模式=" + mode + "（行号/模式无效）");
+                    return false;
+                }
+                TreeRow tr = rows[row];
+                Core.Log("INFO", "DRAGAPPLY 「" + name + "」 → 行=" + row
+                    + (tr.IsCat ? " 大类「" + tr.Cat + "」" : " 行「" + (tr.Slot != null ? tr.Slot.Name : "?") + "」")
+                    + " 模式=" + mode);
+                if (kind == 2)
+                {
+                    // 大类：只能插到别的大类前 / 后
+                    if (!tr.IsCat || string.Equals(tr.Cat, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Core.Log("FAIL", "DRAGAPPLY 大类落点无效：行 " + row + " 不是别的大类标题行");
+                        return false;
+                    }
+                    bool ok = owner.MoveCatTo(name, tr.Cat, mode == 2);
+                    Core.Log(ok ? "INFO" : "FAIL", "DRAGAPPLY 大类「" + name + "」挪到「" + tr.Cat + "」" + (mode == 2 ? "后面" : "前面") + (ok ? " 完成" : " 被 CatPrefs 拒绝"));
+                    return ok;
+                }
+                Slot t = tr.Slot;
+                if (t == null || !CatTree.IsBranchSlot(t))
+                {
+                    Core.Log("FAIL", "DRAGAPPLY 分支落点无效：行 " + row + " 不是分支行");
+                    return false;
+                }
+                if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    Core.Log("INFO", "DRAGAPPLY 分支落点是自己 → 取消");
+                    return false;
+                }
+                string parent = mode == 3 ? t.Name : MyBranch.ParentOf(t.Name);
+                string before = mode == 1 ? t.Name : mode == 2 ? MyBranch.NextSibling(t.Name) : "";
+                bool okb = owner.MoveBranch(name, parent, before);
+                Core.Log(okb ? "INFO" : "FAIL", "DRAGAPPLY 分支「" + name + "」→ 父=" + (parent.Length == 0 ? "(顶层)" : parent) + " 前插=" + before + (okb ? " 完成" : " 被拒绝"));
+                return okb;
             }
-            Slot t = tr.Slot;
-            if (t == null || !CatTree.IsBranchSlot(t)) return false;
-            if (string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase)) return false;
-            string parent = mode == 3 ? t.Name : MyBranch.ParentOf(t.Name);
-            string before = mode == 1 ? t.Name : mode == 2 ? MyBranch.NextSibling(t.Name) : "";
-            return owner.MoveBranch(name, parent, before);
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "DRAGAPPLY 异常：" + ex.GetType().Name + " " + ex.Message + " @ " + ex.StackTrace);
+                return false;
+            }
         }
 
         /// <summary>自检用：某个分支在树里是第几行（没有返回 -1）。</summary>
@@ -3750,6 +3931,32 @@ namespace Installer
         }
 
         internal void TestDragEnd() { ResetDrag(); }
+
+        /// <summary>
+        /// 自检用：按真实鼠标事件路径模拟一次拖动（OnMouseDown → 挪 6px → 挪到落点 → OnMouseUp）。
+        /// 直接调受保护的 On* 方法，和真鼠标走的是同一段代码 —— 手能拖、这个必须过；手拖不动、这个能复现。
+        /// part：1=落点行上半（插前） 2=下半（插后） 3=中间（放进）。
+        /// </summary>
+        internal bool SimulateRealDrag(int fromRow, int toRow, int part, out string steps)
+        {
+            steps = "";
+            if (fromRow < 0 || fromRow >= rows.Count || toRow < 0 || toRow >= rows.Count)
+            { steps = "行号越界 from=" + fromRow + " to=" + toRow; return false; }
+            int fromY = fromRow * RowH + 4 + RowH / 2;
+            int ty = toRow * RowH + 4 + (part == 1 ? 4 : part == 2 ? RowH - 4 : RowH / 2);
+            const int x = 30;
+            OnMouseDown(new MouseEventArgs(MouseButtons.Left, 1, x, fromY, 0));
+            steps += "down: pressArm=" + pressArm + " pressRow=" + pressRow + "; ";
+            OnMouseMove(new MouseEventArgs(MouseButtons.Left, 1, x, fromY + 3, 0));
+            steps += "move3: dragging=" + dragging + "; ";
+            OnMouseMove(new MouseEventArgs(MouseButtons.Left, 1, x, fromY + 6, 0));
+            steps += "move6: dragging=" + dragging + " kind=" + dragKind + " name=" + dragName + "; ";
+            OnMouseMove(new MouseEventArgs(MouseButtons.Left, 1, x, ty, 0));
+            steps += "to: dropRow=" + dropRow + " dropMode=" + dropMode + "; ";
+            OnMouseUp(new MouseEventArgs(MouseButtons.Left, 1, x, ty, 0));
+            steps += "up: dragging=" + dragging;
+            return true;
+        }
 
         private void ResetDrag()
         {
@@ -3999,6 +4206,144 @@ namespace Installer
             if (from < 0 || to < 0) { Core.Log("WARN", "DRAGCAT 没找到大类: " + catName + " / " + ontoCat); return; }
             treeView.Body.TestCatDragVisual(catName, to, 2, new Point(120, to * 28 + 20));
             Core.Log("INFO", "DRAGCAT 预览：「" + catName + "」拖到「" + ontoCat + "」后面");
+        }
+
+        /// <summary>
+        /// 自检：用真实鼠标事件路径拖一次（区别于 UiTestCatDrag 的画图预览，这里真挪数据）。
+        /// 自动识别 fromName 是大类还是分支；做完把顺序还原，不污染用户数据。
+        /// </summary>
+        internal void UiTestRealDrag(string fromName, string toName)
+        {
+            if (treeView == null) { Core.Log("FAIL", "DRAGREAL 没有 viewHost"); return; }
+            ShowTree();
+            Application.DoEvents();
+
+            int from, to; bool isCat;
+            if (!FindDragRows(fromName, toName, out from, out to, out isCat)) return;
+
+            List<string> before = isCat ? CatPrefs.Cats() : MyBranch.Names();
+            string steps;
+            treeView.Body.SimulateRealDrag(from, to, isCat ? 2 : 3, out steps);
+            Core.Log("INFO", "DRAGREAL 路径 " + steps);
+            CheckAndRestoreDrag(fromName, toName, isCat, before, "DRAGREAL");
+            treeView.Rebuild();
+        }
+
+        /// <summary>找拖动起点 / 落点行：大类按大类行找，分支按分支槽位找。</summary>
+        private bool FindDragRows(string fromName, string toName, out int from, out int to, out bool isCat)
+        {
+            from = -1; to = -1; isCat = false;
+            for (int i = 0; i < treeView.Body.RowCount; i++)
+                if (treeView.Body.RowIsCat(i) && string.Equals(treeView.Body.RowCat(i), fromName, StringComparison.Ordinal))
+                { from = i; isCat = true; break; }
+            if (from < 0)
+            {
+                for (int i = 0; i < treeView.Body.RowCount; i++)
+                {
+                    Slot s = treeView.Body.RowSlot(i);
+                    if (s != null && CatTree.IsBranchSlot(s) && string.Equals(s.Name, fromName, StringComparison.Ordinal)) { from = i; break; }
+                }
+            }
+            if (isCat)
+            {
+                for (int i = 0; i < treeView.Body.RowCount; i++)
+                    if (treeView.Body.RowIsCat(i) && string.Equals(treeView.Body.RowCat(i), toName, StringComparison.Ordinal)) { to = i; break; }
+            }
+            else
+            {
+                for (int i = 0; i < treeView.Body.RowCount; i++)
+                {
+                    Slot s = treeView.Body.RowSlot(i);
+                    if (s != null && CatTree.IsBranchSlot(s) && string.Equals(s.Name, toName, StringComparison.Ordinal)) { to = i; break; }
+                }
+            }
+            if (from < 0 || to < 0)
+                Core.Log("WARN", "没找到拖动行: " + fromName + "(" + from + ") / " + toName + "(" + to + ")" + (isCat ? " [大类]" : " [分支]"));
+            return from >= 0 && to >= 0;
+        }
+
+        /// <summary>比对拖动前后顺序，变了记 OK、没变记 FAIL（复现「手拖不动」），最后还原。</summary>
+        private void CheckAndRestoreDrag(string fromName, string toName, bool isCat, List<string> before, string tag)
+        {
+            List<string> after = isCat ? CatPrefs.Cats() : MyBranch.Names();
+            bool moved = false;
+            if (after.Count == before.Count)
+                for (int i = 0; i < after.Count; i++)
+                    if (after[i] != before[i]) { moved = true; break; }
+            if (!moved) Core.Log("FAIL", tag + " 「" + fromName + "」拖到「" + toName + "」顺序没变 —— 复现了拖不动");
+            else Core.Log("INFO", tag + " 「" + fromName + "」已挪过");
+
+            if (isCat)
+            {
+                for (int i = 0; i < before.Count; i++)
+                    if (i >= after.Count || after[i] != before[i])
+                        CatPrefs.MoveCatTo(before[i], i == 0 ? "" : before[i - 1], true);
+            }
+            else
+            {
+                for (int i = 0; i < before.Count; i++)
+                    if (i >= after.Count || after[i] != before[i])
+                        MyBranch.Move(before[i], i == 0 ? "" : MyBranch.ParentOf(before[i - 1]),
+                            i + 1 < before.Count ? before[i + 1] : "");
+            }
+        }
+
+        /// <summary>
+        /// 端到端自检：用 Win32 真实鼠标输入（SetCursorPos + mouse_event）拖一次。
+        /// 连 OS 层的输入路径一起测 —— 事件模拟过了、这个还不过，那问题就在真机和模拟的差异上。
+        /// </summary>
+        internal void UiTestMouseDrag(string fromName, string toName)
+        {
+            if (treeView == null) { Core.Log("FAIL", "MOUSEDRAG 没有 viewHost"); return; }
+            ShowTree();
+            Application.DoEvents();
+
+            int from, to; bool isCat;
+            if (!FindDragRows(fromName, toName, out from, out to, out isCat)) return;
+
+            // 窗口可能被记住的位置摆在屏幕外（多显示器拔过线之类），真实鼠标点不到 —— 拉回可见区再测
+            WindowState = FormWindowState.Normal;
+            SetBounds(80, 80, Math.Max(900, Width), Math.Max(620, Height));
+            Activate();
+            BringToFront();
+            Application.DoEvents();
+
+            // 保证两行都在可视区（大类行挨着，分支选相邻的也够用）：滚到靠上那一行
+            treeView.Body.ScrollToRow(Math.Min(from, to));
+            Application.DoEvents();
+
+            Native.ForceForeground(Handle);
+            Native.ShowWindow(Handle, 9);          // SW_RESTORE
+            Native.ForceForeground(Handle);
+            Application.DoEvents();
+
+            SlotTree body = treeView.Body;
+            Point start = body.PointToScreen(new Point(40, from * 28 + 4 + 14));
+            Point end = body.PointToScreen(new Point(40, to * 28 + 4 + (isCat ? 24 : 14)));
+            Native.POINT cp;
+            Native.GetCursorPos(out cp);
+            Core.Log("INFO", "MOUSEDRAG 屏幕坐标 起点(" + start.X + "," + start.Y + ") 落点(" + end.X + "," + end.Y + ")"
+                + " 起点处窗口=" + Native.GetWindowText(Native.WindowFromPoint(new Native.POINT { X = start.X, Y = start.Y }))
+                + " 当前前台=" + Native.GetWindowText(Native.GetForegroundWindow()) + " 光标(" + cp.X + "," + cp.Y + ")");
+
+            List<string> before = isCat ? CatPrefs.Cats() : MyBranch.Names();
+            Native.SetCursorPos(start.X, start.Y);
+            System.Threading.Thread.Sleep(120);
+            Native.mouse_event(Native.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, IntPtr.Zero);
+            System.Threading.Thread.Sleep(60);
+            for (int i = 1; i <= 8; i++)
+            {
+                Native.SetCursorPos(start.X + (end.X - start.X) * i / 8, start.Y + (end.Y - start.Y) * i / 8);
+                System.Threading.Thread.Sleep(40);
+                Application.DoEvents();
+            }
+            System.Threading.Thread.Sleep(60);
+            Native.mouse_event(Native.MOUSEEVENTF_LEFTUP, 0, 0, 0, IntPtr.Zero);
+            System.Threading.Thread.Sleep(150);
+            Application.DoEvents();
+
+            CheckAndRestoreDrag(fromName, toName, isCat, before, "MOUSEDRAG");
+            treeView.Rebuild();
         }
 
         /// <summary>自检：切到方案树并选某个槽位（按显示名）；传「未归类」就打开未归类页。</summary>

@@ -67,6 +67,8 @@ namespace Installer
             string uiSelect = null;
             string uiDrag = null;
             string uiDragCat = null;
+            string uiDragReal = null;
+            string mouseDrag = null;
             bool uiSetCat = false;
             bool uiCatForm = false;
             bool uiAddons = false;
@@ -108,6 +110,8 @@ namespace Installer
                 else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
                 else if (a.StartsWith("--uidrag=", StringComparison.OrdinalIgnoreCase)) uiDrag = a.Substring(9);
                 else if (a.StartsWith("--uidragcat=", StringComparison.OrdinalIgnoreCase)) uiDragCat = a.Substring(12);
+                else if (a.StartsWith("--uidragreal=", StringComparison.OrdinalIgnoreCase)) uiDragReal = a.Substring(13);
+                else if (a.StartsWith("--mousedrag=", StringComparison.OrdinalIgnoreCase)) mouseDrag = a.Substring(12);
                 else if (string.Equals(a, "--uisetcat", StringComparison.OrdinalIgnoreCase)) uiSetCat = true;
                 else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
                 else if (string.Equals(a, "--uiaddons", StringComparison.OrdinalIgnoreCase)) uiAddons = true;
@@ -353,6 +357,18 @@ namespace Installer
                     {
                         string[] dc = uiDragCat.Split('>');
                         f.UiTestCatDrag(dc[0], dc.Length > 1 ? dc[1] : "");
+                        System.Windows.Forms.Application.DoEvents();
+                    }
+                    if (uiDragReal != null)
+                    {
+                        string[] dc = uiDragReal.Split('>');
+                        f.UiTestRealDrag(dc[0], dc.Length > 1 ? dc[1] : "");
+                        System.Windows.Forms.Application.DoEvents();
+                    }
+                    if (mouseDrag != null)
+                    {
+                        string[] dc = mouseDrag.Split('>');
+                        f.UiTestMouseDrag(dc[0], dc.Length > 1 ? dc[1] : "");
                         System.Windows.Forms.Application.DoEvents();
                     }
                     if (uiSetCat) { f.UiTestSetCat(); System.Windows.Forms.Application.DoEvents(); }

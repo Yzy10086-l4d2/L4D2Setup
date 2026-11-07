@@ -1271,6 +1271,42 @@ namespace Installer
         [DllImport("user32.dll")]
         private static extern bool ShowScrollBar(IntPtr hWnd, int bar, bool show);
 
+        // 端到端拖动自检用：从 OS 层注入真实鼠标输入，验证真手拖动同一条路径
+        [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+        [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, IntPtr extra);
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT pt);
+        [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT pt);
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder sb, int max);
+        public const uint MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004;
+        [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+        public static string GetWindowText(IntPtr hWnd)
+        {
+            var sb = new System.Text.StringBuilder(256);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            return sb.ToString();
+        }
+        /// <summary>后台进程抢不到前台时，借前台线程的输入权限把自己顶上去。</summary>
+        public static void ForceForeground(IntPtr hWnd)
+        {
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                uint pid;
+                uint fgT = GetWindowThreadProcessId(fg, out pid);
+                uint me = GetCurrentThreadId();
+                AttachThreadInput(me, fgT, true);
+                SetForegroundWindow(hWnd);
+                AttachThreadInput(me, fgT, false);
+            }
+            catch { }
+        }
+
         /// <summary>
         /// 列表的横向滚动条是系统画的，深色下仍是一条亮带；列宽本来就按窗口算好，
         /// 不会真需要横向滚动，索性收掉。SB_HORZ = 0。
