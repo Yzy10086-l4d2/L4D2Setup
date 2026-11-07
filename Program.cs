@@ -61,9 +61,12 @@ namespace Installer
             string uiDeep = null;
             bool uiProfile = false;
             bool uiSettings = false;
+            bool uiTheme = false;
             bool uiDeps = false;
             bool uiTree = false;
             string uiSelect = null;
+            string uiDrag = null;
+            string uiDragCat = null;
             bool uiSetCat = false;
             bool uiCatForm = false;
             bool uiAddons = false;
@@ -73,6 +76,8 @@ namespace Installer
             string uiTweaks = null;
             bool uiLaunch = false;
             bool uiCopy = false;
+            bool uiPaint = false;
+            bool uiGlyphs = false;
             bool uiDup = false;
             bool dupSelf = false;
             bool launchSelf = false;
@@ -97,9 +102,12 @@ namespace Installer
                 else if (a.StartsWith("--uideep=", StringComparison.OrdinalIgnoreCase)) uiDeep = a.Substring(9);
                 else if (string.Equals(a, "--uiprofile", StringComparison.OrdinalIgnoreCase)) uiProfile = true;
                 else if (string.Equals(a, "--uisettings", StringComparison.OrdinalIgnoreCase)) { uiSettings = true; uiTest = true; }
+                else if (string.Equals(a, "--uitheme", StringComparison.OrdinalIgnoreCase)) { uiTheme = true; uiTest = true; }
                 else if (string.Equals(a, "--uideps", StringComparison.OrdinalIgnoreCase)) uiDeps = true;
                 else if (string.Equals(a, "--uitree", StringComparison.OrdinalIgnoreCase)) uiTree = true;
                 else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
+                else if (a.StartsWith("--uidrag=", StringComparison.OrdinalIgnoreCase)) uiDrag = a.Substring(9);
+                else if (a.StartsWith("--uidragcat=", StringComparison.OrdinalIgnoreCase)) uiDragCat = a.Substring(12);
                 else if (string.Equals(a, "--uisetcat", StringComparison.OrdinalIgnoreCase)) uiSetCat = true;
                 else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
                 else if (string.Equals(a, "--uiaddons", StringComparison.OrdinalIgnoreCase)) uiAddons = true;
@@ -109,6 +117,8 @@ namespace Installer
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
                 else if (string.Equals(a, "--launch", StringComparison.OrdinalIgnoreCase)) uiLaunch = true;
                 else if (string.Equals(a, "--copy", StringComparison.OrdinalIgnoreCase)) { uiCopy = true; uiTest = true; }
+                else if (string.Equals(a, "--uipaint", StringComparison.OrdinalIgnoreCase)) { uiPaint = true; uiTest = true; }
+                else if (string.Equals(a, "--uiglyphs", StringComparison.OrdinalIgnoreCase)) { uiGlyphs = true; uiTest = true; }
                 else if (string.Equals(a, "--dup", StringComparison.OrdinalIgnoreCase)) uiDup = true;
                 else if (string.Equals(a, "--dupself", StringComparison.OrdinalIgnoreCase)) dupSelf = true;
                 else if (string.Equals(a, "--launchself", StringComparison.OrdinalIgnoreCase)) launchSelf = true;
@@ -140,6 +150,7 @@ namespace Installer
             // 诊断用：临时覆盖工作模式，不写回配置
             if (!string.IsNullOrEmpty(modeOverride))
             {
+                Core.ModeLock = Core.Cfg.Mode;      // 保存配置时写回原值：诊断参数不落盘
                 if (string.Equals(modeOverride, "local", StringComparison.OrdinalIgnoreCase)) Core.Cfg.Mode = "local";
                 else if (string.Equals(modeOverride, "usb", StringComparison.OrdinalIgnoreCase)) Core.Cfg.Mode = "usb";
                 else Core.Log("WARN", "未知的 --mode 值: " + modeOverride + "（只认 local / usb）");
@@ -299,6 +310,21 @@ namespace Installer
                         if (i > 20 && f.Ready) break;
                     }
                     System.Windows.Forms.Application.DoEvents();
+                    if (uiGlyphs)
+                    {
+                        f.UiTestGlyphs();
+                        System.Windows.Forms.Application.DoEvents();
+                        Console.WriteLine("glyphsheet ok");
+                        return 0;
+                    }
+                    if (uiPaint)
+                    {
+                        // 真实屏幕渲染的主题回归：抓屏 + 记录原生控件底色，失败条数当退出码
+                        int badp = f.UiPaintTest();
+                        System.Windows.Forms.Application.DoEvents();
+                        Console.WriteLine("paintself failures = " + badp);
+                        return badp == 0 ? 0 : 1;
+                    }
                     if (uiKeys)
                     {
                         // 键盘路径回归：只按方向键 / Enter / 空格，不看鼠标。失败条数当退出码。
@@ -322,12 +348,26 @@ namespace Installer
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiTree) { f.UiTestTree(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSelect != null) { f.UiTestSelect(uiSelect); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiDrag != null) { f.UiTestDrag(uiDrag); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiDragCat != null)
+                    {
+                        string[] dc = uiDragCat.Split('>');
+                        f.UiTestCatDrag(dc[0], dc.Length > 1 ? dc[1] : "");
+                        System.Windows.Forms.Application.DoEvents();
+                    }
                     if (uiSetCat) { f.UiTestSetCat(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiCatForm) { f.UiTestCatForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiAddons) { f.UiTestAddonSwitch(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiFix != null) { f.UiFixProfile(uiFix); System.Windows.Forms.Application.DoEvents(); }
                     if (uiProfile) { f.UiTestProfileForm(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSettings) { f.UiTestSettings(); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiTheme)
+                    {
+                        int bad = f.UiTestTheme();
+                        System.Windows.Forms.Application.DoEvents();
+                        Console.WriteLine("themeself failures = " + bad);
+                        return bad == 0 ? 0 : 1;
+                    }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeep != null) { f.UiTestFilter(uiDeep); System.Windows.Forms.Application.DoEvents(); f.UiTestDeep(); System.Windows.Forms.Application.DoEvents(); }
                     System.IO.File.WriteAllText(System.IO.Path.Combine(Core.LogDir, "uitest.txt"), f.LayoutDump(), new System.Text.UTF8Encoding(true));

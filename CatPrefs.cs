@@ -20,7 +20,7 @@ namespace Installer
     internal static class CatPrefs
     {
         // 默认顺序：树里看得见的四类在前，地图/喷漆不进树、排最后
-        public static readonly string[] DefaultCats = { "枪械", "人物", "特感", "药品", "杂项", "地图", "喷漆" };
+        public static readonly string[] DefaultCats = { "枪械", "近战", "投掷物", "武器升级", "人物", "特感", "药品", "杂项", "地图", "喷漆" };
 
         private static bool loaded;
         private static int ver;                    // 每次改都 +1，Catalog.Cats 的缓存靠它失效
@@ -90,7 +90,14 @@ namespace Installer
                     }
             }
             catch { }
-            foreach (string d in DefaultCats) if (!cats.Contains(d)) cats.Add(d);
+            // 缺了的默认大类插到它的默认位置（而不是一律追加在最后）：
+            // 老用户配置里没有「近战 / 投掷物 / 武器升级」，得让它们落在枪械后面，而不是排到喷漆后头
+            for (int i = 0; i < DefaultCats.Length; i++)
+            {
+                string d = DefaultCats[i];
+                if (cats.Contains(d)) continue;
+                cats.Insert(Math.Min(i, cats.Count), d);
+            }
             Touch();
         }
 
@@ -285,6 +292,22 @@ namespace Installer
             Save();
         }
 
+        /// <summary>拖动大类排序：移到 target 前面；after=true 则移到它后面。</summary>
+        public static bool MoveCatTo(string name, string target, bool after)
+        {
+            Ensure();
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(target) || name == target) return false;
+            int from = cats.IndexOf(name);
+            if (from < 0 || cats.IndexOf(target) < 0) return false;
+            cats.RemoveAt(from);
+            int at = cats.IndexOf(target);
+            if (at < 0) { cats.Insert(Math.Min(from, cats.Count), name); return false; }
+            cats.Insert(at + (after ? 1 : 0), name);
+            Touch();
+            Save();
+            return true;
+        }
+
         public static void AddSlot(string cat, string name)
         {
             Ensure();
@@ -316,7 +339,7 @@ namespace Installer
 
     public class ModCatForm : Form
     {
-        private const string AUTO = "（按识别结果自动：{0}）";
+        private const string AUTO = "按识别结果自动：{0}";
 
         private readonly ModGroup g;
         private readonly string autoCat;

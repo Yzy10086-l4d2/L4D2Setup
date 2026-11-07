@@ -675,7 +675,7 @@ namespace Installer
             };
             Controls.Add(lv);
             ContextMenuStrip cms = new ContextMenuStrip();
-            cms.Items.Add("删除勾中的（真删，不进回收目录）", null, delegate { DeleteChecked(); });
+            cms.Items.Add("删除勾中的", null, delegate { DeleteChecked(); });
             lv.ContextMenuStrip = cms;
 
             Button up = new Button(); up.Text = "上移 ↑"; up.SetBounds(12, 360, 90, 28); up.Click += delegate { MoveItem(-1); }; Controls.Add(up);

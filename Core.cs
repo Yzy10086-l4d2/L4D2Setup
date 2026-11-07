@@ -66,6 +66,9 @@ namespace Installer
     public static class Core
     {
         public static string Here;
+        // 诊断参数 --mode= 只是「这一次这么跑」，不能落进配置。
+        // 记下原来的值，保存配置时照原样写回去（否则跑一次自检就把用户的工作模式改了）。
+        public static string ModeLock = null;
         public static string UsbRoot;
         public static string ModRoot;
         public static string DefaultModRoot;
@@ -297,7 +300,7 @@ namespace Installer
                 sb.AppendLine("Overwrite=" + (Cfg.Overwrite ? "1" : "0"));
                 sb.AppendLine("TweakSet=" + Cfg.TweakSet);
                 sb.AppendLine("ReduceMotion=" + (Cfg.ReduceMotion ? "1" : "0"));
-                sb.AppendLine("Mode=" + Cfg.Mode);
+                sb.AppendLine("Mode=" + (ModeLock ?? Cfg.Mode));
                 sb.AppendLine("Appearance=" + Cfg.Appearance);
                 sb.AppendLine("LibraryRoot=" + Cfg.LibraryRoot);
                 foreach (string d in Cfg.ModDirs) sb.AppendLine("ModDir=" + d);

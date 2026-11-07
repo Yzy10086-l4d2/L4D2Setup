@@ -31,12 +31,18 @@ namespace Installer
         private FlatButton btnGameBrowse, btnGameFind, btnLibBrowse, btnLibManage, btnSave;
         private Label lblGameState, lblLibMain, lblLibExtra, lblLibHint, lblCfg, lblLog, lblLocalOnly;
         private string pendingRoot;
-        private readonly ThemeMode startMode = Theme.Mode;
         private bool syncing = true;
 
         internal bool WantLocal { get { return segMode != null && segMode.SelectedIndex == 1; } }
         internal bool WantReduceMotion { get { return tglMotion != null && tglMotion.Checked; } }
         internal ThemeMode WantAppearance { get { return segAppearance == null ? Theme.Mode : (ThemeMode)segAppearance.SelectedIndex; } }
+        /// <summary>自测用：模拟在设置窗口里点「外观」分段（走的是真实的点击 + SelectedIndexChanged 路径）。</summary>
+        internal void PreviewAppearance(ThemeMode m)
+        {
+            syncing = false;
+            segAppearance.PickIndex((int)m);
+        }
+
         internal string WantLibraryRoot { get { return WantLocal ? Core.ModRoot : pendingRoot; } }
 
         /// <summary>输入框里的游戏根目录（已去空格和尾部反斜杠）。空串表示用户没填。</summary>
@@ -87,17 +93,6 @@ namespace Installer
 
             Load += delegate { Theme.ApplyChrome(this); };
             Shown += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
-        }
-
-        /// <summary>取消时把预览过的外观退回打开时的那一套，别让「取消」也改了主题。</summary>
-        protected override void OnFormClosed(FormClosedEventArgs e)
-        {
-            if (DialogResult != DialogResult.OK && Theme.Mode != startMode)
-            {
-                Theme.SetMode(startMode);
-                Theme.ApplyToOpenForms();
-            }
-            base.OnFormClosed(e);
         }
 
         // ---------------------------------------------------------- 版式零件
@@ -183,9 +178,10 @@ namespace Installer
 
             s.Separate(100);
 
-            // 外观：改了立刻应用到所有窗口，方便边看边选；点「取消」会退回原来的那套
+            // 外观：纯粹的显示开关，没有「生效代价」，所以点了就立刻应用并落配置。
+            // 不跟着「保存设置」走 —— 用户点完看到颜色变了，关掉窗口却又变回去，会当成 bug。
             RowTitle(s, "外观", 16, 107, 220);
-            RowNote(s, "跟随系统 = 跟 Windows 的深浅设置一起变", 16, 125, 300);
+            RowNote(s, "跟随系统 = 跟 Windows 走；选了立即生效", 16, 125, 310);
 
             segAppearance = new Segmented();
             segAppearance.Items = new string[] { "跟随系统", "浅色", "深色" };
@@ -196,6 +192,15 @@ namespace Installer
                 if (syncing) return;
                 Theme.SetMode((ThemeMode)segAppearance.SelectedIndex);
                 Theme.ApplyToOpenForms();
+                try
+                {
+                    // 模式键一定要落盘：从「跟随系统」切到「浅色」时配色可能一模一样，
+                    // 但配置里存的键不一样，下次启动的行为也会不一样。
+                    Core.Cfg.Appearance = Theme.ModeKey;
+                    Core.SaveConfig();
+                    Core.Log("INFO", "设置：外观→" + Theme.ModeLabel);
+                }
+                catch { }
             };
             s.Controls.Add(segAppearance);
         }
@@ -657,6 +662,62 @@ namespace Installer
                 File.WriteAllText(Path.Combine(Core.LogDir, "uitest_settings.txt"), f.LayoutDump(), new UTF8Encoding(true));
                 Core.Log("INFO", "SETTINGS 设置窗口自测完成");
             }
+        }
+
+        /// <summary>
+        /// 自测：开着设置窗口连续切外观（浅→深→跟随→深→浅），每一步都渲染一张图。
+        /// 切换过程中任何异常都记进日志，返回失败条数。
+        /// </summary>
+        internal int UiTestTheme()
+        {
+            int bad = 0;
+            ThemeMode[] seq = new ThemeMode[]
+            {
+                ThemeMode.Light, ThemeMode.Dark, ThemeMode.System, ThemeMode.Dark, ThemeMode.Light
+            };
+            using (SettingsForm f = new SettingsForm(this))
+            {
+                f.StartPosition = FormStartPosition.Manual;
+                f.Location = new Point(-4000, -4000);
+                f.Show();
+                Application.DoEvents();
+                for (int i = 0; i < seq.Length; i++)
+                {
+                    try
+                    {
+                        Theme.SetMode(seq[i]);
+                        Theme.ApplyToOpenForms();
+                        Application.DoEvents();
+                        PerformLayout();
+                        f.PerformLayout();
+                        Application.DoEvents();
+
+                        string tag = "theme" + i + "_" + Theme.ModeLabel;
+                        Size fs = f.Size;
+                        using (Bitmap b = new Bitmap(fs.Width, fs.Height))
+                        {
+                            f.DrawToBitmap(b, new Rectangle(0, 0, fs.Width, fs.Height));
+                            b.Save(Path.Combine(Core.LogDir, tag + "_settings.png"), System.Drawing.Imaging.ImageFormat.Png);
+                        }
+                        Size ms = Size;
+                        using (Bitmap b = new Bitmap(ms.Width, ms.Height))
+                        {
+                            DrawToBitmap(b, new Rectangle(0, 0, ms.Width, ms.Height));
+                            b.Save(Path.Combine(Core.LogDir, tag + "_main.png"), System.Drawing.Imaging.ImageFormat.Png);
+                        }
+                        Core.Log("INFO", "THEME " + i + " → " + Theme.ModeLabel + "（渲染 " + (Theme.IsDark ? "深色" : "浅色") + "）");
+                    }
+                    catch (Exception ex)
+                    {
+                        bad++;
+                        Core.Log("FAIL", "THEME 切换失败 " + seq[i] + ": " + ex);
+                    }
+                }
+            }
+            Theme.SetMode(Theme.Parse(Core.Cfg.Appearance));
+            Theme.ApplyToOpenForms();
+            Core.Log("OK", "THEME 自测结束：失败 " + bad + " 条");
+            return bad;
         }
 
         private void ShowSettings()

@@ -40,6 +40,12 @@ namespace Installer
             {"witch",            "Witch"},
             {"tank",             "Tank"},
 
+            // ---- 普通感染者（尸潮里那种小僵尸）：换皮肤最常见的对象，特感那几条接不住。
+            //      模型名都是 common_male_* / common_female_*，比裸 "infected" 稳
+            //      （infected 连特感目录、血贴图、高亮特效都沾，会误判）。
+            {"common_male",      "普通感染者"},
+            {"common_female",    "普通感染者"},
+
             // ---- 幸存者：L4D2 四人 + L4D1 四人。具体模型名必须排在 "survivor" 之前
             {"survivor_namvet",   "比尔"},
             {"survivor_teenangst","佐伊"},
@@ -137,7 +143,26 @@ namespace Installer
             {"ammo",             "弹药"},
             {"gascan",           "油桶"},
             {"pills",            "药丸"},
+            // ---- 天空盒：改的是 materials/skybox/*.vmt，没有模型文件，只能靠材质路径认。
+            //      "skybox" 只出现在这一个目录，不会误伤别的包。
+            {"skybox",           "天空盒"},
         };
+
+        /// <summary>
+        /// 识别表里登记过的全部显示名（去重，按表的优先级顺序）。
+        /// 树那边拿它核对「一个都没漏」：识别得出、树上却没有位置的东西，
+        /// 真出现时就会掉进未归类 —— 这份清单就是不让那种事发生的对账单。
+        /// </summary>
+        internal static List<string> Subjects()
+        {
+            List<string> list = new List<string>();
+            for (int i = 0; i < Dict.GetLength(0); i++)
+            {
+                string n = Dict[i, 1];
+                if (!list.Contains(n)) list.Add(n);
+            }
+            return list;
+        }
 
         /// <summary>命中哪条特征串。同一把枪的 v_/w_/light 变体靠它归到一起。</summary>
         private static string Feature(string s)
@@ -466,7 +491,7 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
-            get { return Path.Combine(Core.LogDir, "identify-cache-v15.tsv"); }
+            get { return Path.Combine(Core.LogDir, "identify-cache-v17.tsv"); }
         }
 
         private static string PackAssets(string assets)

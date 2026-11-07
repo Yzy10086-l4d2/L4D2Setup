@@ -132,6 +132,7 @@ namespace Installer
         private static ThemeMode mode = ThemeMode.System;
         private static Color[] mapFrom = new Color[0];
         private static Color[] mapTo = new Color[0];
+        private static int version = 1;
 
         // 表面
         public static Color Bg { get { return pal.Bg; } }                    // 窗口底
@@ -184,6 +185,12 @@ namespace Installer
 
         public static bool IsDark { get { return pal.IsDark; } }
         public static ThemeMode Mode { get { return mode; } }
+
+        /// <summary>
+        /// 调色板版本号。自绘控件把自己缓存的颜色记在某个版本上，
+        /// 发现版本变了就重算——不然切主题后按钮会拿着旧的白色底继续画。
+        /// </summary>
+        public static int Version { get { return version; } }
 
         /// <summary>启动时读配置 + 系统偏好。必须在任何窗口创建之前调用。</summary>
         public static void Init()
@@ -243,8 +250,10 @@ namespace Installer
             if (ReferenceEquals(next, pal)) return old != m;
             prevPal = pal;
             pal = next;
+            version++;
             BuildMap();
             Native.SetAppMode(pal.IsDark);
+            try { Core.Log("INFO", "THEME 切到 " + ModeLabel + "（" + (pal.IsDark ? "深色" : "浅色") + "）"); } catch { }
             return old != m;
         }
 
@@ -294,10 +303,22 @@ namespace Installer
             add(prevPal.SegEdge, pal.SegEdge);
             add(prevPal.TrackOff, pal.TrackOff);
             add(prevPal.ThumbOn, pal.ThumbOn);
+            // 切回浅色时，「白」不能变成别的颜色。
+            // 深色那套里 PrimaryHover 是纯白，于是映射表里会有一条「白 → 浅色主按钮悬停色」；
+            // 界面里凡是没被换过色的控件（原生列表、只读日志框）底色本来就是白，
+            // 走一遍映射就被改成深灰 (48,54,61)，浅色主题下变成一块块黑底 —— 这就是「切主题后一片黑」的来源。
             mapFrom = new Color[n];
             mapTo = new Color[n];
-            Array.Copy(a, mapFrom, n);
-            Array.Copy(b, mapTo, n);
+            int k = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (!pal.IsDark && a[i].ToArgb() == Color.White.ToArgb() && b[i].ToArgb() != Color.White.ToArgb()) continue;
+                mapFrom[k] = a[i];
+                mapTo[k] = b[i];
+                k++;
+            }
+            Array.Resize(ref mapFrom, k);
+            Array.Resize(ref mapTo, k);
         }
 
         private static Color Remap(Color c)
@@ -319,10 +340,32 @@ namespace Installer
                 if (root.ForeColor.A == 255) root.ForeColor = Remap(root.ForeColor);
                 CatTree t = root as CatTree;
                 if (t != null) t.OnThemeChanged();
+                ListView lv = root as ListView;
+                if (lv != null) RemapRows(lv);
                 root.Invalidate(true);
                 for (int i = 0; i < root.Controls.Count; i++) ApplyTo(root.Controls[i]);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// 列表行的底色/字色是建行时算好塞进 ListViewItem 的，不是控件的属性，
+        /// ApplyTo 走不到；切主题后这些行会留着旧配色（深色下出现浅绿底）。
+        /// </summary>
+        private static void RemapRows(ListView lv)
+        {
+            for (int i = 0; i < lv.Items.Count; i++)
+            {
+                ListViewItem it = lv.Items[i];
+                if (it.BackColor.A == 255) it.BackColor = Remap(it.BackColor);
+                if (it.ForeColor.A == 255) it.ForeColor = Remap(it.ForeColor);
+                for (int s = 0; s < it.SubItems.Count; s++)
+                {
+                    ListViewItem.ListViewSubItem sub = it.SubItems[s];
+                    if (sub.BackColor.A == 255) sub.BackColor = Remap(sub.BackColor);
+                    if (sub.ForeColor.A == 255) sub.ForeColor = Remap(sub.ForeColor);
+                }
+            }
         }
 
         /// <summary>把当前主题套到所有已打开的窗口上（设置页里切换外观时用）。</summary>
@@ -330,7 +373,16 @@ namespace Installer
         {
             FormCollection fs = Application.OpenForms;
             for (int i = 0; i < fs.Count; i++) ApplyTo(fs[i]);
+            Native.SetAppMode(pal.IsDark);      // 进程级深浅先定下来，下面的主题句柄才跟着走
             for (int i = 0; i < fs.Count; i++) { ApplyChrome(fs[i]); DeepNative(fs[i]); }
+            // 主题句柄刚换过，原生控件不会自己知道要重刷，整窗强推一次
+            for (int i = 0; i < fs.Count; i++)
+            {
+                Form f = fs[i];
+                if (f == null || f.IsDisposed || !f.IsHandleCreated) continue;
+                f.Invalidate(true);
+                f.Update();
+            }
         }
 
         /// <summary>标题栏跟主题走 + Win11 圆角。Win10 上这两个属性会静默失败，不影响功能。</summary>
@@ -346,8 +398,13 @@ namespace Installer
         {
             if (root == null || root.IsDisposed) return;
             if (root is ComboBox) AttachComboArrow((ComboBox)root);
-            if (root.IsHandleCreated
-                && (root is TextBox || root is ComboBox || root is ListView
+            if (root.IsHandleCreated && root is ComboBox)
+            {
+                Native.DarkCombo(root.Handle, pal.IsDark);
+                Native.RepaintFrame(root.Handle);
+            }
+            else if (root.IsHandleCreated
+                && (root is TextBox || root is ListView
                     || root is TreeView || root is ProgressBar || root is NumericUpDown))
                 Native.DarkControl(root.Handle, pal.IsDark);
             // 滚动面板的滚动条是系统画的，要单独打招呼；列表的表头同理
@@ -501,8 +558,17 @@ namespace Installer
             protected override void WndProc(ref Message m)
             {
                 base.WndProc(ref m);
-                if (m.Msg == 0x000F) PaintButton(IntPtr.Zero);        // WM_PAINT
-                else if (m.Msg == 0x0085) PaintButton(IntPtr.Zero);    // WM_NCPAINT
+                if (m.Msg == 0x000F)                                  // WM_PAINT
+                {
+                    // WM_PAINT 的 DC 被更新区裁掉，画不到四条边；边框得单独用窗口 DC 补
+                    PaintButton(IntPtr.Zero);
+                    Native.ComboFrame(cb.Handle, cb.Focused ? Theme.Ink2 : Theme.Line);
+                }
+                else if (m.Msg == 0x0085)                             // WM_NCPAINT
+                {
+                    Native.ComboFrame(cb.Handle, cb.Focused ? Theme.Ink2 : Theme.Line);
+                    PaintButton(IntPtr.Zero);
+                }
                 else if (m.Msg == 0x0318 || m.Msg == 0x0317)           // 截图/打印时走的通道
                     PaintButton(m.WParam);
             }
@@ -532,6 +598,12 @@ namespace Installer
                             g.DrawLines(p, new Point[] {
                                 new Point(cx - 4, cy - 1), new Point(cx, cy + 3), new Point(cx + 4, cy - 1) });
                         }
+
+                        // 最外那一圈是 ComboBox 自己在客户区里按浅色画的，深色下是一条白框，
+                        // 换主题/换 SetWindowTheme 都不管用，只能最后盖一圈主题线色。
+                        g.SmoothingMode = SmoothingMode.None;
+                        using (Pen edge = new Pen(cb.Focused ? Theme.Ink2 : Theme.Line))
+                            g.DrawRectangle(edge, 0, 0, w - 1, h - 1);
                     }
                 }
                 catch { }
@@ -600,6 +672,7 @@ namespace Installer
         private Color animFrom, animTo;
         private float animT = 1f;
         private bool faceReady;
+        private int faceVer = -1;    // shownFace 是在哪一版调色板上算出来的
 
         public FlatButton()
         {
@@ -694,8 +767,10 @@ namespace Installer
             g.Clear(Parent != null ? Parent.BackColor : Theme.Bg);
 
             Color ink, edge;
-            if (!faceReady) SetFace(TargetFace());
-            if (!Theme.MotionEnabled && shownFace.ToArgb() != TargetFace().ToArgb()) SetFace(TargetFace());
+            // 切了主题就重算底色：shownFace 缓存的是上一版调色板的颜色，
+            // 不重算的话深色界面上会留一排白底按钮（字还是浅色，几乎看不见）。
+            if (!faceReady || faceVer != Theme.Version) SetFace(TargetFace());
+            faceVer = Theme.Version;
             Color face = shownFace;
             if (Primary)
             {
@@ -884,6 +959,12 @@ namespace Installer
                 anim.Stop();
                 Invalidate();
             }
+        }
+
+        /// <summary>自测用：走和鼠标点击完全一样的路径（会触发 SelectedIndexChanged）。</summary>
+        internal void PickIndex(int i)
+        {
+            Pick(i);
         }
 
         private int CellWidth()
@@ -1130,9 +1211,75 @@ namespace Installer
         }
 
         private const int LVM_GETHEADER = 0x101F;
+        private const int WM_THEMECHANGED = 0x031A;
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindowDC(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT { public int L, T, R, B; }
+
+        /// <summary>
+        /// 重描下拉框最外面那一圈。ComboBox 的边框在非客户区，是系统按浅色画的，
+        /// 换 SetWindowTheme 也不变色，深色界面上会留一个白框；只能自己在窗口 DC 上盖掉。
+        /// </summary>
+        public static void ComboFrame(IntPtr hwnd, Color color)
+        {
+            IntPtr dc = IntPtr.Zero;
+            try
+            {
+                dc = GetWindowDC(hwnd);
+                if (dc == IntPtr.Zero) return;
+                RECT r;
+                if (!GetWindowRect(hwnd, out r)) return;
+                int w = r.R - r.L, h = r.B - r.T;
+                if (w <= 2 || h <= 2) return;
+                using (Graphics g = Graphics.FromHdc(dc))
+                {
+                    g.SmoothingMode = SmoothingMode.None;
+                    using (Pen p = new Pen(color))
+                        g.DrawRectangle(p, 0, 0, w - 1, h - 1);
+                }
+            }
+            catch { }
+            finally { if (dc != IntPtr.Zero) ReleaseDC(hwnd, dc); }
+        }
+
+        /// <summary>让下拉框重画一次非客户区（换主题后边框要跟着换色）。</summary>
+        public static void RepaintFrame(IntPtr hwnd)
+        {
+            try
+            {
+                if (hwnd != IntPtr.Zero)
+                    SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020);
+            }
+            catch { }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowScrollBar(IntPtr hWnd, int bar, bool show);
+
+        /// <summary>
+        /// 列表的横向滚动条是系统画的，深色下仍是一条亮带；列宽本来就按窗口算好，
+        /// 不会真需要横向滚动，索性收掉。SB_HORZ = 0。
+        /// </summary>
+        public static void HideHScroll(IntPtr hwnd)
+        {
+            try { if (hwnd != IntPtr.Zero) ShowScrollBar(hwnd, 0, false); }
+            catch { }
+        }
 
         private delegate int AllowDarkModeForWindowDelegate(IntPtr hwnd, int allow);   // uxtheme 序号 133
 
@@ -1161,7 +1308,25 @@ namespace Installer
             {
                 if (ux == IntPtr.Zero) { uxTried = true; ux = LoadLibrary("uxtheme.dll"); }
                 AllowDark(hwnd, dark);
+                // 先把现有主题句柄关掉再重挂。只改名字的话，切回浅色时旧句柄（在 ForceDark 下开的）
+                // 会被继续用，列表/日志框就一直是深底 —— 用户看到的就是「切成浅色还是一片黑」。
+                SetWindowTheme(hwnd, "", "");
                 SetWindowTheme(hwnd, dark ? "DarkMode_Explorer" : "Explorer", null);
+                SendMessage(hwnd, WM_THEMECHANGED, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { }
+        }
+
+        /// <summary>下拉框的框线属于「Combo Box Dropdown」这套主题，Explorer 那套管不到它。</summary>
+        public static void DarkCombo(IntPtr hwnd, bool dark)
+        {
+            try
+            {
+                if (ux == IntPtr.Zero) { uxTried = true; ux = LoadLibrary("uxtheme.dll"); }
+                AllowDark(hwnd, dark);
+                SetWindowTheme(hwnd, "", "");
+                SetWindowTheme(hwnd, dark ? "DarkMode_CFD" : "CFD", null);
+                SendMessage(hwnd, WM_THEMECHANGED, IntPtr.Zero, IntPtr.Zero);
             }
             catch { }
         }
@@ -1178,7 +1343,9 @@ namespace Installer
                 if (head != IntPtr.Zero)
                 {
                     AllowDark(head, dark);
+                    SetWindowTheme(head, "", "");
                     SetWindowTheme(head, dark ? "DarkMode_ItemsView" : "ItemsView", null);
+                    SendMessage(head, WM_THEMECHANGED, IntPtr.Zero, IntPtr.Zero);
                 }
             }
             catch { }

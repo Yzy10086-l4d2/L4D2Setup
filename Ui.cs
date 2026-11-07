@@ -551,7 +551,7 @@ namespace Installer
             if (keep == null) keep = TweakName();
             Tweaks.ImportLegacy(txtGame == null ? null : txtGame.Text.Trim());
             cboTweak.Items.Clear();
-            cboTweak.Items.Add("(不套用)");
+            cboTweak.Items.Add("不套用");
             foreach (string n in Tweaks.List()) cboTweak.Items.Add(n);
             int idx = 0;
             for (int i = 1; i < cboTweak.Items.Count; i++)
@@ -668,8 +668,8 @@ namespace Installer
         {
             cboProfile.Items.Clear();
             List<string> ps = ProfileStore.ListProfiles();
-            if (ps.Count == 0) { cboProfile.Items.Add("（还没有方案）"); cboProfile.SelectedIndex = 0; LoadSchemeKeys(); SyncPicks(); return; }
-            cboProfile.Items.Add("（当前选择，未套用方案）");
+            if (ps.Count == 0) { cboProfile.Items.Add("还没有方案"); cboProfile.SelectedIndex = 0; LoadSchemeKeys(); SyncPicks(); return; }
+            cboProfile.Items.Add("当前选择");
             foreach (string p in ps) cboProfile.Items.Add(p);
             string want = string.IsNullOrEmpty(keep) ? appliedProfile : keep;
             int idx = 0;
@@ -681,6 +681,136 @@ namespace Installer
             // 启动仍然保留上次工作选择，必须点「套用」才覆盖。
             LoadSchemeKeys();
             RefreshMods();
+        }
+
+        /// <summary>
+        /// 自测：按真实窗口走一遍外观切换（可见、抓屏幕像素），并把原生控件的实际底色写进 paint.txt。
+        /// 原来的主题自检走 DrawToBitmap —— 那是强制全量重绘，会掩盖「切完主题颜色被映射错」这类问题，
+        /// 只有抓屏幕才看得见用户看到的那一屏。
+        /// </summary>
+        /// <summary>
+        /// 自测用：把整套分类图标按 32px / 14px 两档排成一张样张，方便一眼核对形状。
+        /// 14px 那一行就是树里实际用的尺寸 —— 只在 32px 下好看的图标，缩到 14 常常就糊了。
+        /// </summary>
+        internal int UiTestGlyphs()
+        {
+            string[] keys = new string[]
+            {
+                "gun", "rifle", "smg", "shotgun", "sniper", "pistol", "launcher",
+                "melee", "bottle", "ammo", "medkit", "syringe", "pills", "person",
+                "survivor1", "survivor2", "claw", "map", "spray", "branch", "unknown", "misc"
+            };
+            const int cols = 7, cellW = 108, cellH = 128;
+            int rows = (keys.Length + cols - 1) / cols;
+            int W = cols * cellW + 24, H = rows * cellH + 16;
+            using (Bitmap b = new Bitmap(W, H))
+            {
+                using (Graphics g = Graphics.FromImage(b))
+                {
+                    g.Clear(Theme.Surface);
+                    for (int i = 0; i < keys.Length; i++)
+                    {
+                        int cx = 12 + (i % cols) * cellW;
+                        int cy = 8 + (i / cols) * cellH;
+                        Glyph.Draw(g, keys[i], new Rectangle(cx + (cellW - 32) / 2, cy + 6, 32, 32), Theme.Ink);
+                        Glyph.Draw(g, keys[i], new Rectangle(cx + (cellW - 14) / 2, cy + 46, 14, 14), Theme.Ink);
+                        using (SolidBrush tb = new SolidBrush(Theme.Ink3))
+                        {
+                            StringFormat f = new StringFormat();
+                            f.Alignment = StringAlignment.Center;
+                            g.DrawString(keys[i], Theme.UISmall, tb,
+                                new RectangleF(cx, cy + 68, cellW, 20), f);
+                            f.Dispose();
+                        }
+                    }
+                }
+                b.Save(Path.Combine(Core.LogDir, "glyphs.png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            return 0;
+        }
+
+        internal int UiPaintTest()
+        {
+            int bad = 0;
+            ThemeMode[] seq = new ThemeMode[] { ThemeMode.Light, ThemeMode.Dark, ThemeMode.System, ThemeMode.Dark, ThemeMode.Light };
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            StartPosition = FormStartPosition.Manual;
+            Location = new Point(20, 20);
+            BringToFront();
+            Activate();
+            for (int w = 0; w < 6; w++) { Application.DoEvents(); Thread.Sleep(60); }
+            for (int i = 0; i < seq.Length; i++)
+            {
+                try
+                {
+                    Theme.SetMode(seq[i]);
+                    Theme.ApplyToOpenForms();
+                    for (int w = 0; w < 8; w++) { Application.DoEvents(); Thread.Sleep(60); }
+                    sb.AppendLine("== " + i + "  " + Theme.ModeLabel + "  dark=" + Theme.IsDark);
+                    DumpNativeColors(sb, this, "   ");
+                    Shot("paint" + i);
+                }
+                catch (Exception ex) { bad++; sb.AppendLine("FAIL " + i + ": " + ex.Message); }
+            }
+            // 第二阶段：走用户的真实路径 —— 打开设置窗口，在里面点「深色」，然后直接关掉（不点保存）。
+            // 外观是即时开关，点了就落盘、关掉窗口不该退回去（用户报过：换成深色，退出设置又变回浅色）。
+            string cfgBefore = Core.Cfg.Appearance;
+            try
+            {
+                using (SettingsForm sf = new SettingsForm(this))
+                {
+                    sf.StartPosition = FormStartPosition.Manual;
+                    sf.Location = new Point(Location.X + 30, Location.Y + 30);
+                    System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
+                    t.Interval = 400;
+                    int step = 0;
+                    t.Tick += delegate
+                    {
+                        step++;
+                        if (step == 1) sf.PreviewAppearance(ThemeMode.Dark);
+                        else if (step == 2) { t.Stop(); sf.DialogResult = DialogResult.Cancel; }
+                    };
+                    t.Start();
+                    sf.ShowDialog(this);
+                    t.Dispose();
+                }
+                for (int w = 0; w < 12; w++) { Application.DoEvents(); Thread.Sleep(60); }
+                sb.AppendLine("== modal 设置里点深色后直接关掉  " + Theme.ModeLabel + "  dark=" + Theme.IsDark
+                    + "  cfg=" + Core.Cfg.Appearance);
+                DumpNativeColors(sb, this, "   ");
+                Shot("paint_modal");
+                if (!Theme.IsDark) { bad++; sb.AppendLine("FAIL modal: 关掉设置后外观退回去了"); }
+                if (!string.Equals(Core.Cfg.Appearance, "dark", StringComparison.OrdinalIgnoreCase))
+                { bad++; sb.AppendLine("FAIL modal: 外观没写进配置，重启会还原"); }
+            }
+            catch (Exception ex) { bad++; sb.AppendLine("FAIL modal: " + ex.Message); }
+
+            File.WriteAllText(Path.Combine(Core.LogDir, "paint.txt"), sb.ToString(), new System.Text.UTF8Encoding(false));
+            // 自检会改真实配置，测完还回去，别把用户选的外观改掉
+            Core.Cfg.Appearance = cfgBefore;
+            Core.SaveConfig();
+            Theme.SetMode(Theme.Parse(cfgBefore));
+            Theme.ApplyToOpenForms();
+            return bad;
+        }
+
+        private void DumpNativeColors(System.Text.StringBuilder sb, Control c, string pad)
+        {
+            if (c is TextBox || c is ListView || c is TreeView)
+                sb.AppendLine(pad + c.GetType().Name + " [" + (c.AccessibleName ?? "") + "] back="
+                    + c.BackColor.R + "," + c.BackColor.G + "," + c.BackColor.B
+                    + " fore=" + c.ForeColor.R + "," + c.ForeColor.G + "," + c.ForeColor.B);
+            for (int i = 0; i < c.Controls.Count; i++) DumpNativeColors(sb, c.Controls[i], pad);
+        }
+
+        private void Shot(string tag)
+        {
+            Rectangle r = Bounds;
+            using (Bitmap b = new Bitmap(r.Width, r.Height))
+            {
+                using (Graphics g = Graphics.FromImage(b)) g.CopyFromScreen(r.Left, r.Top, 0, 0, r.Size);
+                b.Save(Path.Combine(Core.LogDir, tag + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
         }
 
         /// <summary>
@@ -1032,18 +1162,59 @@ namespace Installer
         {
             ContextMenuStrip cms = new ContextMenuStrip();
             cms.Font = Theme.UI;
-            cms.Items.Add("用这个替换（点这一行也一样）", null, delegate { PickInTree(lv); });
-            cms.Items.Add("选择部件…（模型+材质+颜色的组合装）", null, delegate { PickPartsIn(lv); });
-            cms.Items.Add(new ToolStripSeparator());
-            cms.Items.Add("只装这个 MOD（不动平台/启动项）", null, delegate { InstallThisOne(lv); });
-            cms.Items.Add("开 / 关这个 MOD（只改 addonlist 的 1/0，不动文件）", null, delegate { ToggleSwitchIn(lv); });
-            cms.Items.Add("放进我的分支…（认不出改什么的，自己归一组）", null, delegate { PutIntoBranchIn(lv); });
-            cms.Items.Add("从这个分支移出（文件不动）", null, delegate { TakeOutOfBranchIn(lv); });
-            cms.Items.Add("重命名这个 VPK 文件名", null, delegate { RenameSelectedIn(lv); });
-            cms.Items.Add("删除这个 MOD（真删，不进回收目录）", null, delegate { DeleteInTree(lv); });
-            cms.Items.Add(new ToolStripSeparator());
-            cms.Items.Add("设置 MOD 分类…（算哪一类 / 替换什么）", null, delegate { SetModCatIn(lv); });
-            cms.Items.Add("在资源管理器里定位", null, delegate { RevealIn(lv); });
+
+            // 顶层只留当前这行真用得上的动作；低频和危险操作收进「更多操作」。
+            ToolStripMenuItem pick = new ToolStripMenuItem("用这个替换", null, delegate { PickInTree(lv); });
+            ToolStripMenuItem parts = new ToolStripMenuItem("选择部件…", null, delegate { PickPartsIn(lv); });
+            ToolStripMenuItem toggle = new ToolStripMenuItem("开 / 关这个 MOD", null, delegate { ToggleSwitchIn(lv); });
+            cms.Items.Add(pick);
+            cms.Items.Add(parts);
+            cms.Items.Add(toggle);
+
+            ToolStripMenuItem branch = new ToolStripMenuItem("我的分支");
+            branch.DropDownItems.Add("放进我的分支…", null, delegate { PutIntoBranchIn(lv); });
+            branch.DropDownItems.Add("新建分支…", null, delegate
+            {
+                if (treeView != null) treeView.NewBranch();
+            });
+            ToolStripMenuItem take = new ToolStripMenuItem("从当前分支移出", null, delegate { TakeOutOfBranchIn(lv); });
+            branch.DropDownItems.Add(take);
+            cms.Items.Add(branch);
+
+            ToolStripMenuItem setCat = new ToolStripMenuItem("设置 MOD 分类…", null, delegate { SetModCatIn(lv); });
+            ToolStripMenuItem reveal = new ToolStripMenuItem("在资源管理器里定位", null, delegate { RevealIn(lv); });
+            cms.Items.Add(setCat);
+            cms.Items.Add(reveal);
+
+            ToolStripMenuItem more = new ToolStripMenuItem("更多操作");
+            more.DropDownItems.Add("只装这个 MOD", null, delegate { InstallThisOne(lv); });
+            more.DropDownItems.Add("重命名 VPK 文件", null, delegate { RenameSelectedIn(lv); });
+            more.DropDownItems.Add("删除这个 MOD", null, delegate { DeleteInTree(lv); });
+            cms.Items.Add(more);
+
+            // 空白处只保留建分支，不再弹出一排点了也没用的 MOD 操作。
+            ToolStripMenuItem newOnly = new ToolStripMenuItem("新建分支…", null, delegate
+            {
+                if (treeView != null) treeView.NewBranch();
+            });
+            cms.Items.Add(newOnly);
+
+            cms.Opening += delegate
+            {
+                ListViewItem li = RowTarget(lv);
+                ModGroup g = li == null ? null : li.Tag as ModGroup;
+                ModItem one = li == null ? null : li.Tag as ModItem;
+                bool group = g != null, row = group || one != null;
+                pick.Visible = group;
+                parts.Visible = group && g.IsSet;
+                toggle.Visible = group;
+                branch.Visible = group;
+                take.Visible = group && treeView != null && treeView.InOpenBranch(g);
+                setCat.Visible = group;
+                reveal.Visible = row;
+                more.Visible = row;
+                newOnly.Visible = !row;
+            };
             return cms;
         }
 
@@ -1055,6 +1226,16 @@ namespace Installer
             if (g == null) { MessageBox.Show("先右键点一行 MOD。"); return; }
             if (treeView == null) return;
             treeView.PutIntoBranch(g);
+        }
+
+        /// <summary>右键「放进新分支」：建一个新分支，顺手把这个 MOD 放进去（不用先有分支）。</summary>
+        internal void PutIntoNewBranchIn(ListView lv)
+        {
+            ListViewItem li = RowTarget(lv);
+            ModGroup g = li == null ? null : li.Tag as ModGroup;
+            if (g == null) { MessageBox.Show("先右键点一行 MOD。"); return; }
+            if (treeView == null) return;
+            treeView.PutIntoNewBranch(g);
         }
 
         /// <summary>右键「从这个分支移出」：只把这一条从分组里摘掉，文件和勾选都不动。</summary>
@@ -3347,7 +3528,7 @@ namespace Installer
             foreach (Profile p in items) lb.Items.Add(p);
             if (lb.Items.Count == 0)
             {
-                lb.Items.Add("（还没有方案）");
+                lb.Items.Add("还没有方案");
                 clb.Items.Clear(); rowKeys.Clear(); lblInfo.Text = ""; current = null;
                 return;
             }
