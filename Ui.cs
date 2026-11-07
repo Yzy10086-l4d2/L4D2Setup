@@ -1177,6 +1177,8 @@ namespace Installer
             {
                 if (treeView != null) treeView.NewBranch();
             });
+            ToolStripMenuItem subNew = new ToolStripMenuItem("在当前分支下新建子分支…", null, delegate { NewSubBranchIn(); });
+            branch.DropDownItems.Add(subNew);
             ToolStripMenuItem take = new ToolStripMenuItem("从当前分支移出", null, delegate { TakeOutOfBranchIn(lv); });
             branch.DropDownItems.Add(take);
             cms.Items.Add(branch);
@@ -1209,6 +1211,7 @@ namespace Installer
                 parts.Visible = group && g.IsSet;
                 toggle.Visible = group;
                 branch.Visible = group;
+                subNew.Visible = group && treeView != null && treeView.CurrentBranch != null;
                 take.Visible = group && treeView != null && treeView.InOpenBranch(g);
                 setCat.Visible = group;
                 reveal.Visible = row;
@@ -1216,6 +1219,15 @@ namespace Installer
                 newOnly.Visible = !row;
             };
             return cms;
+        }
+
+        /// <summary>右键「在当前分支下新建子分支…」：正在看哪个分支，就建在它下面。</summary>
+        internal void NewSubBranchIn()
+        {
+            if (treeView == null) return;
+            Slot cur = treeView.CurrentBranch;
+            if (cur == null) { MessageBox.Show("先在左边方案树里点开一个分支，这一项就会亮起来。"); return; }
+            treeView.NewBranch(cur);
         }
 
         /// <summary>右键「放进我的分支」：把这个 MOD 归到用户自己拉的分组里（不动文件）。</summary>

@@ -1654,6 +1654,20 @@ namespace Installer
             else
             {
                 m.Items.Add("新建分支…", null, delegate { NewBranch(); });
+                // 已有分支时再给一层：不用先滚到那个分支行，右键哪儿都能挑一个分支往它下面建
+                if (MyBranch.Names().Count > 0)
+                {
+                    ToolStripMenuItem under = new ToolStripMenuItem("在已有分支下新建子分支…");
+                    foreach (string bn in MyBranch.Names())
+                    {
+                        string target = bn;
+                        under.DropDownItems.Add(MyBranch.HasParent(target)
+                            ? "在「" + Shorten(target, 16) + "」下（现挂在「" + Shorten(MyBranch.ParentOf(target), 12) + "」里）"
+                            : "在「" + Shorten(target, 20) + "」下",
+                            null, delegate { NewBranchUnder(target); });
+                    }
+                    m.Items.Add(under);
+                }
                 // 位置行上再给一条捷径：不用先点开位置、再去列表里翻那个 MOD
                 if (s != null && s.Items.Count > 0)
                 {
@@ -2068,6 +2082,14 @@ namespace Installer
                 if (si < 0 || sj < 0 || sj <= si) { bad++; Core.Log("FAIL", "BRANCH 槽位顺序不对：父 " + si + "、子 " + sj); }
                 else Core.Log("INFO", "BRANCH 槽位顺序：父 " + si + "、子 " + sj);
 
+                // 右侧列表「在当前分支下新建子分支」的入口：打开分支页后要能拿到当前分支
+                GoSlot("#mine:" + ch);
+                Slot curB = CurrentBranch;
+                if (curB == null || !string.Equals(curB.Name, ch, StringComparison.Ordinal))
+                { bad++; Core.Log("FAIL", "BRANCH 打开「" + ch + "」后 CurrentBranch 取不到它（" + (curB == null ? "null" : curB.Name) + "）"); }
+                else Core.Log("INFO", "BRANCH 打开「" + ch + "」后 CurrentBranch 正确，右键菜单能建它的子分支");
+                GoSlot("#mine:" + pa);
+
                 // 父分支解散 → 子分支提回顶层，不能跟着消失
                 MyBranch.Delete(pa);
                 if (!MyBranch.Has(ch)) { bad++; Core.Log("FAIL", "BRANCH 父分支解散后子分支「" + ch + "」也没了"); }
@@ -2406,6 +2428,12 @@ namespace Installer
                 foreach (Slot s in slots) if (s.Key == selKey) return s;
                 return null;
             }
+        }
+
+        /// <summary>右侧列表当前打开的是哪个分支；不在分支页上返回 null。建子分支的菜单入口要用。</summary>
+        internal Slot CurrentBranch
+        {
+            get { return IsBranchSlot(Current) ? Current : null; }
         }
 
         /// <summary>
