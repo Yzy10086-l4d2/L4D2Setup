@@ -2185,6 +2185,21 @@ namespace Installer
                                         if (snapB[i] != snapA[i]) { same = false; break; }
                                 if (r2 && same) Core.Log("INFO", "CATDRAG 「本来就在」用例：重复挪到同一位置 → 明确提示没挪，顺序不变");
                                 else { bad++; Core.Log("FAIL", "CATDRAG 「本来就在」用例异常 r2=" + r2 + " 顺序变了=" + !same); }
+
+                                // 「拖紧邻邻居 = 对调」用例：人物在上、近战紧贴其下，把人物拖到近战行的上半
+                                // —— 解析成「移到近战前面」= 原地不动，必须自动翻到后面 = 两者对调
+                                Rebuild();
+                                int qa = FindCatRow("人物"), qb = FindCatRow("近战");
+                                if (qa >= 0 && qb >= 0)
+                                {
+                                    string stS;
+                                    body.SimulateRealDrag(qa, qb, 1, out stS);
+                                    Core.Log("INFO", "CATDRAG 邻居对调路径 " + stS);
+                                    List<string> afterS = CatPrefs.Cats();
+                                    if (afterS.IndexOf("近战") == afterS.IndexOf("人物") - 1)
+                                        Core.Log("INFO", "CATDRAG 拖紧邻邻居 → 自动对调位置");
+                                    else { bad++; Core.Log("FAIL", "CATDRAG 拖紧邻邻居没对调：人物=" + afterS.IndexOf("人物") + " 近战=" + afterS.IndexOf("近战")); }
+                                }
                             }
                         }
                     }
@@ -3665,6 +3680,25 @@ namespace Installer
                             if (up >= 0 && (down < 0 || t - up <= down - t)) { t = up; mode = 2; }
                             else if (down >= 0) { t = down; mode = 1; }
                         }
+                    }
+                }
+                // 原地不动 → 翻到目标的另一侧：拖紧邻的邻居本来就在那个位置，
+                // 用户要的是「换位置」，直接对调才看得出挪动（用户实测踩了两次）
+                if (mode != 0 && t >= 0 && t < rows.Count)
+                {
+                    if (dragKind == 2 && rows[t].IsCat)
+                    {
+                        List<string> cur = CatPrefs.Cats();
+                        int ci = cur.IndexOf(dragName), ti = cur.IndexOf(rows[t].Cat);
+                        if (ci >= 0 && ti >= 0 && ((mode == 2 && ci == ti + 1) || (mode == 1 && ci == ti - 1)))
+                            mode = mode == 2 ? 1 : 2;
+                    }
+                    else if (dragKind == 1 && rows[t].Slot != null && CatTree.IsBranchSlot(rows[t].Slot))
+                    {
+                        List<string> cur = MyBranch.Names();
+                        int ci = cur.IndexOf(dragName), ti = cur.IndexOf(rows[t].Slot.Name);
+                        if (ci >= 0 && ti >= 0 && ((mode == 2 && ci == ti + 1) || (mode == 1 && ci == ti - 1)))
+                            mode = mode == 2 ? 1 : 2;
                     }
                 }
                 if (t != dropRow || mode != dropMode) { dropRow = t; dropMode = mode; }
